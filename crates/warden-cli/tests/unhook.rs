@@ -210,6 +210,21 @@ fn installer_runs_unhook_before_removing_files_and_keeps_hooks_on_update() {
     assert_eq!(pre.matches("MessageBox").count(), 1);
     assert!(pre.contains("MB_OK|MB_ICONEXCLAMATION"));
     assert!(pre.contains("/SD IDOK"));
+    // An update keeps Start with Windows too: only an uninstall removes it.
+    let post = hooks
+        .split("!macro NSIS_HOOK_POSTUNINSTALL")
+        .nth(1)
+        .expect("after uninstall")
+        .split("!macroend")
+        .next()
+        .expect("macro");
+    let guard = post.find("${If} $UpdateMode != 1").expect("update guard");
+    let removal = post
+        .find(
+            "DeleteRegValue HKCU \"Software\\Microsoft\\Windows\\CurrentVersion\\Run\" \"Warden\"",
+        )
+        .expect("removes the Run value");
+    assert!(guard < removal && post[removal..].contains("${EndIf}"));
 }
 
 /// A development build's `--home` points the uninstaller's command at a test home: main and the saved accounts there

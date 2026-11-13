@@ -84,5 +84,8 @@ describe('UpdateItem', () => {
     expect(document.querySelector('[role=alert]')?.textContent).toBe('No update is ready to install.');
     expect(document.querySelector('[role=status]')).toBeNull();
     expect(button('Cancel')).toBeDefined();
+    // Focus is back on the button that installs.
+    expect(document.activeElement?.textContent?.trim()).toBe('Install and restart');
+    expect((document.activeElement as HTMLButtonElement).type).toBe('submit');
   });
 });

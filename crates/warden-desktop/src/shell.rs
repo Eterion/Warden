@@ -103,6 +103,19 @@ fn redirect_allowed(url: &Url, hops: usize) -> bool {
         && hops < 5
 }
 
+/// A short word for an updater error, for the log: never the response's own text.
+fn error_kind(e: &tauri_plugin_updater::Error) -> &'static str {
+    use tauri_plugin_updater::Error as E;
+    match e {
+        E::Reqwest(_) | E::Network(_) | E::Http(_) => "network",
+        E::ReleaseNotFound => "no release",
+        E::Serialization(_) | E::Semver(_) | E::UrlParse(_) => "bad manifest",
+        E::Minisign(_) | E::Base64(_) | E::SignatureUtf8(_) => "bad signature",
+        E::Io(_) => "file",
+        _ => "updater",
+    }
+}
+
 impl Source for Releases {
     type Found = Update;
 
@@ -113,25 +126,36 @@ impl Source for Releases {
             .updater_builder()
             .version_comparator(|current, release| updates::is_newer(&current, &release.version))
             .configure_client(|client| {
-                client.redirect(reqwest::redirect::Policy::custom(|attempt| {
-                    if redirect_allowed(attempt.url(), attempt.previous().len()) {
-                        attempt.follow()
-                    } else {
-                        attempt.stop()
-                    }
-                }))
+                client
+                    .connect_timeout(std::time::Duration::from_secs(30))
+                    .read_timeout(std::time::Duration::from_secs(60))
+                    .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                        if redirect_allowed(attempt.url(), attempt.previous().len()) {
+                            attempt.follow()
+                        } else {
+                            attempt.stop()
+                        }
+                    }))
             })
-            // Warden closes for the installer: its core stops first, as on Quit.
+            // Warden closes for the installer: its core stops first, as on Quit, and Tauri's own cleanup (the tray
+            // icon) runs, which this hook replaces.
             .on_before_exit(move || {
                 if let Some(core) = h.try_state::<Core>() {
                     core.app.stop();
                 }
+                h.cleanup_before_exit();
             })
             .build()
-            .map_err(|e| e.to_string())?;
-        tauri::async_runtime::block_on(updater.check())
-            .map(|found| found.map(|u| (u.version.clone(), u)))
-            .map_err(|e| e.to_string())
+            .map_err(|e| error_kind(&e).to_owned())?;
+        let found = tauri::async_runtime::block_on(updater.check())
+            .map_err(|e| error_kind(&e).to_owned())?;
+        match found {
+            // The manifest is not signed: its download address must be an allowed host too, not only its redirects.
+            Some(u) if !redirect_allowed(&u.download_url, 0) => {
+                Err("download address not allowed".into())
+            }
+            found => Ok(found.map(|u| (u.version.clone(), u))),
+        }
     }
 
     fn download(
@@ -144,7 +168,8 @@ impl Source for Releases {
             done += len as u64;
             progress(done, total);
         };
-        tauri::async_runtime::block_on(found.download(chunk, || {})).map_err(|e| e.to_string())
+        tauri::async_runtime::block_on(found.download(chunk, || {}))
+            .map_err(|e| error_kind(&e).to_owned())
     }
 
     fn install(&self, found: &Update, bytes: &[u8], restart: bool) -> Result<(), String> {
@@ -152,7 +177,7 @@ impl Source for Releases {
             .clone()
             .restart_after_install(restart)
             .install(bytes)
-            .map_err(|e| e.to_string())
+            .map_err(|e| error_kind(&e).to_owned())
     }
 }
 
@@ -183,15 +208,9 @@ impl Desktop for DesktopSide {
             .try_state::<ReleaseUpdates>()
             .map(|u| Arc::clone(&u))
             .ok_or_else(|| io::Error::other("this build does not update itself"))?;
-        if !updates.ready() {
-            return Err(io::Error::other("no update is ready"));
-        }
-        // A moment first, so the page gets its answer and shows the update installing before Warden closes.
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            updates.install(true);
-        });
-        Ok(())
+        // On success Warden closes inside this call, so the page never gets its answer and keeps showing the update
+        // installing; an error answers, and the page says so.
+        updates.install(true).map_err(io::Error::other)
     }
 }
 
@@ -216,7 +235,13 @@ fn confirm_install(handle: &AppHandle) {
         .show(move |yes| {
             if yes && let Some(updates) = h.try_state::<ReleaseUpdates>() {
                 let updates = Arc::clone(&updates);
-                std::thread::spawn(move || updates.install(true));
+                if updates.install(true).is_err() {
+                    h.dialog()
+                        .message("Warden could not install the update.")
+                        .title("Warden")
+                        .kind(MessageDialogKind::Error)
+                        .show(|_| {});
+                }
             }
         });
 }
@@ -255,6 +280,24 @@ pub fn open_window(handle: &AppHandle) {
     }
 }
 
+/// The tray's menu: Open, Install update and restart while an update is ready, Quit.
+fn tray_menu(handle: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let open = MenuItem::with_id(handle, "open", "Open Warden", true, None::<&str>)?;
+    let quit = MenuItem::with_id(handle, "quit", "Quit Warden", true, None::<&str>)?;
+    if update_ready(handle) {
+        let install = MenuItem::with_id(
+            handle,
+            "install",
+            "Install update and restart",
+            true,
+            None::<&str>,
+        )?;
+        Menu::with_items(handle, &[&open, &install, &quit])
+    } else {
+        Menu::with_items(handle, &[&open, &quit])
+    }
+}
+
 /// Shows or removes the tray icon. It exists only while Keep running in the tray is on.
 fn set_tray(handle: &AppHandle, on: bool) {
     if !on {
@@ -265,20 +308,7 @@ fn set_tray(handle: &AppHandle, on: bool) {
         return;
     }
     let built = (|| -> tauri::Result<()> {
-        let open = MenuItem::with_id(handle, "open", "Open Warden", true, None::<&str>)?;
-        let install = MenuItem::with_id(
-            handle,
-            "install",
-            "Install update and restart",
-            true,
-            None::<&str>,
-        )?;
-        let quit = MenuItem::with_id(handle, "quit", "Quit Warden", true, None::<&str>)?;
-        let menu = if update_ready(handle) {
-            Menu::with_items(handle, &[&open, &install, &quit])?
-        } else {
-            Menu::with_items(handle, &[&open, &quit])?
-        };
+        let menu = tray_menu(handle)?;
         let mut tray = TrayIconBuilder::with_id(TRAY)
             .tooltip("Warden")
             .menu(&menu)
@@ -322,9 +352,11 @@ fn follow(handle: AppHandle, app: Arc<App>, mut alerts: Alerts, mut tray: bool) 
         let now_ready = update_ready(&handle);
         if now_ready != ready && tray {
             let h = handle.clone();
+            // The same icon gets the new menu, so a pinned icon stays pinned.
             let _ = handle.run_on_main_thread(move || {
-                h.remove_tray_by_id(TRAY);
-                set_tray(&h, true);
+                if let (Some(tray), Ok(menu)) = (h.tray_by_id(TRAY), tray_menu(&h)) {
+                    let _ = tray.set_menu(Some(menu));
+                }
             });
         }
         ready = now_ready;
@@ -365,6 +397,7 @@ fn start_app(
     let desktop = RunValue::for_this_app(&args.options())
         .map_err(|e| format!("could not find Warden's own program: {e}"))?;
     let webview_dir = data_dir.join("webview");
+    let update_dir = data_dir.join("update");
     let saved: Readings = store::load(&data_dir, READINGS_FILE).unwrap_or_default();
     let alerts = Alerts::from_saved(&saved);
     window_csp(handle).ok_or("the app has no Content-Security-Policy")?;
@@ -400,6 +433,7 @@ fn start_app(
             Releases {
                 handle: handle.clone(),
             },
+            update_dir.clone(),
             move |update| to_core.set_update(update),
             move |line| (to_log.log)(line),
         ));
@@ -409,7 +443,9 @@ fn start_app(
 
     let keep = app.keep_in_tray();
     set_tray(handle, keep);
-    if !(args.autostart && keep) {
+    // After "Install and restart" the window comes back, even when Windows started the old Warden into the tray.
+    let after_update = updates::take_open_window_mark(&update_dir);
+    if after_update || !(args.autostart && keep) {
         open_window(handle);
     }
     let h = handle.clone();
@@ -588,22 +624,24 @@ pub fn run(
         }
     };
     app.run(|handle, event| match event {
-        // The last window closed (not Quit): stay in the tray when that is on, otherwise quit.
-        RunEvent::ExitRequested {
-            code: None, api, ..
-        } => {
-            if handle
-                .try_state::<Core>()
-                .is_some_and(|c| c.app.keep_in_tray())
+        // The last window closed (`code: None`) or Quit (`Some`): stay in the tray when the window closed and that is
+        // on; otherwise the user is quitting, so a downloaded update may install as Warden exits.
+        RunEvent::ExitRequested { code, api, .. } => {
+            if code.is_none()
+                && handle
+                    .try_state::<Core>()
+                    .is_some_and(|c| c.app.keep_in_tray())
             {
                 api.prevent_exit();
+            } else if let Some(updates) = handle.try_state::<ReleaseUpdates>() {
+                updates.quit_requested();
             }
         }
         RunEvent::Exit => {
-            // Quitting installs a downloaded update (without starting Warden again); Warden closes for it.
+            // Only after the user's quit (never when Windows ends the session) a downloaded update installs, without
+            // starting Warden again; Warden closes for it.
             if let Some(updates) = handle.try_state::<ReleaseUpdates>() {
-                updates.stop();
-                updates.install(false);
+                updates.on_exit();
             }
             if let Some(core) = handle.try_state::<Core>() {
                 core.app.stop();

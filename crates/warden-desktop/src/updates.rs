@@ -1,7 +1,11 @@
-//! Updates from the repository's releases, in release builds only: Warden looks once shortly after it starts and then
-//! once an hour (one small request each), downloads a newer version on its own, and installs it only on "Install and
-//! restart" (confirmed) or when Warden quits; never in the middle of work.
+//! Updates from the repository's releases, for the installed app in a release build: Warden looks once shortly after it
+//! starts and then once an hour (one small request each), downloads a newer version on its own, and installs it only
+//! on "Install and restart" (confirmed) or when the user quits Warden; never in the middle of work, and never when
+//! Windows ends the session.
+//!
+//! The downloaded installer waits in the data folder (`update/installer`), not in memory.
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::Duration;
@@ -12,12 +16,23 @@ pub const FIRST_CHECK: Duration = Duration::from_secs(10);
 /// Then once an hour.
 pub const EVERY: Duration = Duration::from_secs(60 * 60);
 
+const INSTALLER: &str = "installer";
+/// Left by "Install and restart", so the restarted Warden opens its window even when Windows started the old one into
+/// the tray.
+const OPEN_WINDOW: &str = "open-window";
+
 /// Whether this build looks for updates: development builds never do.
 pub const fn enabled() -> bool {
     !cfg!(debug_assertions)
 }
 
-/// What Warden needs from an updater: Tauri's in the app, a fake in the tests.
+/// Whether the last "Install and restart" asked for the window, forgetting it.
+pub fn take_open_window_mark(dir: &Path) -> bool {
+    std::fs::remove_file(dir.join(OPEN_WINDOW)).is_ok()
+}
+
+/// What Warden needs from an updater: Tauri's in the app, a fake in the tests. Errors are short words, never the
+/// response's own text.
 pub trait Source: Send + Sync + 'static {
     /// A newer version found by `check`, kept until it is installed.
     type Found: Send + 'static;
@@ -37,11 +52,7 @@ pub trait Source: Send + Sync + 'static {
 enum Phase<F> {
     Idle,
     Downloading,
-    Ready {
-        version: String,
-        found: F,
-        bytes: Vec<u8>,
-    },
+    Ready { version: String, found: F },
     Installing,
 }
 
@@ -50,12 +61,18 @@ type Log = Box<dyn Fn(&str) + Send + Sync>;
 
 pub struct Updates<S: Source> {
     source: S,
+    /// Where the downloaded installer waits.
+    dir: PathBuf,
     /// Tells the core what the window and the tray show.
     report: Report,
     log: Log,
     phase: Mutex<Phase<S::Found>>,
     /// The last look failed: a failure is logged once, until a look works again.
     failed: AtomicBool,
+    /// A version whose download failed (its signature, say): not downloaded again until another one is offered.
+    skipped: Mutex<Option<String>>,
+    /// The user asked Warden to quit (Quit, or closing the window with the tray off), so its exit may install.
+    quitting: AtomicBool,
     stopped: Mutex<bool>,
     wake: Condvar,
 }
@@ -74,17 +91,23 @@ pub fn is_newer(current: &semver::Version, found: &semver::Version) -> bool {
 }
 
 impl<S: Source> Updates<S> {
+    /// `dir` holds the downloaded installer; one left from an earlier run is removed.
     pub fn new(
         source: S,
+        dir: PathBuf,
         report: impl Fn(Option<UpdateView>) + Send + Sync + 'static,
         log: impl Fn(&str) + Send + Sync + 'static,
     ) -> Self {
+        let _ = std::fs::remove_file(dir.join(INSTALLER));
         Self {
             source,
+            dir,
             report: Box::new(report),
             log: Box::new(log),
             phase: Mutex::new(Phase::Idle),
             failed: AtomicBool::new(false),
+            skipped: Mutex::new(None),
+            quitting: AtomicBool::new(false),
             stopped: Mutex::new(false),
             wake: Condvar::new(),
         }
@@ -92,6 +115,12 @@ impl<S: Source> Updates<S> {
 
     fn phase(&self) -> MutexGuard<'_, Phase<S::Found>> {
         self.phase
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn skipped(&self) -> MutexGuard<'_, Option<String>> {
+        self.skipped
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -113,11 +142,12 @@ impl<S: Source> Updates<S> {
             }
             Err(e) => {
                 if !self.failed.swap(true, Ordering::Relaxed) {
-                    (self.log)(&format!("could not look for an update: {e}"));
+                    (self.log)(&format!("could not look for an update ({e})"));
                 }
                 None
             }
         };
+        let found = found.filter(|(version, _)| self.skipped().as_ref() != Some(version));
         let Some((version, found)) = found else {
             *self.phase() = Phase::Idle;
             return;
@@ -130,25 +160,34 @@ impl<S: Source> Updates<S> {
         };
         (self.report)(Some(view(None, false)));
         let mut shown = None;
-        let downloaded = self.source.download(&found, &mut |done, total| {
-            let step = percent_step(done, total);
-            if step != shown {
-                shown = step;
-                (self.report)(Some(view(step, false)));
-            }
-        });
+        let downloaded = self
+            .source
+            .download(&found, &mut |done, total| {
+                let step = percent_step(done, total);
+                if step != shown {
+                    shown = step;
+                    (self.report)(Some(view(step, false)));
+                }
+            })
+            .and_then(|bytes| {
+                std::fs::create_dir_all(&self.dir)
+                    .and_then(|()| std::fs::write(self.dir.join(INSTALLER), bytes))
+                    .map_err(|e| format!("could not keep it: {}", e.kind()))
+            });
         match downloaded {
-            Ok(bytes) => {
+            Ok(()) => {
                 (self.log)(&format!("update {version} downloaded"));
                 *self.phase() = Phase::Ready {
                     version: version.clone(),
                     found,
-                    bytes,
                 };
                 (self.report)(Some(view(Some(100), true)));
             }
             Err(e) => {
-                (self.log)(&format!("could not download update {version}: {e}"));
+                (self.log)(&format!(
+                    "could not download update {version} ({e}); it is not tried again until another version is offered"
+                ));
+                *self.skipped() = Some(version);
                 *self.phase() = Phase::Idle;
                 (self.report)(None);
             }
@@ -160,36 +199,48 @@ impl<S: Source> Updates<S> {
         matches!(*self.phase(), Phase::Ready { .. })
     }
 
-    /// Installs the downloaded update: "Install and restart" (`restart`) or Warden quitting. `false` when none is
-    /// ready or the installer could not start (the update stays ready); in the app, Warden closes on success.
-    pub fn install(&self, restart: bool) -> bool {
-        let (version, found, bytes) = {
+    /// Installs the downloaded update: "Install and restart" (`restart`, which also asks the restarted Warden to open
+    /// its window) or the user quitting. In the app Warden closes on success; an error says why it could not start,
+    /// and the update stays ready.
+    pub fn install(&self, restart: bool) -> Result<(), String> {
+        let (version, found) = {
             let mut phase = self.phase();
             match std::mem::replace(&mut *phase, Phase::Installing) {
-                Phase::Ready {
-                    version,
-                    found,
-                    bytes,
-                } => (version, found, bytes),
+                Phase::Ready { version, found } => (version, found),
                 other => {
                     *phase = other;
-                    return false;
+                    return Err("no update is ready".into());
                 }
             }
         };
         (self.log)(&format!("installing update {version}"));
-        match self.source.install(&found, &bytes, restart) {
-            Ok(()) => true,
-            Err(e) => {
-                (self.log)(&format!("could not install update {version}: {e}"));
-                *self.phase() = Phase::Ready {
-                    version,
-                    found,
-                    bytes,
-                };
-                false
-            }
+        let mark = self.dir.join(OPEN_WINDOW);
+        let started = std::fs::read(self.dir.join(INSTALLER))
+            .map_err(|e| format!("could not read it: {}", e.kind()))
+            .and_then(|bytes| {
+                if restart {
+                    let _ = std::fs::write(&mark, b"");
+                }
+                self.source.install(&found, &bytes, restart)
+            });
+        if let Err(e) = &started {
+            (self.log)(&format!("could not install update {version} ({e})"));
+            let _ = std::fs::remove_file(&mark);
+            *self.phase() = Phase::Ready { version, found };
         }
+        started
+    }
+
+    /// The user asked Warden to quit, so its exit installs a ready update.
+    pub fn quit_requested(&self) {
+        self.quitting.store(true, Ordering::Relaxed);
+    }
+
+    /// Warden exits: a ready update installs (without a restart) only when the user asked to quit, never when
+    /// Windows ends the session. Whether the installer started.
+    pub fn on_exit(&self) -> bool {
+        self.stop();
+        self.quitting.load(Ordering::Relaxed) && self.ready() && self.install(false).is_ok()
     }
 
     /// Looks once after `first`, then every `every`, until stopped.
@@ -228,8 +279,9 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
+    use warden_core::testdir::Dir;
 
-    /// An updater that offers `offer` (or fails), downloads in four chunks and records installs.
+    /// An updater that offers `offer` (or fails), downloads in chunks and records installs.
     #[derive(Default)]
     struct Fake {
         offer: Mutex<Option<String>>,
@@ -237,6 +289,7 @@ mod tests {
         download_fails: AtomicBool,
         install_fails: AtomicBool,
         checks: AtomicUsize,
+        downloads: AtomicUsize,
         installs: Mutex<Vec<(String, usize, bool)>>,
     }
 
@@ -259,11 +312,12 @@ mod tests {
             _: &String,
             progress: &mut dyn FnMut(u64, Option<u64>),
         ) -> Result<Vec<u8>, String> {
+            self.downloads.fetch_add(1, Ordering::SeqCst);
             for done in [0, 10, 11, 52, 99, 100] {
                 progress(done, Some(100));
             }
             if self.download_fails.load(Ordering::SeqCst) {
-                return Err("cut off".into());
+                return Err("bad signature".into());
             }
             Ok(vec![7; 100])
         }
@@ -282,18 +336,25 @@ mod tests {
     struct Seen {
         reports: Arc<Mutex<Vec<Option<UpdateView>>>>,
         log: Arc<Mutex<Vec<String>>>,
+        dir: Dir,
     }
 
     fn updates(fake: &Arc<Fake>) -> (Arc<Updates<Arc<Fake>>>, Seen) {
         let reports = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::new(Mutex::new(Vec::new()));
+        let dir = Dir::new("updates");
         let (r, l) = (Arc::clone(&reports), Arc::clone(&log));
         let u = Updates::new(
             Arc::clone(fake),
+            dir.path().join("update"),
             move |v| r.lock().expect("lock").push(v),
             move |line| l.lock().expect("lock").push(line.to_owned()),
         );
-        (Arc::new(u), Seen { reports, log })
+        (Arc::new(u), Seen { reports, log, dir })
+    }
+
+    fn offer(fake: &Fake, version: &str) {
+        *fake.offer.lock().expect("lock") = Some(version.into());
     }
 
     fn view(downloaded: Option<u8>, ready: bool) -> Option<UpdateView> {
@@ -305,10 +366,11 @@ mod tests {
     }
 
     #[test]
-    fn development_builds_never_look() {
-        assert_eq!(enabled(), !cfg!(debug_assertions));
+    fn looks_soon_after_the_start_then_hourly() {
         assert_eq!(FIRST_CHECK, Duration::from_secs(10));
         assert_eq!(EVERY, Duration::from_secs(3600));
+        #[cfg(debug_assertions)]
+        assert!(!enabled(), "development builds never look");
     }
 
     #[test]
@@ -334,7 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn a_found_update_downloads_with_progress_then_waits_ready() {
+    fn a_found_update_downloads_with_progress_then_waits_ready_on_disk() {
         let fake = Arc::new(Fake::default());
         let (u, seen) = updates(&fake);
         u.check_now();
@@ -342,7 +404,7 @@ mod tests {
             seen.reports.lock().expect("lock").is_empty(),
             "nothing newer"
         );
-        *fake.offer.lock().expect("lock") = Some("0.2.0".into());
+        offer(&fake, "0.2.0");
         u.check_now();
         assert_eq!(
             *seen.reports.lock().expect("lock"),
@@ -358,6 +420,8 @@ mod tests {
             "11% is still the 10% step: no report"
         );
         assert!(u.ready());
+        let installer = seen.dir.path().join("update").join(INSTALLER);
+        assert_eq!(std::fs::read(&installer).expect("kept").len(), 100);
         // Ready: no more looks until it is installed.
         let checks = fake.checks.load(Ordering::SeqCst);
         u.check_now();
@@ -370,32 +434,40 @@ mod tests {
             *seen.log.lock().expect("lock"),
             ["update 0.2.0 found", "update 0.2.0 downloaded"]
         );
+        // A new start removes an installer left from before.
+        let _again = Updates::new(
+            Arc::clone(&fake),
+            seen.dir.path().join("update"),
+            |_| {},
+            |_| {},
+        );
+        assert!(!installer.exists());
     }
 
     #[test]
-    fn installs_only_when_asked_with_or_without_a_restart() {
+    fn the_button_installs_and_restarts_into_the_window() {
         let fake = Arc::new(Fake::default());
         let (u, seen) = updates(&fake);
-        assert!(!u.install(true), "nothing ready");
-        *fake.offer.lock().expect("lock") = Some("0.2.0".into());
+        let dir = seen.dir.path().join("update");
+        assert_eq!(u.install(true), Err("no update is ready".into()));
+        offer(&fake, "0.2.0");
         u.check_now();
-        // The installer cannot start: the update stays ready.
+        // The installer cannot start: why, and the update stays ready, with no window asked for.
         fake.install_fails.store(true, Ordering::SeqCst);
-        assert!(!u.install(true));
+        assert_eq!(u.install(true), Err("refused".into()));
         assert!(u.ready());
+        assert!(!take_open_window_mark(&dir));
         fake.install_fails.store(false, Ordering::SeqCst);
-        // "Install and restart" restarts; quitting does not.
-        assert!(u.install(true));
+        assert_eq!(u.install(true), Ok(()));
         assert_eq!(
             *fake.installs.lock().expect("lock"),
             [("0.2.0".to_owned(), 100, true)]
         );
         assert!(!u.ready());
-        assert!(!u.install(false), "installing already");
-        let (u, _) = updates(&fake);
-        u.check_now();
-        assert!(u.install(false));
-        assert!(!fake.installs.lock().expect("lock")[1].2);
+        assert!(u.install(false).is_err(), "installing already");
+        // The restarted Warden opens its window once.
+        assert!(take_open_window_mark(&dir));
+        assert!(!take_open_window_mark(&dir));
         assert!(
             seen.log
                 .lock()
@@ -405,7 +477,32 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_look_is_logged_once_and_a_failed_download_tried_again_later() {
+    fn only_quitting_installs_on_exit_without_a_restart() {
+        let fake = Arc::new(Fake::default());
+        // Windows ends the session: Warden exits without the user's Quit, and nothing installs.
+        let (u, _seen) = updates(&fake);
+        offer(&fake, "0.2.0");
+        u.check_now();
+        assert!(!u.on_exit());
+        assert!(fake.installs.lock().expect("lock").is_empty());
+        // The user quits: the update installs, and Warden does not start again.
+        let (u, seen) = updates(&fake);
+        u.check_now();
+        u.quit_requested();
+        assert!(u.on_exit());
+        assert_eq!(
+            *fake.installs.lock().expect("lock"),
+            [("0.2.0".to_owned(), 100, false)]
+        );
+        assert!(!take_open_window_mark(&seen.dir.path().join("update")));
+        // Quitting with nothing ready installs nothing.
+        let (u, _) = updates(&Arc::new(Fake::default()));
+        u.quit_requested();
+        assert!(!u.on_exit());
+    }
+
+    #[test]
+    fn a_failed_look_is_logged_once_and_a_failed_download_not_repeated() {
         let fake = Arc::new(Fake::default());
         let (u, seen) = updates(&fake);
         fake.check_fails.store(true, Ordering::SeqCst);
@@ -413,23 +510,30 @@ mod tests {
         u.check_now();
         assert_eq!(
             *seen.log.lock().expect("lock"),
-            ["could not look for an update: offline"]
+            ["could not look for an update (offline)"]
         );
         fake.check_fails.store(false, Ordering::SeqCst);
-        *fake.offer.lock().expect("lock") = Some("0.2.0".into());
+        offer(&fake, "0.2.0");
         fake.download_fails.store(true, Ordering::SeqCst);
         u.check_now();
         assert!(!u.ready());
         assert_eq!(seen.reports.lock().expect("lock").last(), Some(&None));
-        fake.download_fails.store(false, Ordering::SeqCst);
+        // The same version is not downloaded again, every hour, forever.
         u.check_now();
-        assert!(u.ready(), "the next look downloads it again");
+        u.check_now();
+        assert_eq!(fake.downloads.load(Ordering::SeqCst), 1);
+        // Another version is.
+        fake.download_fails.store(false, Ordering::SeqCst);
+        offer(&fake, "0.2.1");
+        u.check_now();
+        assert!(u.ready());
+        assert_eq!(fake.downloads.load(Ordering::SeqCst), 2);
     }
 
     #[test]
     fn looks_first_soon_then_on_each_interval_until_stopped() {
         let fake = Arc::new(Fake::default());
-        let (u, _) = updates(&fake);
+        let (u, _seen) = updates(&fake);
         let running = Arc::clone(&u);
         let started = std::time::Instant::now();
         let thread = std::thread::spawn(move || {

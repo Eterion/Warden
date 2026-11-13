@@ -13,5 +13,8 @@
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Warden"
+  ; An installer update keeps Start with Windows too.
+  ${If} $UpdateMode != 1
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Warden"
+  ${EndIf}
 !macroend

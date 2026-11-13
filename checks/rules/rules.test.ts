@@ -61,8 +61,22 @@ describe('personal-paths', () => {
   });
 
   it('lets a listed link name its owner, and only there', () => {
-    const owner = personalPathsRule(namesPattern(['Eterion']));
+    // The owner's login is public in the repository's address; `alice` stands for anyone else's name.
+    const owner = personalPathsRule(namesPattern(['Eterion', 'alice']));
     assert.deepEqual(caught(owner, 'README.md', 'git clone https://github.com/Eterion/Warden.git'), []);
+    assert.deepEqual(caught(owner, 'docs/x.md', 'https://github.com/Eterion/Warden/releases/latest'), []);
+    for (const text of [
+      'https://github.com/Eterion/Warden/tree/alice',
+      'https://github.com/Eterion/Warden/issues?q=author:alice',
+      'https://github.com/Eterion/Warden|alice',
+      'http://www.w3.org/2000/svg#alice',
+    ]) {
+      assert.ok(caught(owner, 'docs/x.md', text).includes('local user or machine name "alice"'), text);
+    }
+    assert.deepEqual(caught(owner, 'docs/x.md', 'https://github.com/Eterion/Warden-private'), [
+      'URL "https://github.com/Eterion/Warden-private" (not an allowed host or link; see ALLOWED_LINKS)',
+      'local user or machine name "Eterion"',
+    ]);
     assert.deepEqual(caught(owner, 'README.md', '[its repository](https://github.com/Eterion/Warden)'), []);
     assert.ok(caught(owner, 'README.md', 'Made by Eterion').length > 0, 'name outside the link not caught');
     assert.ok(

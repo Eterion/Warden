@@ -31,7 +31,7 @@ function main(): void {
     try {
       exclude.push(`^${git(['merge-base', base, 'HEAD']).trim()}`);
     } catch {
-      // A base with no commit yet: check everything since the adoption.
+      // A base with no commit yet: check every commit.
     }
   }
   const log = git(['log', '--no-merges', '--format=%h%x00%s', 'HEAD', ...exclude, '--']).trim();

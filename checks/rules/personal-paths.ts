@@ -86,6 +86,11 @@ function isAppCode(path: string): boolean {
   return path.startsWith('crates/') || path.startsWith('ui/src/');
 }
 
+/** A listed link is that address or a page below it, not a longer name (`…/Warden` is not `…/Warden-private`). */
+function endsAtABoundary(link: string, rest: string): boolean {
+  return link.endsWith('/') || /^(?:\.git)?(?:[/?#]|$)/.test(rest);
+}
+
 function hostOf(url: string): string {
   const authority = url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split(/[/?#]/)[0] ?? '';
   const host = authority.slice(authority.lastIndexOf('@') + 1);
@@ -118,14 +123,15 @@ export function personalPathsRule(names: RegExp | null): Rule {
         }
       }
       // A link listed one by one may name its owner (the repository's address names its account), so a name inside
-      // one does not count; anywhere else it does.
+      // the listed link's own text does not count; after it, or anywhere else, it does.
       const listed: { line: number; from: number; to: number }[] = [];
       for (const m of matches(file.text, URL)) {
         const host = hostOf(m.match);
         if (!host || PLACEHOLDER.test(host)) continue;
         if (isExampleOrLocalHost(host) || ALLOWED_HOSTS.includes(host.toLowerCase())) continue;
-        if (ALLOWED_LINKS.some((link) => m.match.startsWith(link))) {
-          listed.push({ line: m.line, from: m.index, to: m.index + m.match.length });
+        const link = ALLOWED_LINKS.find((l) => m.match.startsWith(l) && endsAtABoundary(l, m.match.slice(l.length)));
+        if (link) {
+          listed.push({ line: m.line, from: m.index, to: m.index + link.length });
           continue;
         }
         flag(m.line, `URL "${m.match}" (not an allowed host or link; see ALLOWED_LINKS)`);

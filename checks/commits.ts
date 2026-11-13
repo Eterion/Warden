@@ -1,14 +1,9 @@
 // Commit messages follow Conventional Commits: `type(scope): summary` (AGENTS.md, Commits).
 //
-//   node checks/commits.ts                every commit since Conventional Commits were adopted
+//   node checks/commits.ts                every commit
 //   node checks/commits.ts --base <ref>   only the commits since the branch left <ref>
-//
-// Commits from before the adoption are never checked; history is not rewritten.
 
 import { git } from './lib/repo.ts';
-
-/** The last commit before Conventional Commits; it and everything before it are left alone. */
-export const ADOPTED_AFTER = 'e4c9427e77ce1704fb6e83e18498ae5193fd0a3d';
 
 export const TYPES = ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert'];
 
@@ -31,7 +26,7 @@ function arg(name: string): string | undefined {
 
 function main(): void {
   const base = arg('base');
-  const exclude = [`^${ADOPTED_AFTER}`];
+  const exclude: string[] = [];
   if (base) {
     try {
       exclude.push(`^${git(['merge-base', base, 'HEAD']).trim()}`);

@@ -108,8 +108,12 @@ fn the_codex_apps_folder_is_left_alone() {
 }
 
 #[test]
-fn only_the_usage_endpoint_and_the_sign_in_server_are_allowed() {
-    hosts::assert_only_anthropic_hosts(ALLOWED_OUTBOUND_HOSTS);
+fn only_the_usage_endpoint_the_sign_in_server_and_github_releases_are_allowed() {
+    hosts::assert_only_known_hosts(ALLOWED_OUTBOUND_HOSTS);
+    hosts::assert_request_allowed(
+        "https://github.com/Eterion/Warden/releases/latest/download/latest.json",
+        ALLOWED_OUTBOUND_HOSTS,
+    );
     hosts::assert_request_allowed(
         "https://platform.claude.com/v1/oauth/token",
         ALLOWED_OUTBOUND_HOSTS,

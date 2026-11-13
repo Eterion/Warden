@@ -801,6 +801,8 @@ struct FakeDesktop {
     reads: std::sync::atomic::AtomicUsize,
     /// The folders "Open log folder" asked Explorer to open.
     opened: std::sync::Mutex<Vec<std::path::PathBuf>>,
+    /// How many times "Install and restart" reached the desktop app.
+    installs: std::sync::atomic::AtomicUsize,
 }
 
 impl warden_server::app::Desktop for FakeDesktop {
@@ -821,6 +823,65 @@ impl warden_server::app::Desktop for FakeDesktop {
         self.opened.lock().expect("lock").push(folder.to_owned());
         Ok(())
     }
+
+    fn install_update(&self) -> std::io::Result<()> {
+        self.installs
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[test]
+fn an_update_shows_in_the_state_and_installs_only_when_ready_in_the_desktop_app() {
+    use warden_server::app::UpdateView;
+    let f = Fixture::new();
+    // The browser version has no update and installs none.
+    let server = f.start();
+    assert_eq!(state(server.addr)["update"], Value::Null);
+    assert_eq!(
+        call(server.addr, "POST", "/api/update/install", None).status,
+        400
+    );
+    server.stop();
+
+    let desktop = std::sync::Arc::new(FakeDesktop::default());
+    let server = f.start_with(Some(desktop.clone()));
+    let addr = server.addr;
+    let installs = || desktop.installs.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(state(addr)["update"], Value::Null);
+    assert_eq!(call(addr, "POST", "/api/update/install", None).status, 409);
+    // Downloading: its version and progress; still nothing to install.
+    let before = state(addr)["revision"].as_u64().expect("revision");
+    let downloading = UpdateView {
+        version: "0.2.0".into(),
+        downloaded: Some(40),
+        ready: false,
+    };
+    server.app.set_update(Some(downloading.clone()));
+    let s = state(addr);
+    assert_eq!(
+        s["update"],
+        json!({"version": "0.2.0", "downloaded": 40, "ready": false})
+    );
+    assert!(s["revision"].as_u64().expect("revision") > before);
+    // The same report again changes nothing, so the window is not woken for it.
+    let revision = s["revision"].as_u64();
+    server.app.set_update(Some(downloading));
+    assert_eq!(state(addr)["revision"].as_u64(), revision);
+    assert_eq!(call(addr, "POST", "/api/update/install", None).status, 409);
+    assert_eq!(installs(), 0);
+    // Ready: "Install and restart" reaches the desktop app.
+    server.app.set_update(Some(UpdateView {
+        version: "0.2.0".into(),
+        downloaded: Some(100),
+        ready: true,
+    }));
+    assert_eq!(state(addr)["update"]["ready"], true);
+    assert_eq!(call(addr, "POST", "/api/update/install", None).status, 200);
+    assert_eq!(installs(), 1);
+    server.app.set_update(None);
+    assert_eq!(state(addr)["update"], Value::Null);
+    server.stop();
 }
 
 #[test]

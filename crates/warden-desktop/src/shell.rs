@@ -1,10 +1,13 @@
 //! The Tauri side: the core starts with the app and answers the window in-process through the `warden` URL scheme (no
 //! network port); the window opens and closes around it; the tray icon comes and goes
-//! with Keep running in the tray; identity changes become Windows notifications.
+//! with Keep running in the tray; identity changes become Windows notifications. Release builds keep themselves up
+//! to date from the repository's releases (`updates`).
 
 use crate::Args;
 use crate::alerts::Alerts;
 use crate::autostart::RunValue;
+use crate::updates::{self, Source, Updates};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -15,14 +18,15 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::NewWindowResponse;
 use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
-use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_updater::{Update, UpdaterExt};
 use warden_core::claude::AnthropicUsageEndpoint;
 use warden_core::fallback;
 use warden_core::store::{self, READINGS_FILE, Readings};
 use warden_core::time::now_ms;
 use warden_server::api::{self, SECURITY_HEADERS};
-use warden_server::app::{ApiError, App};
+use warden_server::app::{ApiError, App, Desktop};
 use warden_server::{Config, start_core};
 
 const WINDOW: &str = "main";
@@ -84,6 +88,146 @@ fn quit(app: AppHandle) {
     app.exit(0);
 }
 
+/// Tauri's updater on the repository's latest release manifest (`plugins.updater` in `tauri.conf.json`): it checks
+/// the update's signature against the public key there before anything runs.
+struct Releases {
+    handle: AppHandle,
+}
+
+/// Whether the update download may follow a redirect to `url`: HTTPS to an allowed host only, a few hops at most.
+fn redirect_allowed(url: &Url, hops: usize) -> bool {
+    url.scheme() == "https"
+        && url
+            .host_str()
+            .is_some_and(|h| warden_core::policy::ALLOWED_OUTBOUND_HOSTS.contains(&h))
+        && hops < 5
+}
+
+impl Source for Releases {
+    type Found = Update;
+
+    fn check(&self) -> Result<Option<(String, Update)>, String> {
+        let h = self.handle.clone();
+        let updater = self
+            .handle
+            .updater_builder()
+            .version_comparator(|current, release| updates::is_newer(&current, &release.version))
+            .configure_client(|client| {
+                client.redirect(reqwest::redirect::Policy::custom(|attempt| {
+                    if redirect_allowed(attempt.url(), attempt.previous().len()) {
+                        attempt.follow()
+                    } else {
+                        attempt.stop()
+                    }
+                }))
+            })
+            // Warden closes for the installer: its core stops first, as on Quit.
+            .on_before_exit(move || {
+                if let Some(core) = h.try_state::<Core>() {
+                    core.app.stop();
+                }
+            })
+            .build()
+            .map_err(|e| e.to_string())?;
+        tauri::async_runtime::block_on(updater.check())
+            .map(|found| found.map(|u| (u.version.clone(), u)))
+            .map_err(|e| e.to_string())
+    }
+
+    fn download(
+        &self,
+        found: &Update,
+        progress: &mut dyn FnMut(u64, Option<u64>),
+    ) -> Result<Vec<u8>, String> {
+        let mut done = 0_u64;
+        let chunk = |len: usize, total: Option<u64>| {
+            done += len as u64;
+            progress(done, total);
+        };
+        tauri::async_runtime::block_on(found.download(chunk, || {})).map_err(|e| e.to_string())
+    }
+
+    fn install(&self, found: &Update, bytes: &[u8], restart: bool) -> Result<(), String> {
+        found
+            .clone()
+            .restart_after_install(restart)
+            .install(bytes)
+            .map_err(|e| e.to_string())
+    }
+}
+
+type ReleaseUpdates = Arc<Updates<Releases>>;
+
+/// What only the desktop app does for the core: start with Windows, Explorer, and installing the update.
+struct DesktopSide {
+    run: RunValue,
+    handle: AppHandle,
+}
+
+impl Desktop for DesktopSide {
+    fn start_with_windows(&self) -> bool {
+        self.run.is_set()
+    }
+
+    fn set_start_with_windows(&self, on: bool) -> io::Result<()> {
+        self.run.set(on)
+    }
+
+    fn open_folder(&self, folder: &Path) -> io::Result<()> {
+        fallback::open_folder(folder)
+    }
+
+    fn install_update(&self) -> io::Result<()> {
+        let updates = self
+            .handle
+            .try_state::<ReleaseUpdates>()
+            .map(|u| Arc::clone(&u))
+            .ok_or_else(|| io::Error::other("this build does not update itself"))?;
+        if !updates.ready() {
+            return Err(io::Error::other("no update is ready"));
+        }
+        // A moment first, so the page gets its answer and shows the update installing before Warden closes.
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            updates.install(true);
+        });
+        Ok(())
+    }
+}
+
+/// The tray's "Install update and restart": asks first, as the window does.
+fn confirm_install(handle: &AppHandle) {
+    let Some(core) = handle.try_state::<Core>() else {
+        return;
+    };
+    let Some(version) = core.app.update().filter(|u| u.ready).map(|u| u.version) else {
+        return;
+    };
+    let h = handle.clone();
+    handle
+        .dialog()
+        .message("Warden closes, installs the update and starts again.")
+        .title(format!("Install Warden {version}?"))
+        .kind(MessageDialogKind::Info)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Install and restart".into(),
+            "Cancel".into(),
+        ))
+        .show(move |yes| {
+            if yes && let Some(updates) = h.try_state::<ReleaseUpdates>() {
+                let updates = Arc::clone(&updates);
+                std::thread::spawn(move || updates.install(true));
+            }
+        });
+}
+
+/// Whether an update is downloaded and ready, for the tray menu.
+fn update_ready(handle: &AppHandle) -> bool {
+    handle
+        .try_state::<ReleaseUpdates>()
+        .is_some_and(|u| u.ready())
+}
+
 /// Opens the window, or brings it back if it is already open.
 pub fn open_window(handle: &AppHandle) {
     if let Some(w) = handle.get_webview_window(WINDOW) {
@@ -122,14 +266,26 @@ fn set_tray(handle: &AppHandle, on: bool) {
     }
     let built = (|| -> tauri::Result<()> {
         let open = MenuItem::with_id(handle, "open", "Open Warden", true, None::<&str>)?;
+        let install = MenuItem::with_id(
+            handle,
+            "install",
+            "Install update and restart",
+            true,
+            None::<&str>,
+        )?;
         let quit = MenuItem::with_id(handle, "quit", "Quit Warden", true, None::<&str>)?;
-        let menu = Menu::with_items(handle, &[&open, &quit])?;
+        let menu = if update_ready(handle) {
+            Menu::with_items(handle, &[&open, &install, &quit])?
+        } else {
+            Menu::with_items(handle, &[&open, &quit])?
+        };
         let mut tray = TrayIconBuilder::with_id(TRAY)
             .tooltip("Warden")
             .menu(&menu)
             .show_menu_on_left_click(false)
             .on_menu_event(|app, event| match event.id().as_ref() {
                 "open" => open_window(app),
+                "install" => confirm_install(app),
                 "quit" => app.exit(0),
                 _ => {}
             })
@@ -154,14 +310,24 @@ fn set_tray(handle: &AppHandle, on: bool) {
     }
 }
 
-/// Follows the core's state without polling: the tray icon with Keep running in the tray, and a notification for
-/// each identity change.
+/// Follows the core's state without polling: the tray icon with Keep running in the tray (its menu offers a ready
+/// update), and a notification for each identity change.
 ///
 /// It starts from the core's first revision, so whatever changed while the window was being built is caught up.
 fn follow(handle: AppHandle, app: Arc<App>, mut alerts: Alerts, mut tray: bool) {
     let mut revision = 0;
+    let mut ready = update_ready(&handle);
     while let Some(r) = app.wait_for_change(revision) {
         revision = r;
+        let now_ready = update_ready(&handle);
+        if now_ready != ready && tray {
+            let h = handle.clone();
+            let _ = handle.run_on_main_thread(move || {
+                h.remove_tray_by_id(TRAY);
+                set_tray(&h, true);
+            });
+        }
+        ready = now_ready;
         let keep = app.keep_in_tray();
         if keep != tray {
             tray = keep;
@@ -209,7 +375,10 @@ fn start_app(
         sign_in_server: Arc::new(warden_core::mainlogin::AnthropicSignInServer::default()),
         sign_in: Arc::new(fallback::start_sign_in),
         log: Arc::new(|line| eprintln!("{} warden: {line}", now_ms())),
-        desktop: Some(Arc::new(desktop)),
+        desktop: Some(Arc::new(DesktopSide {
+            run: desktop,
+            handle: handle.clone(),
+        })),
         route_exe,
     })
     .map_err(|e| format!("Warden could not start its core: {e}"))?;
@@ -223,6 +392,19 @@ fn start_app(
         page: PageLoad::default(),
         webview_dir,
     });
+
+    if updates::enabled() {
+        let (to_core, to_log) = (Arc::clone(&app), Arc::clone(&app));
+        let releases: ReleaseUpdates = Arc::new(Updates::new(
+            Releases {
+                handle: handle.clone(),
+            },
+            move |update| to_core.set_update(update),
+            move |line| (to_log.log)(line),
+        ));
+        handle.manage(Arc::clone(&releases));
+        std::thread::spawn(move || releases.run(updates::FIRST_CHECK, updates::EVERY));
+    }
 
     let keep = app.keep_in_tray();
     set_tray(handle, keep);
@@ -373,6 +555,7 @@ pub fn run(
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![pick_folder, quit])
         // The page and its API, in-process: each request on a thread of its own, since the long poll waits.
         .register_asynchronous_uri_scheme_protocol(SCHEME, |ctx, request, responder| {
@@ -414,6 +597,11 @@ pub fn run(
             }
         }
         RunEvent::Exit => {
+            // Quitting installs a downloaded update (without starting Warden again); Warden closes for it.
+            if let Some(updates) = handle.try_state::<ReleaseUpdates>() {
+                updates.stop();
+                updates.install(false);
+            }
             if let Some(core) = handle.try_state::<Core>() {
                 core.app.stop();
             }
@@ -464,6 +652,47 @@ mod tests {
         let csp = config["app"]["security"]["csp"].as_str().expect("a CSP");
         // The bridge to the window (its controls, the folder picker, Quit) is the only other connection.
         warden_rules::csp::assert_strict(csp, &["ipc:", "http://ipc.localhost"]);
+    }
+
+    #[test]
+    fn the_update_download_follows_redirects_only_to_allowed_hosts() {
+        let url = |u: &str| Url::parse(u).expect("url");
+        for allowed in [
+            "https://github.com/Eterion/Warden/releases/latest/download/latest.json",
+            "https://objects.githubusercontent.com/github-production-release-asset/1",
+            "https://release-assets.githubusercontent.com/github-production-release-asset/1",
+        ] {
+            assert!(redirect_allowed(&url(allowed), 1), "{allowed}");
+        }
+        for refused in [
+            "http://github.com/Eterion/Warden/releases/latest/download/latest.json",
+            "https://example.com/latest.json",
+            "https://github.com.example.com/x",
+        ] {
+            assert!(!redirect_allowed(&url(refused), 1), "{refused}");
+        }
+        assert!(
+            !redirect_allowed(&url("https://github.com/x"), 5),
+            "too many hops"
+        );
+    }
+
+    #[test]
+    fn the_updater_reads_the_repositorys_latest_release() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri.conf.json");
+        let updater = &config["plugins"]["updater"];
+        assert_eq!(
+            updater["endpoints"],
+            serde_json::json!([
+                "https://github.com/Eterion/Warden/releases/latest/download/latest.json"
+            ])
+        );
+        assert_eq!(updater["windows"]["installMode"], "passive");
+        assert!(updater["pubkey"].as_str().is_some_and(|k| !k.is_empty()));
+        let installer: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.installer.conf.json")).expect("installer");
+        assert_eq!(installer["bundle"]["createUpdaterArtifacts"], true);
     }
 
     #[test]

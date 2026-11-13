@@ -2,6 +2,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "resources": {
       "../../ui/dist/": "ui/",
       "../../target/release/warden.exe": "bin/warden.exe"

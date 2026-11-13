@@ -3,7 +3,6 @@
 
 use std::io;
 use std::path::Path;
-use warden_server::app::Desktop;
 use windows_registry::CURRENT_USER;
 
 /// Where Windows looks for programs to start when the user signs in.
@@ -93,20 +92,6 @@ impl RunValue {
             Err(e) if io::Error::from(e.clone()).kind() == io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(e.into()),
         }
-    }
-}
-
-impl Desktop for RunValue {
-    fn start_with_windows(&self) -> bool {
-        self.is_set()
-    }
-
-    fn set_start_with_windows(&self, on: bool) -> io::Result<()> {
-        self.set(on)
-    }
-
-    fn open_folder(&self, folder: &Path) -> io::Result<()> {
-        warden_core::fallback::open_folder(folder)
     }
 }
 

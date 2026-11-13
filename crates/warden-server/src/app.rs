@@ -56,6 +56,18 @@ pub trait Desktop: Send + Sync {
     fn set_start_with_windows(&self, on: bool) -> io::Result<()>;
     /// Opens a folder in Explorer ("Open log folder").
     fn open_folder(&self, folder: &Path) -> io::Result<()>;
+    /// Installs the downloaded update and starts Warden again ("Install and restart"); Warden closes for it.
+    fn install_update(&self) -> io::Result<()>;
+}
+
+/// A newer Warden the desktop app found: downloading (`downloaded` the percent done, `None` before it starts or
+/// while the size is not known) or `ready` to install.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateView {
+    pub version: String,
+    pub downloaded: Option<u8>,
+    pub ready: bool,
 }
 
 /// A change to the settings; fields left out stay as they are.
@@ -121,6 +133,8 @@ struct Inner {
     /// Whether Warden starts with Windows (desktop app only): read from the registry at start and after each change
     /// through the settings, not on every state answer.
     start_with_windows: Option<bool>,
+    /// A newer Warden the desktop app found, as its updater reports it.
+    update: Option<UpdateView>,
     /// A usage reading was asked for (an account added, a setting changed) and the usage loop has not started it
     /// yet. Kept as a flag, so a wake-up while a reading runs is not lost.
     usage_wanted: bool,
@@ -257,6 +271,8 @@ pub struct StateView {
     sessions: Vec<Session>,
     activity: Vec<ActivityView>,
     desktop: Option<DesktopView>,
+    /// A newer Warden, found by the desktop app; `null` when there is nothing newer and in the browser version.
+    update: Option<UpdateView>,
 }
 
 #[derive(Serialize)]
@@ -398,6 +414,7 @@ impl App {
                 hooked: HashSet::new(),
                 watched: HashSet::new(),
                 start_with_windows: desktop.as_ref().map(|d| d.start_with_windows()),
+                update: None,
                 usage_wanted: false,
                 // The loop starts with a reading.
                 usage_busy: true,
@@ -532,6 +549,7 @@ impl App {
             desktop: inner.start_with_windows.map(|on| DesktopView {
                 start_with_windows: on,
             }),
+            update: inner.update.clone(),
         }
     }
 
@@ -1267,6 +1285,34 @@ impl App {
                 (self.log)(&format!("could not open the log folder: {e}"));
                 ApiError(500, "Warden could not open the log folder.".into())
             })
+    }
+
+    /// The desktop app's updater reports a newer Warden, its download, or nothing newer.
+    pub fn set_update(&self, update: Option<UpdateView>) {
+        let mut inner = self.lock();
+        if inner.update != update {
+            inner.update = update;
+            self.touch_sessions(&mut inner);
+        }
+    }
+
+    /// The newer Warden the desktop app found, if any.
+    pub fn update(&self) -> Option<UpdateView> {
+        self.lock().update.clone()
+    }
+
+    /// "Install and restart": the desktop app installs the downloaded update and starts again.
+    pub fn install_update(&self) -> ApiResult<()> {
+        let Some(desktop) = &self.desktop else {
+            return Err(ApiError::bad("Only the desktop app installs updates."));
+        };
+        if !self.lock().update.as_ref().is_some_and(|u| u.ready) {
+            return Err(ApiError(409, "No update is ready to install.".into()));
+        }
+        desktop.install_update().map_err(|e| {
+            (self.log)(&format!("could not install the update: {e}"));
+            ApiError(500, "Warden could not install the update.".into())
+        })
     }
 
     pub fn set_settings(&self, patch: SettingsPatch) -> ApiResult<()> {

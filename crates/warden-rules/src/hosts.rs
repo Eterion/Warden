@@ -1,16 +1,26 @@
-//! Rule: outbound calls go only to Anthropic's usage and sign-in servers.
+//! Rule: outbound calls go only to Anthropic's usage and sign-in servers, and to GitHub for the installed app's
+//! updates (the release manifest and installer, and the asset hosts GitHub sends the download on to).
 
 /// The usage endpoint's host.
 pub const USAGE_ENDPOINT_HOST: &str = "api.anthropic.com";
 pub const SIGN_IN_HOST: &str = "platform.claude.com";
+/// Where the installed app's updates come from.
+pub const UPDATE_HOSTS: &[&str] = &[
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+];
 
-/// Panics unless `allowed` holds exactly the usage and sign-in hosts.
-pub fn assert_only_anthropic_hosts(allowed: &[&str]) {
+/// Panics unless `allowed` holds exactly the usage and sign-in hosts and the update hosts, each once.
+pub fn assert_only_known_hosts(allowed: &[&str]) {
+    let mut expected = vec![USAGE_ENDPOINT_HOST, SIGN_IN_HOST];
+    expected.extend(UPDATE_HOSTS);
+    expected.sort_unstable();
+    let mut got = allowed.to_vec();
+    got.sort_unstable();
     assert!(
-        allowed.len() == 2
-            && allowed.contains(&USAGE_ENDPOINT_HOST)
-            && allowed.contains(&SIGN_IN_HOST),
-        "rule broken: allowed outbound hosts are {allowed:?}, expected only the usage and sign-in servers"
+        got == expected,
+        "rule broken: allowed outbound hosts are {allowed:?}, expected only the usage and sign-in servers and the update hosts {UPDATE_HOSTS:?}"
     );
 }
 
@@ -44,21 +54,46 @@ pub fn assert_request_allowed(url: &str, allowed: &[&str]) {
 mod tests {
     use super::*;
 
+    fn known() -> Vec<&'static str> {
+        let mut all = vec![SIGN_IN_HOST];
+        all.extend(UPDATE_HOSTS.iter().rev());
+        all.push(USAGE_ENDPOINT_HOST);
+        all
+    }
+
     #[test]
-    fn exactly_the_two_anthropic_hosts_pass() {
-        assert_only_anthropic_hosts(&[USAGE_ENDPOINT_HOST, SIGN_IN_HOST]);
+    fn exactly_the_known_hosts_pass_in_any_order() {
+        assert_only_known_hosts(&known());
     }
 
     #[test]
     #[should_panic(expected = "rule broken")]
     fn extra_host_is_caught() {
-        assert_only_anthropic_hosts(&[USAGE_ENDPOINT_HOST, SIGN_IN_HOST, "telemetry.example.com"]);
+        let mut hosts = known();
+        hosts.push("telemetry.example.com");
+        assert_only_known_hosts(&hosts);
     }
 
     #[test]
     #[should_panic(expected = "rule broken")]
     fn missing_sign_in_host_is_caught() {
-        assert_only_anthropic_hosts(&[USAGE_ENDPOINT_HOST]);
+        assert_only_known_hosts(&[USAGE_ENDPOINT_HOST]);
+    }
+
+    #[test]
+    #[should_panic(expected = "rule broken")]
+    fn a_host_swapped_for_another_is_caught() {
+        let mut hosts = known();
+        hosts[1] = "gist.github.com";
+        assert_only_known_hosts(&hosts);
+    }
+
+    #[test]
+    fn the_update_manifest_request_passes() {
+        assert_request_allowed(
+            "https://github.com/Eterion/Warden/releases/latest/download/latest.json",
+            &known(),
+        );
     }
 
     #[test]

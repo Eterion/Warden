@@ -31,6 +31,8 @@ import { affectedPages } from './lib/pages.ts';
 
 type Fixture =
   | 'normal'
+  | 'desktopDownloading'
+  | 'desktopUpdate'
   | 'hooksOff'
   | 'setup'
   | 'offline'
@@ -419,6 +421,60 @@ export const PAGES: {
     ready: 'text=Read usage every',
   },
   {
+    name: 'desktop-update-downloading',
+    path: '/?desktop',
+    fixture: 'desktopDownloading',
+    ready: '[role=progressbar]',
+  },
+  {
+    name: 'desktop-update-ready',
+    path: '/?desktop',
+    fixture: 'desktopUpdate',
+    ready: 'button[aria-label="Install Warden 0.2.0 and restart"]',
+  },
+  {
+    name: 'desktop-update-ready-pressed',
+    path: '/?desktop',
+    fixture: 'desktopUpdate',
+    ready: 'button[aria-label="Install Warden 0.2.0 and restart"]',
+    steps: [
+      {
+        press: 'button[aria-label="Install Warden 0.2.0 and restart"]',
+      },
+    ],
+  },
+  {
+    name: 'desktop-update-confirm',
+    path: '/?desktop',
+    fixture: 'desktopUpdate',
+    ready: 'button[aria-label="Install Warden 0.2.0 and restart"]',
+    steps: [
+      {
+        click: 'button[aria-label="Install Warden 0.2.0 and restart"]',
+      },
+      {
+        waitFor: 'text=Warden closes, installs the update and starts again.',
+      },
+    ],
+  },
+  {
+    name: 'desktop-update-installing',
+    path: '/?desktop',
+    fixture: 'desktopUpdate',
+    ready: 'button[aria-label="Install Warden 0.2.0 and restart"]',
+    steps: [
+      {
+        click: 'button[aria-label="Install Warden 0.2.0 and restart"]',
+      },
+      {
+        click: 'button[type=submit]:has-text("Install and restart")',
+      },
+      {
+        waitFor: '[role=status]:has-text("Installing Warden 0.2.0")',
+      },
+    ],
+  },
+  {
     name: 'desktop-add-existing-folder',
     path: '/?desktop#/settings/accounts/add',
     fixture: 'desktop',
@@ -524,7 +580,7 @@ function fakeApi(current: () => Fixture): Plugin {
           fixture === 'setupOtherAccount' ||
           fixture === 'setupFive'
             ? setupState(now)
-            : fixture === 'desktop'
+            : fixture === 'desktop' || fixture === 'desktopDownloading' || fixture === 'desktopUpdate'
               ? desktopState(now)
               : fixture === 'tree'
                 ? treeState(now)
@@ -532,6 +588,8 @@ function fakeApi(current: () => Fixture): Plugin {
                   ? healthyState(now)
                   : normalState(now);
         if (fixture === 'hooksOff') state.hooksOff = true;
+        if (fixture === 'desktopDownloading') state.update = { version: '0.2.0', downloaded: 45, ready: false };
+        if (fixture === 'desktopUpdate') state.update = { version: '0.2.0', downloaded: 100, ready: true };
         if (fixture === 'setupSignedOut' && state.main) {
           state.main.identity = null;
           state.problems = [{ kind: 'claudeAppSignedOut' }];

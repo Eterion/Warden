@@ -360,6 +360,7 @@ fn start_app(
     data_dir: PathBuf,
     ui_dir: Option<PathBuf>,
     route_exe: Option<PathBuf>,
+    self_update: bool,
 ) -> Result<(), String> {
     let desktop = RunValue::for_this_app(&args.options())
         .map_err(|e| format!("could not find Warden's own program: {e}"))?;
@@ -393,7 +394,7 @@ fn start_app(
         webview_dir,
     });
 
-    if updates::enabled() {
+    if self_update {
         let (to_core, to_log) = (Arc::clone(&app), Arc::clone(&app));
         let releases: ReleaseUpdates = Arc::new(Updates::new(
             Releases {
@@ -538,11 +539,13 @@ pub fn instance_id(identifier: &str, data_dir: Option<&Path>) -> String {
     format!("{identifier}.{hash:016x}")
 }
 
+/// `self_update`: this is the installed app in a release build, which keeps itself up to date.
 pub fn run(
     args: Args,
     data_dir: PathBuf,
     ui_dir: Option<PathBuf>,
     route_exe: Option<PathBuf>,
+    self_update: bool,
 ) -> ExitCode {
     // One Warden per data folder: the single-instance plugin keys on the identifier.
     let mut context = tauri::generate_context!();
@@ -564,7 +567,7 @@ pub fn run(
         })
         .setup(move |app| {
             let handle = app.handle().clone();
-            if let Err(e) = start_app(&handle, &args, data_dir, ui_dir, route_exe) {
+            if let Err(e) = start_app(&handle, &args, data_dir, ui_dir, route_exe, self_update) {
                 eprintln!("warden-desktop: {e}");
                 let h = handle.clone();
                 handle
@@ -665,16 +668,17 @@ mod tests {
             assert!(redirect_allowed(&url(allowed), 1), "{allowed}");
         }
         for refused in [
-            "http://github.com/Eterion/Warden/releases/latest/download/latest.json",
             "https://example.com/latest.json",
             "https://github.com.example.com/x",
         ] {
             assert!(!redirect_allowed(&url(refused), 1), "{refused}");
         }
-        assert!(
-            !redirect_allowed(&url("https://github.com/x"), 5),
-            "too many hops"
-        );
+        let manifest =
+            url("https://github.com/Eterion/Warden/releases/latest/download/latest.json");
+        let mut plain = manifest.clone();
+        plain.set_scheme("http").expect("http");
+        assert!(!redirect_allowed(&plain, 1), "plain HTTP");
+        assert!(!redirect_allowed(&manifest, 5), "too many hops");
     }
 
     #[test]
@@ -690,9 +694,13 @@ mod tests {
         );
         assert_eq!(updater["windows"]["installMode"], "passive");
         assert!(updater["pubkey"].as_str().is_some_and(|k| !k.is_empty()));
+        // Only the release workflow signs the update artifacts; a local installer build needs no key.
+        let release: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.release.conf.json")).expect("release");
+        assert_eq!(release["bundle"]["createUpdaterArtifacts"], true);
         let installer: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.installer.conf.json")).expect("installer");
-        assert_eq!(installer["bundle"]["createUpdaterArtifacts"], true);
+        assert!(installer["bundle"].get("createUpdaterArtifacts").is_none());
     }
 
     #[test]

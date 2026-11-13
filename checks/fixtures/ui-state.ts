@@ -102,6 +102,7 @@ export function normalState(now: number): State {
     sessions: sessions(now),
     activity: activity(now),
     desktop: null,
+    update: null,
   };
 }
 

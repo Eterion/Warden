@@ -1,6 +1,12 @@
 # Warden
 
-Warden is a Windows desktop app that watches your Claude and Codex accounts: how much of each limit is used, and which sessions are working, waiting for you or idle. Main is the Claude app's account; every other account is Warden's, in its own folder, with one switch that lets it take delegated work. A routing hook in main tells its AI where to run its work: main works itself until it reaches the share of its week you keep for your own work, which shrinks with the work hours left before its reset, and delegated work goes to the account whose allowance would otherwise go unused. Everything runs on your computer; the only outside calls are Anthropic's usage endpoint and its sign-in server, for Warden's own sign-in to main.
+Warden is a Windows desktop app that watches your Claude and Codex accounts: how much of each limit is used, and which sessions are working, waiting for you or idle. Main is the Claude app's account; every other account is Warden's, in its own folder, with one switch that lets it take delegated work. A routing hook in main tells its AI where to run its work: main works itself until it reaches the share of its week you keep for your own work, which shrinks with the work hours left before its reset, and delegated work goes to the account whose allowance would otherwise go unused. Everything runs on your computer; the only outside calls are Anthropic's usage endpoint and its sign-in server, for Warden's own sign-in to main, and GitHub, where the installed app looks for its updates.
+
+## Install
+
+Download `Warden_<version>_x64-setup.exe` from [the latest release](https://github.com/Eterion/Warden/releases/latest) and run it. The installer is not Windows code-signed, so on a fresh install SmartScreen warns once: choose More info, then Run anyway.
+
+Warden keeps itself up to date: it looks for a newer release when it starts and then every hour, downloads it on its own (the progress shows at the bottom of the sidebar), and installs it only when you choose Install and restart and confirm, or when you quit it.
 
 ## Build and run
 

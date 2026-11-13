@@ -116,6 +116,16 @@ fn find_route_exe(exe_dir: &Path) -> Option<PathBuf> {
         .find(|f| f.is_file())
 }
 
+/// Whether this is the installed app: the installer puts `warden.exe` in `bin` beside it. Only it updates itself, so
+/// a build run from `target` (the checks, a throwaway Warden beside your own) never looks for updates or replaces the
+/// installed app.
+fn installed(exe_dir: &Path) -> bool {
+    exe_dir
+        .join("bin")
+        .join(format!("warden{}", std::env::consts::EXE_SUFFIX))
+        .is_file()
+}
+
 fn main() -> ExitCode {
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let args = match parse(&raw) {
@@ -142,7 +152,12 @@ fn main() -> ExitCode {
     let route_exe = std::env::current_exe()
         .ok()
         .and_then(|exe| find_route_exe(exe.parent()?));
-    shell::run(args, data_dir, ui_dir, route_exe)
+    let self_update = updates::enabled()
+        && std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(installed))
+            .unwrap_or(false);
+    shell::run(args, data_dir, ui_dir, route_exe, self_update)
 }
 
 #[cfg(test)]
@@ -235,6 +250,19 @@ mod tests {
             find_route_exe(dir.path()),
             Some(dir.path().join("bin").join(&name))
         );
+    }
+
+    #[test]
+    fn only_the_installed_app_updates_itself() {
+        let dir = warden_core::testdir::Dir::new("installed");
+        let name = format!("warden{}", std::env::consts::EXE_SUFFIX);
+        assert!(!installed(dir.path()));
+        // A build in `target/<profile>` has warden.exe beside it, not in `bin`.
+        std::fs::write(dir.path().join(&name), "").expect("write");
+        assert!(!installed(dir.path()));
+        std::fs::create_dir_all(dir.path().join("bin")).expect("mkdir");
+        std::fs::write(dir.path().join("bin").join(&name), "").expect("write");
+        assert!(installed(dir.path()));
     }
 
     #[test]

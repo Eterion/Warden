@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// The full-height sidebar: Warden, Overview, the accounts in use with their weekly bars, Settings at the bottom. In
+// The full-height sidebar: Warden, Overview, the accounts in use with their weekly bars, a newer Warden's download or
+// "Install and restart", and Settings at the bottom. In
 // the desktop app, Warden's name opens the app menu (Quit) and the row around it moves the window.
 import { ChevronDown, LayoutDashboard, Power, Radar, Settings } from 'lucide-vue-next';
 import { DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from 'reka-ui';
@@ -14,6 +15,7 @@ import { desktop, quit } from '../desktop';
 import { limitView, loginIdle } from '../format';
 import { openSettings } from '../route';
 import { store, usedAccounts } from '../store';
+import UpdateItem from './UpdateItem.vue';
 
 const accounts = computed(() =>
   usedAccounts(store.state).map((a) => {
@@ -84,6 +86,7 @@ const accounts = computed(() =>
     </ul>
 
     <div class="mt-auto flex flex-col gap-0.5">
+      <UpdateItem />
       <NavItem :icon="Settings" @click="openSettings()">Settings</NavItem>
     </div>
   </aside>

@@ -348,6 +348,12 @@
     "use": "slider fill against its track"
   },
   {
+    "fg": "fill",
+    "bg": ["win", "track-win"],
+    "min": 3,
+    "use": "update download progress in the sidebar, against its track"
+  },
+  {
     "fg": "chip-off-text",
     "bg": ["modal", "chip-off"],
     "min": 4.5,

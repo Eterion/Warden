@@ -1,0 +1,71 @@
+# Builds, signs and publishes a release when a version tag (vX.Y.Z) is pushed: the installer, its update signature and
+# the update manifest (latest.json) the installed app reads. Releases are made only when the user asks
+# (docs/releasing.md).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Rust
+        run: rustup update stable && rustup default stable
+
+      - name: The tag matches the version
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$version" -ne '${{ github.ref_name }}') {
+            throw "The tag ${{ github.ref_name }} does not match the workspace version $version."
+          }
+
+      - run: npm ci
+
+      - name: Build and sign the installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run desktop:release
+
+      - name: Write the update manifest
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          $dir = 'target/release/bundle/nsis'
+          $exe = "Warden_${version}_x64-setup.exe"
+          $download = '${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}'
+          $manifest = [ordered]@{
+            version   = $version
+            notes     = "Warden $version"
+            pub_date  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            platforms = [ordered]@{
+              'windows-x86_64' = [ordered]@{
+                signature = (Get-Content "$dir/$exe.sig" -Raw).Trim()
+                url       = "$download/$exe"
+              }
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content "$dir/latest.json" -Encoding utf8NoBOM
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          $dir = 'target/release/bundle/nsis'
+          $exe = "Warden_${version}_x64-setup.exe"
+          gh release create '${{ github.ref_name }}' "$dir/$exe" "$dir/$exe.sig" "$dir/latest.json" --title "Warden $version" --notes "Warden $version"

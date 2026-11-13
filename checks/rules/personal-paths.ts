@@ -12,7 +12,13 @@ import { hostname, userInfo } from 'node:os';
 import { isGenerated, isRuleFixture, matches, type Rule, type Violation } from './types.ts';
 
 /** The only outside hosts the repo may name. Anything else that leaks a host needs its own entry here. */
-export const ALLOWED_HOSTS = ['api.anthropic.com', 'platform.claude.com'];
+export const ALLOWED_HOSTS = [
+  'api.anthropic.com',
+  'platform.claude.com',
+  // GitHub's release asset hosts, where the update download is sent on to; github.com itself only through ALLOWED_LINKS.
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com',
+];
 
 /**
  * Links allowed one by one: documentation and fixed names that are not calls. Each allows that address or a page

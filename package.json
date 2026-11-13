@@ -17,6 +17,7 @@
     "review:codex": "node checks/review-codex.ts",
     "format": "node checks/format.ts --write",
     "desktop:installer": "npm run build -w ui && cargo build --release -p warden-cli && tauri build --config crates/warden-desktop/tauri.installer.conf.json",
+    "desktop:release": "npm run build -w ui && cargo build --release -p warden-cli && tauri build --config crates/warden-desktop/tauri.installer.conf.json --config crates/warden-desktop/tauri.release.conf.json",
     "demo": "node checks/demo.ts"
   },
   "devDependencies": {

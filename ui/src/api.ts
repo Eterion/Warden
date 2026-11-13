@@ -117,6 +117,15 @@ export interface State {
   activity: { accountId: string; bins: Bin[] }[];
   /** Present only in the desktop app. */
   desktop: { startWithWindows: boolean } | null;
+  /** A newer Warden the desktop app found; null when there is nothing newer and in the browser version. */
+  update: Update | null;
+}
+
+/** A newer Warden: downloading (`downloaded` the percent done, null before it starts) or ready to install. */
+export interface Update {
+  version: string;
+  downloaded: number | null;
+  ready: boolean;
 }
 
 export interface Candidate {
@@ -185,6 +194,7 @@ export const api = {
   signIn: (id: string) => request<State>('POST', '/api/accounts/' + encodeURIComponent(id) + '/sign-in'),
   repairHooks: (id: string) => request<State>('POST', '/api/accounts/' + encodeURIComponent(id) + '/hooks/repair'),
   openLogFolder: () => request<State>('POST', '/api/logs/open'),
+  installUpdate: () => request<State>('POST', '/api/update/install'),
 };
 
 export type SessionState = 'working' | 'waiting' | 'idle' | 'done';

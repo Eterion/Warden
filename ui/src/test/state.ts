@@ -43,5 +43,6 @@ export function state(accounts: Account[]): State {
     sessions: [],
     activity: [],
     desktop: null,
+    update: null,
   };
 }

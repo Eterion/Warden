@@ -138,6 +138,17 @@ interface State {
   activity: { accountId: string; bins: Bin[] }[];
   /** Present only in the desktop app. */
   desktop: { startWithWindows: boolean } | null;
+  /** A newer Warden the desktop app found (release builds); null when there is nothing newer and in the browser version. */
+  update: Update | null;
+}
+
+/** A newer Warden: downloading (`downloaded` the percent done in steps of 5, null before it starts or while its size
+ * is not known) or ready to install. The state changes at most once per step, so the window is not woken for every
+ * chunk. */
+interface Update {
+  version: string;
+  downloaded: number | null;
+  ready: boolean;
 }
 
 interface Candidate {
@@ -201,6 +212,7 @@ interface Bin {
 | `PATCH /api/accounts/{id}`             | `{ label?, enabled? }`                                        | `State`; main uses its own Rename endpoint. The switch installs/removes the status hook.                                                                                                                                                                                                                                                                                   |
 | `POST /api/accounts/{id}/identity`     | `{ action: 'accept' }`                                        | `State`; accepts the new identity as this account's from now on                                                                                                                                                                                                                                                                                                            |
 | `DELETE /api/accounts/{id}`            |                                                               | `State`; Warden forgets the account. Its hooks are removed (as below); the folder is otherwise left as it is. `500` when the hooks could not be removed; the account then stays.                                                                                                                                                                                           |
+| `POST /api/update/install`             |                                                               | `State`; the desktop app installs the downloaded update and starts again, closing for the installer shortly after it answers. `400` in the browser version; `409` when no update is ready; `500` when the installer could not start.                                                                                                                                       |
 | `POST /api/logs/open`                  |                                                               | `State`, after the desktop app opened `logDir` in Explorer (`500` when it could not); `400` in the browser version, which shows the path only.                                                                                                                                                                                                                             |
 
 A Warden account has only its status hook, exactly while `enabled` is true. Main always has both hooks once setup with accounts finishes. Switching off or removing an account restores its backup; a missing or untrusted wanted hook offers Repair.

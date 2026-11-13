@@ -4,9 +4,11 @@ Warden is a Windows desktop app that watches your Claude and Codex accounts: how
 
 ## Build and run
 
-You need Rust 1.88 or later (1.95 for the desktop app), Node 24.2 or later, and Windows. Install the UI tooling once:
+You need Rust 1.88 or later (1.95 for the desktop app), Node 24.2 or later, and Windows. Get the code from [its repository on GitHub](https://github.com/Eterion/Warden) and install the UI tooling once:
 
 ```sh
+git clone https://github.com/Eterion/Warden.git
+cd Warden
 npm ci
 ```
 

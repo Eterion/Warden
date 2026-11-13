@@ -1,0 +1,30 @@
+{
+  "name": "warden",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "ui"
+  ],
+  "engines": {
+    "node": ">=24.2"
+  },
+  "scripts": {
+    "check": "node checks/run.ts --scope all --level full",
+    "check:changed": "node checks/run.ts --scope changed --level full",
+    "check:quick": "node checks/run.ts --scope changed --level quick",
+    "rules": "node checks/rules/run.ts",
+    "review:prep": "node checks/review-prep.ts",
+    "review:codex": "node checks/review-codex.ts",
+    "format": "node checks/format.ts --write",
+    "desktop:installer": "npm run build -w ui && cargo build --release -p warden-cli && tauri build --config crates/warden-desktop/tauri.installer.conf.json",
+    "demo": "node checks/demo.ts"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
+    "@types/node": "^26.6.6",
+    "axe-core": "^4.14.0",
+    "playwright-core": "^1.65.0",
+    "prettier": "^3.9.10",
+    "typescript": "^6.0.3"
+  }
+}

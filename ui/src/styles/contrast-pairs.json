@@ -1,0 +1,1226 @@
+[
+  {
+    "fg": "text",
+    "bg": ["panel"],
+    "min": 4.5,
+    "use": "body text in the content panel"
+  },
+  {
+    "fg": "text",
+    "bg": ["win"],
+    "min": 4.5,
+    "use": "sidebar and status bar text"
+  },
+  {
+    "fg": "text",
+    "bg": ["win", "active"],
+    "min": 4.5,
+    "use": "active sidebar item"
+  },
+  {
+    "fg": "text",
+    "bg": ["modal"],
+    "min": 4.5,
+    "use": "modal text"
+  },
+  {
+    "fg": "text",
+    "bg": ["nav"],
+    "min": 4.5,
+    "use": "modal sidebar text"
+  },
+  {
+    "fg": "text",
+    "bg": ["panel", "selected-bg"],
+    "min": 4.5,
+    "use": "selected table row"
+  },
+  {
+    "fg": "text",
+    "bg": ["panel", "attn-bg"],
+    "min": 4.5,
+    "use": "waiting session row"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["panel"],
+    "min": 4.5,
+    "use": "secondary text"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["win"],
+    "min": 4.5,
+    "use": "secondary text in the sidebar and status bar"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["modal"],
+    "min": 4.5,
+    "use": "secondary text in modals"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["nav"],
+    "min": 4.5,
+    "use": "secondary text in the modal sidebar"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["panel", "head-bg"],
+    "min": 4.5,
+    "use": "table header"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["panel", "attn-bg"],
+    "min": 4.5,
+    "use": "secondary text in a waiting row"
+  },
+  {
+    "fg": "tertiary",
+    "bg": ["panel"],
+    "min": 4.5,
+    "use": "tertiary text"
+  },
+  {
+    "fg": "tertiary",
+    "bg": ["modal"],
+    "min": 4.5,
+    "use": "tertiary text in modals"
+  },
+  {
+    "fg": "tertiary",
+    "bg": ["panel", "head-bg"],
+    "min": 4.5,
+    "use": "tertiary text in a table header"
+  },
+  {
+    "fg": "on-primary",
+    "bg": ["primary"],
+    "min": 4.5,
+    "use": "primary button"
+  },
+  {
+    "fg": "chip-off-text",
+    "bg": ["chip-off"],
+    "min": 4.5,
+    "use": "unchecked chip"
+  },
+  {
+    "fg": "chip-on-text",
+    "bg": ["chip-on"],
+    "min": 4.5,
+    "use": "checked chip"
+  },
+  {
+    "fg": "seg-text",
+    "bg": ["modal", "seg-track"],
+    "min": 4.5,
+    "use": "segmented control option"
+  },
+  {
+    "fg": "seg-sel-text",
+    "bg": ["modal", "seg-track", "seg-sel"],
+    "min": 4.5,
+    "use": "selected segmented option"
+  },
+  {
+    "fg": "attn",
+    "bg": ["panel"],
+    "min": 4.5,
+    "use": "amber text (\"Asks to run npm ci\")"
+  },
+  {
+    "fg": "attn",
+    "bg": ["panel", "attn-bg"],
+    "min": 4.5,
+    "use": "amber text in a waiting row"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["modal"],
+    "min": 4.5,
+    "use": "amber tag text in Settings (\"Not installed\")"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["modal", "attn-bg"],
+    "min": 4.5,
+    "use": "amber tag text on its tinted background"
+  },
+  {
+    "fg": "ok",
+    "bg": ["modal", "ok-bg"],
+    "min": 4.5,
+    "use": "\"Installed\" tag"
+  },
+  {
+    "fg": "icon",
+    "bg": ["win"],
+    "min": 3,
+    "use": "sidebar and status bar icons"
+  },
+  {
+    "fg": "icon",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "icons in the content panel"
+  },
+  {
+    "fg": "icon",
+    "bg": ["modal"],
+    "min": 3,
+    "use": "icons in modals"
+  },
+  {
+    "fg": "icon",
+    "bg": ["nav"],
+    "min": 3,
+    "use": "modal sidebar icons"
+  },
+  {
+    "fg": "control",
+    "bg": ["modal"],
+    "min": 3,
+    "use": "switch, radio and checkbox outlines in modals"
+  },
+  {
+    "fg": "control",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "checkbox outlines in tables"
+  },
+  {
+    "fg": "switch-on",
+    "bg": ["modal"],
+    "min": 3,
+    "use": "switch track when on"
+  },
+  {
+    "fg": "knob-on",
+    "bg": ["switch-on"],
+    "min": 3,
+    "use": "switch knob when on"
+  },
+  {
+    "fg": "fill",
+    "bg": ["modal"],
+    "min": 3,
+    "use": "slider fill"
+  },
+  {
+    "fg": "bar-low",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "usage bar below 50%"
+  },
+  {
+    "fg": "bar-mid",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "usage bar from 50%"
+  },
+  {
+    "fg": "bar-high",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "usage bar from 80%"
+  },
+  {
+    "fg": "act-working",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "working spinner"
+  },
+  {
+    "fg": "act-working",
+    "bg": ["win"],
+    "min": 3,
+    "use": "working spinner in the sidebar"
+  },
+  {
+    "fg": "act-waiting",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "waiting hand icon"
+  },
+  {
+    "fg": "act-waiting",
+    "bg": ["panel", "attn-bg"],
+    "min": 3,
+    "use": "waiting hand icon in a waiting row"
+  },
+  {
+    "fg": "act-idle",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "idle coffee cup icon"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "amber icons"
+  },
+  {
+    "fg": "attn",
+    "bg": ["modal"],
+    "min": 4.5,
+    "use": "amber \"Signed in as\" text in Settings"
+  },
+  {
+    "fg": "attn",
+    "bg": ["panel", "selected-bg"],
+    "min": 4.5,
+    "use": "amber \"Signed in as\" on a checked Overview row"
+  },
+  {
+    "fg": "attn",
+    "bg": ["panel", "selected-hover"],
+    "min": 4.5,
+    "use": "amber \"Signed in as\" on the Overview, hovered"
+  },
+  {
+    "fg": "attn",
+    "bg": ["panel", "selected-press"],
+    "min": 4.5,
+    "use": "amber \"Signed in as\" on the Overview, pressed"
+  },
+  {
+    "fg": "attn",
+    "bg": ["win"],
+    "min": 4.5,
+    "use": "amber text in the sidebar"
+  },
+  {
+    "fg": "indicator",
+    "bg": ["modal"],
+    "min": 3,
+    "use": "outline of a selected card"
+  },
+  {
+    "fg": "on-primary",
+    "bg": ["panel", "primary"],
+    "min": 4.5,
+    "use": "main badge on an account icon"
+  },
+  {
+    "fg": "bar-low",
+    "bg": ["win"],
+    "min": 3,
+    "use": "sidebar weekly bar below 50%"
+  },
+  {
+    "fg": "bar-mid",
+    "bg": ["win"],
+    "min": 3,
+    "use": "sidebar weekly bar from 50%"
+  },
+  {
+    "fg": "bar-high",
+    "bg": ["win"],
+    "min": 3,
+    "use": "sidebar weekly bar from 80%"
+  },
+  {
+    "fg": "bar-low",
+    "bg": ["track-win"],
+    "min": 3,
+    "use": "sidebar weekly bar below 50%, against its track"
+  },
+  {
+    "fg": "bar-mid",
+    "bg": ["track-win"],
+    "min": 3,
+    "use": "sidebar weekly bar from 50%, against its track"
+  },
+  {
+    "fg": "bar-high",
+    "bg": ["track-win"],
+    "min": 3,
+    "use": "sidebar weekly bar from 80%, against its track"
+  },
+  {
+    "fg": "fill",
+    "bg": ["modal", "track"],
+    "min": 3,
+    "use": "slider fill against its track"
+  },
+  {
+    "fg": "chip-off-text",
+    "bg": ["modal", "chip-off"],
+    "min": 4.5,
+    "use": "unchecked chip, and the section tag in Settings search"
+  },
+  {
+    "fg": "chip-on-text",
+    "bg": ["modal", "chip-on"],
+    "min": 4.5,
+    "use": "checked chip"
+  },
+  {
+    "fg": "on-primary",
+    "bg": ["modal", "primary"],
+    "min": 3,
+    "use": "check in a ticked checkbox or a chosen radio card"
+  },
+  {
+    "fg": "attn",
+    "bg": ["win"],
+    "min": 4.5,
+    "use": "\"No account\" in the status bar"
+  },
+  {
+    "fg": "bar-low",
+    "bg": ["track"],
+    "min": 3,
+    "use": "usage bar below 50%, against its track"
+  },
+  {
+    "fg": "bar-mid",
+    "bg": ["track"],
+    "min": 3,
+    "use": "usage bar from 50%, against its track"
+  },
+  {
+    "fg": "bar-high",
+    "bg": ["track"],
+    "min": 3,
+    "use": "usage bar from 80%, against its track"
+  },
+  {
+    "fg": "act-working",
+    "bg": ["panel", "selected-bg"],
+    "min": 3,
+    "use": "sparkline line on a checked account row"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["panel", "selected-bg"],
+    "min": 3,
+    "use": "sparkline amber dot on a checked account row"
+  },
+  {
+    "fg": "act-idle",
+    "bg": ["panel", "attn-bg"],
+    "min": 3,
+    "use": "idle icon in an amber now chip"
+  },
+  {
+    "fg": "icon",
+    "bg": ["panel", "attn-bg"],
+    "min": 3,
+    "use": "working spinner in an amber now chip"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["panel", "attn-bg"],
+    "min": 3,
+    "use": "waiting hand in an amber now chip"
+  },
+  {
+    "fg": "control",
+    "bg": ["panel", "selected-bg"],
+    "min": 3,
+    "use": "checkbox outline on a checked account row"
+  },
+  {
+    "fg": "text",
+    "bg": ["panel", "tag-bg"],
+    "min": 4.5,
+    "use": "account filter chip"
+  },
+  {
+    "fg": "icon",
+    "bg": ["panel", "tag-bg"],
+    "min": 3,
+    "use": "remove icon on an account filter chip"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "sparkline amber dot and its legend"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["panel", "selected-bg"],
+    "min": 4.5,
+    "use": "quiet text on a checked account row"
+  },
+  {
+    "fg": "text",
+    "bg": ["modal", "press"],
+    "min": 4.5,
+    "use": "pressed button, nav item or menu item on modal"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["modal", "press"],
+    "min": 4.5,
+    "use": "pressed quiet button or link on modal"
+  },
+  {
+    "fg": "icon",
+    "bg": ["modal", "press"],
+    "min": 3,
+    "use": "icon of a pressed button or menu item on modal"
+  },
+  {
+    "fg": "icon",
+    "bg": ["modal", "chip-off"],
+    "min": 3,
+    "use": "icon of a hovered button on modal"
+  },
+  {
+    "fg": "text",
+    "bg": ["win", "press"],
+    "min": 4.5,
+    "use": "pressed button, nav item or menu item on win"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["win", "press"],
+    "min": 4.5,
+    "use": "pressed quiet button or link on win"
+  },
+  {
+    "fg": "icon",
+    "bg": ["win", "press"],
+    "min": 3,
+    "use": "icon of a pressed button or menu item on win"
+  },
+  {
+    "fg": "icon",
+    "bg": ["win", "chip-off"],
+    "min": 3,
+    "use": "icon of a hovered button on win"
+  },
+  {
+    "fg": "text",
+    "bg": ["panel", "press"],
+    "min": 4.5,
+    "use": "pressed button, nav item or menu item on panel"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["panel", "press"],
+    "min": 4.5,
+    "use": "pressed quiet button or link on panel"
+  },
+  {
+    "fg": "icon",
+    "bg": ["panel", "press"],
+    "min": 3,
+    "use": "icon of a pressed button or menu item on panel"
+  },
+  {
+    "fg": "icon",
+    "bg": ["panel", "chip-off"],
+    "min": 3,
+    "use": "icon of a hovered button on panel"
+  },
+  {
+    "fg": "text",
+    "bg": ["nav", "press"],
+    "min": 4.5,
+    "use": "pressed button, nav item or menu item on nav"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["nav", "press"],
+    "min": 4.5,
+    "use": "pressed quiet button or link on nav"
+  },
+  {
+    "fg": "icon",
+    "bg": ["nav", "press"],
+    "min": 3,
+    "use": "icon of a pressed button or menu item on nav"
+  },
+  {
+    "fg": "icon",
+    "bg": ["nav", "chip-off"],
+    "min": 3,
+    "use": "icon of a hovered button on nav"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["win", "active"],
+    "min": 4.5,
+    "use": "hovered quiet button and caption button on the window"
+  },
+  {
+    "fg": "chip-off-text",
+    "bg": ["modal", "press"],
+    "min": 4.5,
+    "use": "hovered filled chip that is off"
+  },
+  {
+    "fg": "chip-off-text",
+    "bg": ["modal", "press-strong"],
+    "min": 4.5,
+    "use": "pressed filled chip that is off"
+  },
+  {
+    "fg": "text",
+    "bg": ["panel", "press"],
+    "min": 4.5,
+    "use": "hovered filter chip"
+  },
+  {
+    "fg": "text",
+    "bg": ["panel", "press-strong"],
+    "min": 4.5,
+    "use": "pressed filter chip"
+  },
+  {
+    "fg": "icon",
+    "bg": ["panel", "press-strong"],
+    "min": 3,
+    "use": "icon of a pressed filter chip"
+  },
+  {
+    "fg": "seg-text",
+    "bg": ["seg-track", "press"],
+    "min": 4.5,
+    "use": "hovered segment"
+  },
+  {
+    "fg": "seg-sel-text",
+    "bg": ["seg-track", "press-strong"],
+    "min": 4.5,
+    "use": "pressed segment"
+  },
+  {
+    "fg": "on-primary",
+    "bg": ["primary-hover"],
+    "min": 4.5,
+    "use": "text on a hovered primary button, chip that is on, or checked box"
+  },
+  {
+    "fg": "knob-on",
+    "bg": ["primary-hover"],
+    "min": 3,
+    "use": "knob of a hovered switch that is on"
+  },
+  {
+    "fg": "primary-hover",
+    "bg": ["modal"],
+    "min": 3,
+    "use": "hovered switch track, checkbox or radio against the modal"
+  },
+  {
+    "fg": "on-primary",
+    "bg": ["primary-press"],
+    "min": 4.5,
+    "use": "text on a pressed primary button, chip that is on, or checked box"
+  },
+  {
+    "fg": "knob-on",
+    "bg": ["primary-press"],
+    "min": 3,
+    "use": "knob of a pressed switch that is on"
+  },
+  {
+    "fg": "primary-press",
+    "bg": ["modal"],
+    "min": 3,
+    "use": "pressed switch track, checkbox or radio against the modal"
+  },
+  {
+    "fg": "control",
+    "bg": ["modal", "chip-off"],
+    "min": 3,
+    "use": "knob and outline of a hovered switch that is off"
+  },
+  {
+    "fg": "control-press",
+    "bg": ["modal", "press-strong"],
+    "min": 3,
+    "use": "knob of a pressed switch that is off"
+  },
+  {
+    "fg": "control-press",
+    "bg": ["modal"],
+    "min": 3,
+    "use": "outline of a pressed switch that is off"
+  },
+  {
+    "fg": "control",
+    "bg": ["modal", "thumb-hover"],
+    "min": 3,
+    "use": "outline of a hovered slider thumb against its fill"
+  },
+  {
+    "fg": "control",
+    "bg": ["modal", "thumb-press"],
+    "min": 3,
+    "use": "outline of a pressed slider thumb against its fill"
+  },
+  {
+    "fg": "text",
+    "bg": ["modal", "press-strong"],
+    "min": 3,
+    "use": "stop line inside its hovered ring"
+  },
+  {
+    "fg": "text",
+    "bg": ["modal", "control"],
+    "min": 3,
+    "use": "stop line inside its pressed ring"
+  },
+  {
+    "fg": "control",
+    "bg": ["modal"],
+    "min": 3,
+    "use": "pressed stop line ring against the modal"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["modal"],
+    "min": 3,
+    "use": "outline of a hovered text field"
+  },
+  {
+    "fg": "tertiary",
+    "bg": ["panel", "row-hover"],
+    "min": 4.5,
+    "use": "quiet text on a hovered row or card on panel"
+  },
+  {
+    "fg": "text",
+    "bg": ["panel", "row-hover"],
+    "min": 4.5,
+    "use": "text on a hovered row or card on panel"
+  },
+  {
+    "fg": "tertiary",
+    "bg": ["panel", "row-press"],
+    "min": 4.5,
+    "use": "quiet text on a pressed row or card on panel"
+  },
+  {
+    "fg": "text",
+    "bg": ["panel", "row-press"],
+    "min": 4.5,
+    "use": "text on a pressed row or card on panel"
+  },
+  {
+    "fg": "tertiary",
+    "bg": ["modal", "row-hover"],
+    "min": 4.5,
+    "use": "quiet text on a hovered row or card on modal"
+  },
+  {
+    "fg": "text",
+    "bg": ["modal", "row-hover"],
+    "min": 4.5,
+    "use": "text on a hovered row or card on modal"
+  },
+  {
+    "fg": "tertiary",
+    "bg": ["modal", "row-press"],
+    "min": 4.5,
+    "use": "quiet text on a pressed row or card on modal"
+  },
+  {
+    "fg": "text",
+    "bg": ["modal", "row-press"],
+    "min": 4.5,
+    "use": "text on a pressed row or card on modal"
+  },
+  {
+    "fg": "danger",
+    "bg": ["modal"],
+    "min": 4.5,
+    "use": "destructive menu item"
+  },
+  {
+    "fg": "danger",
+    "bg": ["modal", "chip-off"],
+    "min": 4.5,
+    "use": "highlighted destructive menu item"
+  },
+  {
+    "fg": "danger",
+    "bg": ["modal", "press"],
+    "min": 4.5,
+    "use": "pressed destructive menu item"
+  },
+  {
+    "fg": "seg-sel-text",
+    "bg": ["seg-track", "seg-sel-hover"],
+    "min": 4.5,
+    "use": "hovered chosen segment"
+  },
+  {
+    "fg": "seg-sel-text",
+    "bg": ["seg-track", "press"],
+    "min": 4.5,
+    "use": "pressed chosen segment"
+  },
+  {
+    "fg": "text",
+    "bg": ["nav", "active-hover"],
+    "min": 4.5,
+    "use": "hovered current nav item on nav"
+  },
+  {
+    "fg": "text",
+    "bg": ["win", "active-hover"],
+    "min": 4.5,
+    "use": "hovered current nav item on win"
+  },
+  {
+    "fg": "text",
+    "bg": ["panel", "selected-hover"],
+    "min": 4.5,
+    "use": "selected table row, hovered"
+  },
+  {
+    "fg": "text",
+    "bg": ["panel", "selected-press"],
+    "min": 4.5,
+    "use": "selected table row, pressed"
+  },
+  {
+    "fg": "act-working",
+    "bg": ["panel", "selected-hover"],
+    "min": 3,
+    "use": "sparkline line on a checked account row, hovered"
+  },
+  {
+    "fg": "act-working",
+    "bg": ["panel", "selected-press"],
+    "min": 3,
+    "use": "sparkline line on a checked account row, pressed"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["panel", "selected-hover"],
+    "min": 3,
+    "use": "sparkline amber dot on a checked account row, hovered"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["panel", "selected-press"],
+    "min": 3,
+    "use": "sparkline amber dot on a checked account row, pressed"
+  },
+  {
+    "fg": "control",
+    "bg": ["panel", "selected-hover"],
+    "min": 3,
+    "use": "checkbox outline on a checked account row, hovered"
+  },
+  {
+    "fg": "control",
+    "bg": ["panel", "selected-press"],
+    "min": 3,
+    "use": "checkbox outline on a checked account row, pressed"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["panel", "selected-hover"],
+    "min": 4.5,
+    "use": "quiet text on a checked account row, hovered"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["panel", "selected-press"],
+    "min": 4.5,
+    "use": "quiet text on a checked account row, pressed"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["panel", "row-hover"],
+    "min": 4.5,
+    "use": "secondary text, on a hovered row"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["panel", "row-press"],
+    "min": 4.5,
+    "use": "secondary text, on a pressed row"
+  },
+  {
+    "fg": "attn",
+    "bg": ["panel", "row-hover"],
+    "min": 4.5,
+    "use": "amber text (\"Asks to run npm ci\"), on a hovered row"
+  },
+  {
+    "fg": "attn",
+    "bg": ["panel", "row-press"],
+    "min": 4.5,
+    "use": "amber text (\"Asks to run npm ci\"), on a pressed row"
+  },
+  {
+    "fg": "icon",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "icons in the content panel, on a hovered row"
+  },
+  {
+    "fg": "icon",
+    "bg": ["panel", "row-press"],
+    "min": 3,
+    "use": "icons in the content panel, on a pressed row"
+  },
+  {
+    "fg": "control",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "checkbox outlines in tables, on a hovered row"
+  },
+  {
+    "fg": "control",
+    "bg": ["panel", "row-press"],
+    "min": 3,
+    "use": "checkbox outlines in tables, on a pressed row"
+  },
+  {
+    "fg": "bar-low",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "usage bar below 50%, on a hovered row"
+  },
+  {
+    "fg": "bar-low",
+    "bg": ["panel", "row-press"],
+    "min": 3,
+    "use": "usage bar below 50%, on a pressed row"
+  },
+  {
+    "fg": "bar-mid",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "usage bar from 50%, on a hovered row"
+  },
+  {
+    "fg": "bar-mid",
+    "bg": ["panel", "row-press"],
+    "min": 3,
+    "use": "usage bar from 50%, on a pressed row"
+  },
+  {
+    "fg": "bar-high",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "usage bar from 80%, on a hovered row"
+  },
+  {
+    "fg": "bar-high",
+    "bg": ["panel", "row-press"],
+    "min": 3,
+    "use": "usage bar from 80%, on a pressed row"
+  },
+  {
+    "fg": "act-working",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "working spinner, on a hovered row"
+  },
+  {
+    "fg": "act-working",
+    "bg": ["panel", "row-press"],
+    "min": 3,
+    "use": "working spinner, on a pressed row"
+  },
+  {
+    "fg": "act-idle",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "idle coffee cup icon, on a hovered row"
+  },
+  {
+    "fg": "act-idle",
+    "bg": ["panel", "row-press"],
+    "min": 3,
+    "use": "idle coffee cup icon, on a pressed row"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "amber icons, on a hovered row"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["panel", "row-press"],
+    "min": 3,
+    "use": "amber icons, on a pressed row"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "sparkline amber dot and its legend, on a hovered row"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["panel", "row-press"],
+    "min": 3,
+    "use": "sparkline amber dot and its legend, on a pressed row"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["win", "selected-hover"],
+    "min": 4.5,
+    "use": "hovered explanation in the status bar"
+  },
+  {
+    "fg": "text",
+    "bg": ["win", "selected-hover"],
+    "min": 4.5,
+    "use": "hovered explanation in the status bar"
+  },
+  {
+    "fg": "attn",
+    "bg": ["win", "selected-hover"],
+    "min": 4.5,
+    "use": "hovered explanation in the status bar"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["win", "selected-hover"],
+    "min": 3,
+    "use": "hovered explanation icon in the status bar"
+  },
+  {
+    "fg": "text",
+    "bg": ["modal", "selected-hover"],
+    "min": 4.5,
+    "use": "hovered explanation in Settings"
+  },
+  {
+    "fg": "attn",
+    "bg": ["modal", "selected-hover"],
+    "min": 4.5,
+    "use": "hovered explanation in Settings"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["modal", "selected-hover"],
+    "min": 4.5,
+    "use": "hovered explanation in Settings"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["modal", "selected-hover"],
+    "min": 3,
+    "use": "hovered explanation icon in Settings"
+  },
+  {
+    "fg": "ok",
+    "bg": ["modal", "selected-hover"],
+    "min": 3,
+    "use": "hovered explanation icon in Settings"
+  },
+  {
+    "fg": "icon",
+    "bg": ["modal", "selected-hover"],
+    "min": 3,
+    "use": "hovered explanation icon in Settings"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["win", "selected-press"],
+    "min": 4.5,
+    "use": "pressed explanation in the status bar"
+  },
+  {
+    "fg": "text",
+    "bg": ["win", "selected-press"],
+    "min": 4.5,
+    "use": "pressed explanation in the status bar"
+  },
+  {
+    "fg": "attn",
+    "bg": ["win", "selected-press"],
+    "min": 4.5,
+    "use": "pressed explanation in the status bar"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["win", "selected-press"],
+    "min": 3,
+    "use": "pressed explanation icon in the status bar"
+  },
+  {
+    "fg": "text",
+    "bg": ["modal", "selected-press"],
+    "min": 4.5,
+    "use": "pressed explanation in Settings"
+  },
+  {
+    "fg": "attn",
+    "bg": ["modal", "selected-press"],
+    "min": 4.5,
+    "use": "pressed explanation in Settings"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["modal", "selected-press"],
+    "min": 4.5,
+    "use": "pressed explanation in Settings"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["modal", "selected-press"],
+    "min": 3,
+    "use": "pressed explanation icon in Settings"
+  },
+  {
+    "fg": "ok",
+    "bg": ["modal", "selected-press"],
+    "min": 3,
+    "use": "pressed explanation icon in Settings"
+  },
+  {
+    "fg": "icon",
+    "bg": ["modal", "selected-press"],
+    "min": 3,
+    "use": "pressed explanation icon in Settings"
+  },
+  {
+    "fg": "text",
+    "bg": ["modal", "row-off"],
+    "min": 4.5,
+    "use": "text on a switched-off account’s row"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["modal", "row-off"],
+    "min": 4.5,
+    "use": "grey name and Setup state on a switched-off account’s row"
+  },
+  {
+    "fg": "tertiary",
+    "bg": ["modal", "row-off"],
+    "min": 4.5,
+    "use": "folder and where text on a switched-off account’s row"
+  },
+  {
+    "fg": "attn",
+    "bg": ["modal", "row-off"],
+    "min": 4.5,
+    "use": "amber text on a switched-off account’s row"
+  },
+  {
+    "fg": "icon",
+    "bg": ["modal", "row-off"],
+    "min": 3,
+    "use": "icons on a switched-off account’s row"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["modal", "row-off"],
+    "min": 3,
+    "use": "amber icons on a switched-off account’s row"
+  },
+  {
+    "fg": "control",
+    "bg": ["modal", "row-off"],
+    "min": 3,
+    "use": "switch outline and knob on a switched-off account’s row"
+  },
+  {
+    "fg": "indicator",
+    "bg": ["modal", "row-off"],
+    "min": 3,
+    "use": "focus ring on a switched-off account’s row"
+  },
+  {
+    "fg": "chip-off-text",
+    "bg": ["modal", "row-off", "chip-off"],
+    "min": 4.5,
+    "use": "the Not used tag on a switched-off account’s row"
+  },
+  {
+    "fg": "on-close",
+    "bg": ["close-hover"],
+    "min": 4.5,
+    "use": "X of the window's hovered Close button"
+  },
+  {
+    "fg": "on-close",
+    "bg": ["close-press"],
+    "min": 4.5,
+    "use": "X of the window's pressed Close button"
+  },
+  {
+    "fg": "bar-idle",
+    "bg": ["track"],
+    "min": 3,
+    "use": "grey usage bar of an idle (expired) login, against its track"
+  },
+  {
+    "fg": "bar-idle",
+    "bg": ["track-win"],
+    "min": 3,
+    "use": "grey usage bar of an idle (expired) login, against its track in the sidebar"
+  },
+  {
+    "fg": "bar-idle",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "grey usage bar of an idle (expired) login, against the panel"
+  },
+  {
+    "fg": "bar-idle",
+    "bg": ["win"],
+    "min": 3,
+    "use": "grey usage bar of an idle (expired) login, against the window background (sidebar)"
+  },
+  {
+    "fg": "bar-idle",
+    "bg": ["panel", "selected-bg"],
+    "min": 3,
+    "use": "grey usage bar of an idle (expired) login, against a checked Overview row"
+  },
+  {
+    "fg": "bar-idle",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "grey usage bar of an idle (expired) login, against a hovered Overview row"
+  },
+  {
+    "fg": "bar-idle",
+    "bg": ["panel", "selected-hover"],
+    "min": 3,
+    "use": "grey usage bar of an idle (expired) login, against a checked Overview row, hovered"
+  },
+  {
+    "fg": "bar-mark",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "main's hand-off mark on its weekly bar, against the panel"
+  },
+  {
+    "fg": "bar-mark",
+    "bg": ["track"],
+    "min": 3,
+    "use": "main's hand-off mark on its weekly bar, against the bar's track"
+  },
+  {
+    "fg": "bar-mark",
+    "bg": ["panel", "selected-bg"],
+    "min": 3,
+    "use": "main's hand-off mark on its weekly bar, against a checked Overview row"
+  },
+  {
+    "fg": "bar-mark",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "main's hand-off mark on its weekly bar, against a hovered Overview row"
+  },
+  {
+    "fg": "bar-mark",
+    "bg": ["panel", "selected-hover"],
+    "min": 3,
+    "use": "main's hand-off mark on its weekly bar, against a checked Overview row, hovered"
+  }
+]

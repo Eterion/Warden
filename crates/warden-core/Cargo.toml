@@ -1,0 +1,27 @@
+[package]
+name = "warden-core"
+description = "Warden's core: accounts, usage, routing rules and policy shared by the server and the warden CLI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+time = { version = "0.3.47", default-features = false, features = ["std", "local-offset"] }
+toml = { version = "0.9", default-features = false, features = ["std", "parse", "serde"] }
+ureq = { version = "3", default-features = false, features = ["native-tls"] }
+zeroize = { version = "1", features = ["serde"] }
+
+[target.'cfg(windows)'.dependencies]
+interprocess = "2.4"
+widestring = "1"
+
+[dev-dependencies]
+warden-rules = { path = "../warden-rules" }
+
+[lints]
+workspace = true

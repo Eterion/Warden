@@ -1,0 +1,213 @@
+// Each rule catches a planted violation and lets clean code through. Run with `node --test checks/`.
+
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { checkFiles } from './run.ts';
+import { namesPattern, personalPaths, personalPathsRule } from './personal-paths.ts';
+import { TOKENS_FILE, tokensOnly } from './tokens-only.ts';
+import { FALLBACK_MODULE, cliFallback } from './cli-fallback.ts';
+import type { Rule } from './types.ts';
+
+function caught(rule: Rule, path: string, text: string): string[] {
+  return checkFiles([{ path, text }], [rule]).map((v) => v.message);
+}
+
+describe('personal-paths', () => {
+  it('catches user folders in every form', () => {
+    assert.ok(
+      caught(personalPaths, 'crates/warden-core/src/lib.rs', 'let p = "C:\\\\Users\\\\alice\\\\x";').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(personalPaths, 'ui/src/a.ts', "const p = 'C:/Users/alice/.claude';").length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(personalPaths, 'AGENTS.md', 'see /c/Users/alice/notes').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(caught(personalPaths, 'checks/x.ts', "'/home/alice/.codex'").length > 0, 'planted violation not caught');
+  });
+
+  it('catches .mjs helper calls in app code', () => {
+    assert.ok(
+      caught(personalPaths, 'crates/warden-cli/src/main.rs', 'run("node status.mjs near-limit")').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(personalPaths, 'ui/src/a.ts', "import x from './heavy.mjs'").length > 0,
+      'planted violation not caught',
+    );
+  });
+
+  it('catches absolute drive and network paths anywhere in the repo', () => {
+    assert.ok(caught(personalPaths, 'README.md', 'Builds to D:\\builds\\warden').length > 0, 'drive path not caught');
+    assert.ok(caught(personalPaths, 'checks/x.ts', "const p = 'E:/work/warden';").length > 0, 'drive path not caught');
+    assert.ok(caught(personalPaths, 'docs/x.md', 'Shared at \\\\fileserver\\team').length > 0, 'UNC path not caught');
+    assert.ok(
+      caught(personalPaths, 'ui/src/a.ts', "const p = '\\\\\\\\nas01\\\\share';").length > 0,
+      'UNC path not caught',
+    );
+  });
+
+  it("catches the running person's and machine's names", () => {
+    const local = personalPathsRule(namesPattern(['alice', 'ALICE-PC', 'Alice Example', 'alice@corp.example']));
+    assert.ok(caught(local, 'docs/x.md', 'Measured on ALICE-PC').length > 0, 'machine name not caught');
+    assert.ok(caught(local, 'checks/x.ts', '// ask Alice').length > 0, 'user name not caught');
+    assert.deepEqual(
+      caught(personalPathsRule(namesPattern(['al', 'user', 'admin'])), 'docs/x.md', 'all users and admins'),
+      [],
+    );
+  });
+
+  it('catches email addresses and internal hosts or URLs', () => {
+    assert.ok(
+      caught(personalPaths, 'crates/x/src/lib.rs', 'let e = "jane.doe@company.com";').length > 0,
+      'email not caught',
+    );
+    assert.ok(caught(personalPaths, 'docs/x.md', 'see https://wiki.company.com/warden').length > 0, 'URL not caught');
+    assert.ok(caught(personalPaths, 'docs/x.md', 'see http://buildbox:8080/job').length > 0, 'internal URL not caught');
+    assert.ok(caught(personalPaths, 'checks/x.ts', "const h = 'build01.corp';").length > 0, 'internal host not caught');
+    assert.ok(caught(personalPaths, 'docs/x.md', 'on nas.local').length > 0, 'internal host not caught');
+  });
+
+  it('allows placeholders, example and loopback addresses, the usage endpoint and the listed links', () => {
+    assert.deepEqual(caught(personalPaths, 'AGENTS.md', 'user folders such as C:\Users\<name> or %USERPROFILE%'), []);
+    assert.deepEqual(caught(personalPaths, 'crates/warden-core/src/lib.rs', '// defaults: ~/.claude and ~/.codex'), []);
+    assert.deepEqual(caught(personalPaths, 'ui/src/a.ts', 'const p = `${home}\\AppData\\Roaming`;'), []);
+    assert.deepEqual(caught(personalPaths, 'ui/src/a.ts', "const e = ['ann@example.com', 'me@home.example'];"), []);
+    assert.deepEqual(
+      caught(personalPaths, 'ui/src/a.ts', "'http://127.0.0.1:4777', 'http://localhost:5173', `http://${host}`"),
+      [],
+    );
+    assert.deepEqual(caught(personalPaths, 'crates/x/src/lib.rs', '"https://api.anthropic.com/api/oauth/usage"'), []);
+    assert.deepEqual(caught(personalPaths, 'crates/x/src/lib.rs', '"https://platform.claude.com/v1/oauth/token"'), []);
+    assert.deepEqual(caught(personalPaths, 'ui/public/licenses/x.txt', 'http://scripts.sil.org/OFL'), []);
+    assert.deepEqual(caught(personalPaths, 'icons/a.svg', '<svg xmlns="http://www.w3.org/2000/svg">'), []);
+    assert.ok(
+      caught(personalPaths, 'icons/a.svg', '<a href="http://www.w3.org/TR/SVG2/">').length > 0,
+      'other w3.org link allowed',
+    );
+  });
+});
+
+describe('tokens-only', () => {
+  const vue = 'ui/src/components/Thing.vue';
+
+  it('catches raw colours', () => {
+    assert.ok(
+      caught(tokensOnly, vue, '<style>.a { color: #fafafa; }</style>').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(tokensOnly, 'ui/src/a.ts', "const c = 'rgba(0, 0, 0, 0.5)';").length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(tokensOnly, vue, '<div class="bg-zinc-100 text-white">').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(tokensOnly, vue, '<style>.a { background: white; }</style>').length > 0,
+      'planted violation not caught',
+    );
+  });
+
+  it('catches raw sizes and arbitrary values', () => {
+    assert.ok(
+      caught(tokensOnly, vue, '<style>.a { margin: 13px; }</style>').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(caught(tokensOnly, vue, '<div class="w-[13px] bg-[#fff]">').length > 0, 'planted violation not caught');
+    assert.ok(
+      caught(tokensOnly, vue, '<div class="[mask-type:luminance]">').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(tokensOnly, 'ui/src/a.ts', "el.style.width = '1.5rem';").length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(tokensOnly, vue, '<style>.a { margin-top: -4px; }</style>').length > 0,
+      'planted violation not caught',
+    );
+  });
+
+  it('catches per-element line heights', () => {
+    assert.ok(caught(tokensOnly, vue, '<p class="text-13/6">').length > 0, 'planted violation not caught');
+    assert.ok(caught(tokensOnly, vue, '<p class="leading-tight">').length > 0, 'planted violation not caught');
+    assert.ok(
+      caught(tokensOnly, vue, '<style>p { line-height: 1.2; }</style>').length > 0,
+      'planted violation not caught',
+    );
+  });
+
+  it('allows token utilities, slot shorthand and the tokens file', () => {
+    assert.deepEqual(
+      caught(tokensOnly, vue, '<div class="bg-panel text-secondary rounded-lg p-4 text-13 border-divider">'),
+      [],
+    );
+    assert.deepEqual(caught(tokensOnly, vue, '<template #add><span /></template>'), []);
+    assert.deepEqual(
+      caught(
+        tokensOnly,
+        vue,
+        '<span class="data-[state=checked]:bg-switch-on aria-[sort=ascending]:text-text text-secondary/50">',
+      ),
+      [],
+    );
+    assert.deepEqual(caught(tokensOnly, 'ui/src/a.ts', 'const n = this.#abc + this.#feed;'), []);
+    assert.deepEqual(caught(tokensOnly, vue, '<style>.a { margin: 0px; width: var(--spacing-bar); }</style>'), []);
+    assert.deepEqual(caught(tokensOnly, TOKENS_FILE, '--color-win: light-dark(#f4f4f5, #18181b);'), []);
+    assert.deepEqual(caught(tokensOnly, 'crates/x/src/lib.rs', 'let c = "#ffffff";'), []);
+  });
+});
+
+describe('cli-fallback-only', () => {
+  it('catches processes started outside the fallback module', () => {
+    const rs = 'crates/warden-core/src/usage.rs';
+    assert.ok(
+      caught(cliFallback, rs, 'let out = Command::new("claude").arg("-p").output();').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(cliFallback, rs, 'use std::process::{Command, Stdio};').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(cliFallback, rs, 'let c = std::process::Command::new(exe);').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(cliFallback, rs, 'tokio::process::Command::new("codex")').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(cliFallback, 'ui/src/a.ts', "import { spawn } from 'node:child_process';").length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(cliFallback, 'ui/src/a.ts', "import { Command } from '@tauri-apps/plugin-shell';").length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(cliFallback, rs, 'use std::{io, process::{Command as Run}};').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(caught(cliFallback, rs, 'app.shell().sidecar("x")').length > 0, 'planted violation not caught');
+    assert.ok(
+      caught(cliFallback, 'ui/src/a.mts', "import cp from 'node:child_process';").length > 0,
+      'planted violation not caught',
+    );
+  });
+
+  it('allows the fallback module, integration tests and comments', () => {
+    assert.deepEqual(caught(cliFallback, FALLBACK_MODULE, 'Command::new("claude")'), []);
+    assert.deepEqual(caught(cliFallback, 'crates/warden-core/src/fallback/sessions.rs', 'Command::new("codex")'), []);
+    assert.deepEqual(
+      caught(cliFallback, 'crates/warden-cli/tests/route.rs', 'Command::new(env!("CARGO_BIN_EXE_warden"))'),
+      [],
+    );
+    assert.deepEqual(caught(cliFallback, 'crates/warden-core/src/lib.rs', '//! Never use Command::new here.'), []);
+  });
+});

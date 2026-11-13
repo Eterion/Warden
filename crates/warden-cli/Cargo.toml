@@ -1,0 +1,23 @@
+[package]
+name = "warden-cli"
+description = "The warden command-line tool: `warden route`, run by the routing hook."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "warden"
+path = "src/main.rs"
+
+[dependencies]
+warden-core = { path = "../warden-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+warden-server = { path = "../warden-server" }
+
+[lints]
+workspace = true

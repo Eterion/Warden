@@ -1,0 +1,26 @@
+[package]
+name = "warden-server"
+description = "Warden's local server on 127.0.0.1 and its API for the UI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+warden-core = { path = "../warden-core" }
+notify = { version = "8", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+getrandom = "0.3"
+tiny_http = "0.12"
+sysinfo = { version = "0.37", default-features = false, features = ["system", "user"] }
+waitpid-any = "0.3"
+
+[dev-dependencies]
+warden-rules = { path = "../warden-rules" }
+# Junctions for the tests that write a desktop app's folder every way Windows allows.
+junction = "1"
+
+[lints]
+workspace = true

@@ -1,0 +1,81 @@
+{
+  "$comment": "Performance budgets (warden-plan.md, Performance), approved by the user. null = PLACEHOLDER, not set yet: the number is measured and reported but nothing fails. \"measured\" notes what each budget was based on.",
+  "coreIdleMemoryMB": {
+    "budget": 15,
+    "unit": "MB",
+    "what": "server private memory after 5 s idle, with its session table full (200 sessions)",
+    "measured": "step 4.1: measured 1.7 MB with no accounts; room for accounts, readings and capped history; step 4.3: 2.0 MB with 200 sessions"
+  },
+  "coreIdleCpuPercent": {
+    "budget": 0.5,
+    "unit": "% of one core",
+    "what": "server CPU over 20 s idle, with its session table full",
+    "measured": "step 4.1: measured 0.00% over 5 s idle"
+  },
+  "windowMemoryMB": {
+    "budget": 250,
+    "unit": "MB",
+    "what": "desktop app with the window open: the app and its WebView2 processes, private memory after the page loaded and sat idle",
+    "measured": "step 4.4: measured 172 to 181 MB (the app and its WebView2 processes, Overview with no accounts); room for accounts and the sessions table"
+  },
+  "desktopTrayMemoryMB": {
+    "budget": 15,
+    "unit": "MB",
+    "what": "desktop app in the tray after its window was opened and closed: private memory after 5 s idle",
+    "measured": "step 4.4: measured 7.4 MB after the window was closed (4.3 MB started in the tray); the same budget as the core alone"
+  },
+  "desktopTrayCpuPercent": {
+    "budget": 0.5,
+    "unit": "% of one core",
+    "what": "desktop app in the tray after its window was opened and closed: CPU over 20 s idle",
+    "measured": "step 4.4: measured 0.00% over 5 s idle; the same budget as the core alone"
+  },
+  "routeHookMs": {
+    "budget": 25,
+    "unit": "ms",
+    "what": "median time of `warden route` while nothing changed (prints nothing), the routing hook on every message",
+    "measured": "step 4.2: measured 6.3 ms with three accounts"
+  },
+  "routeHookPrintMs": {
+    "budget": 25,
+    "unit": "ms",
+    "what": "median time of `warden route` when it prints the guidance (a session's first message, or a change)",
+    "measured": "step 4.2: measured 6.9 ms with three accounts"
+  },
+  "statusHookMs": {
+    "budget": 50,
+    "unit": "ms",
+    "what": "median time of one status hook event (`warden event`: started, the event read, sent over the pipe and answered), when run without async",
+    "measured": "step 4.3: measured 9.9 ms with curl; the pipe run: 5.3 ms for `warden event`"
+  },
+  "statusEventCpuMs": {
+    "budget": 3,
+    "unit": "ms",
+    "what": "server CPU time per status hook event with four windows waiting for changes (each answered) and three accounts with hook files",
+    "measured": "measured 1.33 to 1.42 ms before the hook state was kept in memory, 0.38 to 0.80 ms after (three runs of 1000 events each)"
+  },
+  "statusHookDownMs": {
+    "budget": 50,
+    "unit": "ms",
+    "what": "median time of one status hook event (`warden event`) with Warden stopped",
+    "measured": "step 4.3: measured 9.4 ms with curl; the pipe run: 5.4 ms for `warden event`, which finds no pipe"
+  },
+  "serverBinaryKB": {
+    "budget": 3072,
+    "unit": "KB",
+    "what": "release warden-server.exe",
+    "measured": "step 4.1: measured 1506 KB"
+  },
+  "cliBinaryKB": {
+    "budget": 2048,
+    "unit": "KB",
+    "what": "release warden.exe",
+    "measured": "step 4.2: measured 1057 KB (with the usage endpoint's TLS for the background refresh)"
+  },
+  "desktopBinaryKB": {
+    "budget": 12288,
+    "unit": "KB",
+    "what": "release warden-desktop.exe (the installer adds the UI files and warden.exe)",
+    "measured": "step 4.4: measured 8832 KB"
+  }
+}

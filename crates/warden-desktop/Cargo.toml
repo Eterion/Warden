@@ -1,0 +1,28 @@
+[package]
+name = "warden-desktop"
+description = "Warden's desktop app: a Tauri window around the same local server and UI, with the tray and start with Windows."
+version.workspace = true
+edition.workspace = true
+# windows-registry 0.100 (start with Windows) needs 1.95; the rest of the workspace 1.88.
+rust-version = "1.95"
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+warden-core = { path = "../warden-core" }
+warden-server = { path = "../warden-server" }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-single-instance = "2"
+windows-registry = "0.100"
+
+[dev-dependencies]
+serde_json = "1"
+warden-rules = { path = "../warden-rules" }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[lints]
+workspace = true

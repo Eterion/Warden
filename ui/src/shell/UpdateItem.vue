@@ -55,7 +55,7 @@ async function install(): Promise<void> {
     <template v-if="!update.ready">
       <div class="flex items-baseline justify-between gap-2 text-13">
         <span class="font-medium">Downloading update</span>
-        <span class="text-tertiary">{{ update.version }}</span>
+        <span class="text-secondary">{{ update.version }}</span>
       </div>
       <div
         role="progressbar"
@@ -72,7 +72,7 @@ async function install(): Promise<void> {
       v-else
       variant="primary"
       :icon="Download"
-      :aria-label="`Install Warden ${update.version} and restart`"
+      :aria-label="`Install and restart, Warden ${update.version}`"
       @click="ask"
       >Install and restart</WButton
     >

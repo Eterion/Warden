@@ -46,7 +46,7 @@ describe('UpdateItem', () => {
     const { item, calls } = setup(READY);
     const install = item.get('button');
     expect(install.text()).toBe('Install and restart');
-    expect(install.attributes('aria-label')).toBe('Install Warden 0.2.0 and restart');
+    expect(install.attributes('aria-label')).toBe('Install and restart, Warden 0.2.0');
     await install.trigger('click');
     await flushPromises();
     expect(document.body.textContent).toContain('Install Warden 0.2.0?');

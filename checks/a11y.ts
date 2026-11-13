@@ -430,16 +430,16 @@ export const PAGES: {
     name: 'desktop-update-ready',
     path: '/?desktop',
     fixture: 'desktopUpdate',
-    ready: 'button[aria-label="Install Warden 0.2.0 and restart"]',
+    ready: 'button[aria-label="Install and restart, Warden 0.2.0"]',
   },
   {
     name: 'desktop-update-ready-pressed',
     path: '/?desktop',
     fixture: 'desktopUpdate',
-    ready: 'button[aria-label="Install Warden 0.2.0 and restart"]',
+    ready: 'button[aria-label="Install and restart, Warden 0.2.0"]',
     steps: [
       {
-        press: 'button[aria-label="Install Warden 0.2.0 and restart"]',
+        press: 'button[aria-label="Install and restart, Warden 0.2.0"]',
       },
     ],
   },
@@ -447,10 +447,10 @@ export const PAGES: {
     name: 'desktop-update-confirm',
     path: '/?desktop',
     fixture: 'desktopUpdate',
-    ready: 'button[aria-label="Install Warden 0.2.0 and restart"]',
+    ready: 'button[aria-label="Install and restart, Warden 0.2.0"]',
     steps: [
       {
-        click: 'button[aria-label="Install Warden 0.2.0 and restart"]',
+        click: 'button[aria-label="Install and restart, Warden 0.2.0"]',
       },
       {
         waitFor: 'text=Warden closes, installs the update and starts again.',
@@ -461,10 +461,10 @@ export const PAGES: {
     name: 'desktop-update-installing',
     path: '/?desktop',
     fixture: 'desktopUpdate',
-    ready: 'button[aria-label="Install Warden 0.2.0 and restart"]',
+    ready: 'button[aria-label="Install and restart, Warden 0.2.0"]',
     steps: [
       {
-        click: 'button[aria-label="Install Warden 0.2.0 and restart"]',
+        click: 'button[aria-label="Install and restart, Warden 0.2.0"]',
       },
       {
         click: 'button[type=submit]:has-text("Install and restart")',

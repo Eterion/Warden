@@ -4862,7 +4862,7 @@ dependencies = [
 
 [[package]]
 name = "warden-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4872,7 +4872,7 @@ dependencies = [
 
 [[package]]
 name = "warden-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "interprocess",
  "serde",
@@ -4888,7 +4888,7 @@ dependencies = [
 
 [[package]]
 name = "warden-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "reqwest",
  "semver",
@@ -4907,11 +4907,11 @@ dependencies = [
 
 [[package]]
 name = "warden-rules"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "warden-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "getrandom 0.3.4",
  "junction",

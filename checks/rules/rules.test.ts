@@ -60,6 +60,21 @@ describe('personal-paths', () => {
     );
   });
 
+  it('lets a listed link name its owner, and only there', () => {
+    const owner = personalPathsRule(namesPattern(['Eterion']));
+    assert.deepEqual(caught(owner, 'README.md', 'git clone https://github.com/Eterion/Warden.git'), []);
+    assert.deepEqual(caught(owner, 'README.md', '[its repository](https://github.com/Eterion/Warden)'), []);
+    assert.ok(caught(owner, 'README.md', 'Made by Eterion').length > 0, 'name outside the link not caught');
+    assert.ok(
+      caught(owner, 'README.md', 'https://github.com/Eterion/Warden by Eterion').length > 0,
+      'name beside the link not caught',
+    );
+    assert.deepEqual(caught(owner, 'README.md', 'https://github.com/Eterion/other'), [
+      'URL "https://github.com/Eterion/other" (not an allowed host or link; see ALLOWED_LINKS)',
+      'local user or machine name "Eterion"',
+    ]);
+  });
+
   it('catches email addresses and internal hosts or URLs', () => {
     assert.ok(
       caught(personalPaths, 'crates/x/src/lib.rs', 'let e = "jane.doe@company.com";').length > 0,

@@ -16,6 +16,7 @@ export const ALLOWED_HOSTS = ['api.anthropic.com', 'platform.claude.com'];
 
 /** Links allowed by their start: documentation and fixed names that are not calls. */
 export const ALLOWED_LINKS = [
+  'https://github.com/Eterion/Warden', // Warden's own repository (README)
   'https://github.com/rsms/inter', // Inter's licence (ui/public/licenses/)
   'http://scripts.sil.org/OFL', // the SIL Open Font License, in the same file
   'https://www.conventionalcommits.org/', // the commit message rules (AGENTS.md)
@@ -116,16 +117,25 @@ export function personalPathsRule(names: RegExp | null): Rule {
           flag(m.line, `email address "${m.match}" (use an example.com address)`);
         }
       }
+      // A link listed one by one may name its owner (the repository's address names its account), so a name inside
+      // one does not count; anywhere else it does.
+      const listed: { line: number; from: number; to: number }[] = [];
       for (const m of matches(file.text, URL)) {
         const host = hostOf(m.match);
         if (!host || PLACEHOLDER.test(host)) continue;
         if (isExampleOrLocalHost(host) || ALLOWED_HOSTS.includes(host.toLowerCase())) continue;
-        if (ALLOWED_LINKS.some((link) => m.match.startsWith(link))) continue;
+        if (ALLOWED_LINKS.some((link) => m.match.startsWith(link))) {
+          listed.push({ line: m.line, from: m.index, to: m.index + m.match.length });
+          continue;
+        }
         flag(m.line, `URL "${m.match}" (not an allowed host or link; see ALLOWED_LINKS)`);
       }
       for (const m of matches(file.text, INTERNAL_HOST)) flag(m.line, `internal hostname "${m.match}"`);
       if (names) {
-        for (const m of matches(file.text, names)) flag(m.line, `local user or machine name "${m.match}"`);
+        for (const m of matches(file.text, names)) {
+          const inListed = listed.some((l) => l.line === m.line && m.index >= l.from && m.index + m.match.length <= l.to);
+          if (!inListed) flag(m.line, `local user or machine name "${m.match}"`);
+        }
       }
       if (isAppCode(file.path)) {
         for (const m of matches(file.text, HELPER_SCRIPT)) flag(m.line, `helper script "${m.match}" in app code`);

@@ -133,7 +133,9 @@ export function personalPathsRule(names: RegExp | null): Rule {
       for (const m of matches(file.text, INTERNAL_HOST)) flag(m.line, `internal hostname "${m.match}"`);
       if (names) {
         for (const m of matches(file.text, names)) {
-          const inListed = listed.some((l) => l.line === m.line && m.index >= l.from && m.index + m.match.length <= l.to);
+          const inListed = listed.some(
+            (l) => l.line === m.line && m.index >= l.from && m.index + m.match.length <= l.to,
+          );
           if (!inListed) flag(m.line, `local user or machine name "${m.match}"`);
         }
       }

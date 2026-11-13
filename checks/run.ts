@@ -4,7 +4,7 @@
 //   npm run check:changed   full set, only for the areas that changed
 //   npm run check:quick     quick set, only for the areas that changed: while working
 //
-// Flags: --scope all|changed, --level quick|full, --base <git ref> (default: main), --dry-run (print the plan only).
+// Flags: --scope all|changed, --level quick|full, --base <git ref> (default: master), --dry-run (print the plan only).
 // "Changed" means changed since the branch left the base, including uncommitted and untracked files.
 // Quick leaves out the slow checks: rendered accessibility with screenshots, and the performance budgets.
 
@@ -260,7 +260,7 @@ function arg(name: string, fallback: string): string {
 async function main(): Promise<void> {
   const scope = arg('scope', 'all') as 'all' | 'changed';
   const level = arg('level', 'full') as 'quick' | 'full';
-  const base = arg('base', 'main');
+  const base = arg('base', 'master');
   if (!['all', 'changed'].includes(scope) || !['quick', 'full'].includes(level)) {
     console.error('usage: node checks/run.ts --scope all|changed --level quick|full [--base <ref>] [--dry-run]');
     process.exitCode = 2;

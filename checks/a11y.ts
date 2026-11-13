@@ -603,7 +603,7 @@ function fakeApi(current: () => Fixture): Plugin {
 async function main(): Promise<void> {
   const baseIndex = process.argv.indexOf('--base');
   const pages =
-    baseIndex < 0 ? PAGES : affectedPages(PAGES, changedFiles(process.argv[baseIndex + 1] ?? 'main', true).files);
+    baseIndex < 0 ? PAGES : affectedPages(PAGES, changedFiles(process.argv[baseIndex + 1] ?? 'master', true).files);
   console.log(
     `a11y: selected ${pages.length}/${PAGES.length} states: ${pages.map((p) => p.name).join(', ') || '(none)'}`,
   );

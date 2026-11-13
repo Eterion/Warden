@@ -44,7 +44,7 @@ async function main(): Promise<void> {
     process.exitCode = 2;
     return;
   }
-  const base = arg('base') ?? 'main';
+  const base = arg('base') ?? 'master';
   const kinds = kind === 'auto' ? reviewKinds(changedFiles(base, true).files) : [kind as ReviewKind];
   prepare(base);
   console.log(`review: ${kinds.join(' and ') || 'none (only tests, docs or checks changed)'}`);

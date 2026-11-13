@@ -14,7 +14,11 @@ import { isGenerated, isRuleFixture, matches, type Rule, type Violation } from '
 /** The only outside hosts the repo may name. Anything else that leaks a host needs its own entry here. */
 export const ALLOWED_HOSTS = ['api.anthropic.com', 'platform.claude.com'];
 
-/** Links allowed by their start: documentation and fixed names that are not calls. */
+/**
+ * Links allowed one by one: documentation and fixed names that are not calls. Each allows that address or a page
+ * below it, ending at a boundary (any page below an entry ending in `/`); a name inside the entry's own text does not
+ * count as naming someone.
+ */
 export const ALLOWED_LINKS = [
   'https://github.com/Eterion/Warden', // Warden's own repository (README)
   'https://github.com/rsms/inter', // Inter's licence (ui/public/licenses/)
@@ -129,7 +133,9 @@ export function personalPathsRule(names: RegExp | null): Rule {
         const host = hostOf(m.match);
         if (!host || PLACEHOLDER.test(host)) continue;
         if (isExampleOrLocalHost(host) || ALLOWED_HOSTS.includes(host.toLowerCase())) continue;
-        const link = ALLOWED_LINKS.find((l) => m.match.startsWith(l) && endsAtABoundary(l, m.match.slice(l.length)));
+        // A link that ends a sentence keeps its full stop or comma out of the comparison.
+        const bare = m.match.replace(/[.,;:!?*_]+$/, '');
+        const link = ALLOWED_LINKS.find((l) => bare.startsWith(l) && endsAtABoundary(l, bare.slice(l.length)));
         if (link) {
           listed.push({ line: m.line, from: m.index, to: m.index + link.length });
           continue;

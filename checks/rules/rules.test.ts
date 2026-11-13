@@ -65,6 +65,17 @@ describe('personal-paths', () => {
     const owner = personalPathsRule(namesPattern(['Eterion', 'alice']));
     assert.deepEqual(caught(owner, 'README.md', 'git clone https://github.com/Eterion/Warden.git'), []);
     assert.deepEqual(caught(owner, 'docs/x.md', 'https://github.com/Eterion/Warden/releases/latest'), []);
+    assert.deepEqual(caught(owner, 'docs/x.md', 'Clone https://github.com/Eterion/Warden. Then build it.'), []);
+    assert.deepEqual(caught(owner, 'docs/x.md', 'See https://www.conventionalcommits.org/en/v1.0.0/'), []);
+    assert.deepEqual(caught(owner, 'docs/x.md', 'https://www.conventionalcommits.org/alice'), [
+      'local user or machine name "alice"',
+    ]);
+    assert.ok(
+      caught(owner, 'docs/x.md', 'https://github.com/Eterion/Warden.alice').includes(
+        'local user or machine name "alice"',
+      ),
+      'name after a full stop inside the link not caught',
+    );
     for (const text of [
       'https://github.com/Eterion/Warden/tree/alice',
       'https://github.com/Eterion/Warden/issues?q=author:alice',

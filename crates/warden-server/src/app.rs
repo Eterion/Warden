@@ -124,7 +124,8 @@ struct Inner {
     /// The accounts part of the state, built once per change to the accounts (`touch`); a change to the sessions
     /// alone (`touch_sessions`) reuses it.
     accounts_view: Option<Arc<Vec<AccountView>>>,
-    /// Live sessions and two hours of activity per account, from the status hook. In memory only, capped.
+    /// Live sessions and two hours of activity per account, from the status hook. In memory only, capped; only which
+    /// main session started each delegated run is kept on disk (`session-parents.json`).
     sessions: Sessions,
     /// Accounts whose status hook has reported since Warden started; the others get the session-list fallback.
     hooked: HashSet<String>,
@@ -410,7 +411,14 @@ impl App {
                 hook_setups: HashMap::new(),
                 claude_shells: HashMap::new(),
                 accounts_view: None,
-                sessions: Sessions::default(),
+                sessions: {
+                    let mut s = Sessions::default();
+                    s.restore_parents(
+                        store::load(&data_dir, sessions::PARENT_LINKS_FILE).unwrap_or_default(),
+                        now_ms(),
+                    );
+                    s
+                },
                 hooked: HashSet::new(),
                 watched: HashSet::new(),
                 start_with_windows: desktop.as_ref().map(|d| d.start_with_windows()),
@@ -1137,6 +1145,20 @@ impl App {
     /// Takes one message from a hook over the pipe: the event, and the process that sent it (the hook's
     /// `warden.exe`, still running). A session's first event (or a restart) also finds the session's CLI process
     /// up that process's parent chain, so the session ends when the CLI exits.
+    /// Keeps which main session started each delegated run, so the tree is whole again after a restart.
+    fn save_parent_links(&self, inner: &Inner) {
+        if let Err(e) = store::save(
+            &self.data_dir,
+            sessions::PARENT_LINKS_FILE,
+            inner.sessions.parent_links(),
+        ) {
+            (self.log)(&format!(
+                "could not keep the sessions' parents ({})",
+                e.kind()
+            ));
+        }
+    }
+
     pub fn receive_message(
         self: &Arc<Self>,
         message: &Message,
@@ -1160,6 +1182,7 @@ impl App {
                 message.event.parent_session_id.as_deref(),
                 now_ms(),
             ) {
+                self.save_parent_links(&inner);
                 self.touch_sessions(&mut inner);
             }
         }
@@ -1183,6 +1206,7 @@ impl App {
             .sessions
             .set_parent(provider, &event.session_id, parent.as_deref(), now_ms())
         {
+            self.save_parent_links(&inner);
             self.touch_sessions(&mut inner);
         }
         let Some(pid) = cli else {

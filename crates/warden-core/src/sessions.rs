@@ -9,7 +9,7 @@
 
 use crate::model::Provider;
 use crate::pipe::HookEvent;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -363,6 +363,63 @@ impl Activity {
     }
 }
 
+/// Which main session started each delegated run, kept in the data folder (`session-parents.json`) so the sessions tree
+/// is whole again after Warden restarts, before each run's next hook event. Session ids only: at most
+/// [`MAX_PARENT_LINKS`], each forgotten after [`PARENT_LINK_MS`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParentLinks {
+    links: Vec<ParentLink>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ParentLink {
+    provider: Provider,
+    id: String,
+    parent: String,
+    at: i64,
+}
+
+pub const PARENT_LINKS_FILE: &str = "session-parents.json";
+/// Parent links kept at most, the oldest dropped first.
+pub const MAX_PARENT_LINKS: usize = MAX_SESSIONS;
+/// How long a parent link is kept: as long as a quiet session is still shown.
+pub const PARENT_LINK_MS: i64 = QUIET_GONE_MS;
+
+impl ParentLinks {
+    /// The main session that started this run, if known.
+    pub fn get(&self, provider: Provider, id: &str) -> Option<&str> {
+        self.links
+            .iter()
+            .rev()
+            .find(|l| l.provider == provider && l.id == id)
+            .map(|l| l.parent.as_str())
+    }
+
+    fn remember(&mut self, provider: Provider, id: &str, parent: &str, now: i64) {
+        self.links
+            .retain(|l| !(l.provider == provider && l.id == id));
+        self.links.push(ParentLink {
+            provider,
+            id: id.to_owned(),
+            parent: parent.to_owned(),
+            at: now,
+        });
+        self.prune(now);
+    }
+
+    /// Drops old links and any whose ids are not session ids (a hand-edited file), keeping the newest few.
+    fn prune(&mut self, now: i64) {
+        self.links.retain(|l| {
+            now - l.at <= PARENT_LINK_MS
+                && crate::pipe::valid_session_id(&l.id)
+                && crate::pipe::valid_session_id(&l.parent)
+        });
+        let extra = self.links.len().saturating_sub(MAX_PARENT_LINKS);
+        self.links.drain(..extra);
+    }
+}
+
 /// Every session Warden knows, and each account's activity.
 #[derive(Debug, Default)]
 pub struct Sessions {
@@ -372,12 +429,29 @@ pub struct Sessions {
     /// first event reaches Warden). At most [`MAX_NAMES`], the oldest given dropped first.
     names: HashMap<(Provider, String), String>,
     named_order: VecDeque<(Provider, String)>,
+    /// Which main session started each delegated run, kept across restarts.
+    parents: ParentLinks,
 }
 
 /// Sessions' own names kept at most.
 pub const MAX_NAMES: usize = 2 * MAX_SESSIONS;
 
 impl Sessions {
+    /// The parent links saved before a restart: a session that comes back sits under its main session again.
+    pub fn restore_parents(&mut self, mut links: ParentLinks, now: i64) {
+        links.prune(now);
+        self.parents = links;
+    }
+
+    /// The parent links to save, after one changed.
+    pub fn parent_links(&self) -> &ParentLinks {
+        &self.parents
+    }
+
+    fn known_parent(&self, provider: Provider, id: &str) -> Option<String> {
+        self.parents.get(provider, id).map(str::to_owned)
+    }
+
     pub fn get(&self, provider: Provider, id: &str) -> Option<&Session> {
         self.list
             .iter()
@@ -442,6 +516,7 @@ impl Sessions {
             && s.parent_id.as_deref() != Some(parent)
         {
             s.parent_id = Some(parent.to_owned());
+            self.parents.remember(provider, id, parent, now);
             return true;
         }
         false
@@ -520,9 +595,10 @@ impl Sessions {
                     .get(&(provider, event.session_id.clone()))
                     .cloned();
                 let folder_place = place();
+                let parent_id = self.known_parent(provider, &event.session_id);
                 self.list.push(Session {
                     id: event.session_id.clone(),
-                    parent_id: None,
+                    parent_id,
                     provider,
                     account_id: account_id.to_owned(),
                     signed_in_as: signed_in_as.map(str::to_owned),
@@ -723,8 +799,9 @@ impl Sessions {
             }
             self.make_room();
             let title = self.names.get(&(provider, id.clone())).cloned();
+            let parent_id = self.known_parent(provider, &id);
             self.list.push(Session {
-                parent_id: None,
+                parent_id,
                 id,
                 provider,
                 account_id: account_id.to_owned(),
@@ -915,6 +992,107 @@ mod parent_tests {
             cwd: None,
             transcript: None,
         }
+    }
+
+    #[test]
+    fn a_restart_keeps_each_run_under_its_main_session() {
+        let parent_of = |sessions: &Sessions, id: &str, now: i64| {
+            sessions
+                .shown_with_parents(now)
+                .iter()
+                .find(|s| s.id == id)
+                .and_then(|s| s.parent_id.clone())
+        };
+        let mut before = Sessions::default();
+        before.apply(
+            Provider::Claude,
+            "main",
+            Place::default,
+            &event("parent", EventKind::Start),
+            0,
+        );
+        before.apply(
+            Provider::Codex,
+            "a2",
+            Place::default,
+            &event("child", EventKind::Start),
+            0,
+        );
+        assert!(before.set_parent(Provider::Codex, "child", Some("parent"), 1));
+        // What is saved and read back after the restart.
+        let saved: ParentLinks =
+            serde_json::from_str(&serde_json::to_string(before.parent_links()).expect("json"))
+                .expect("links");
+        assert_eq!(saved.get(Provider::Codex, "child"), Some("parent"));
+        assert_eq!(saved.get(Provider::Claude, "child"), None, "per provider");
+
+        // After the restart: both come back from the CLIs' session lists, the run under its main session at once.
+        let mut after = Sessions::default();
+        after.restore_parents(saved.clone(), 2);
+        after.add_listed(
+            Provider::Claude,
+            "main",
+            vec![("parent".into(), 2, Place::default())],
+            2,
+        );
+        after.add_listed(
+            Provider::Codex,
+            "a2",
+            vec![("child".into(), 2, Place::default())],
+            2,
+        );
+        assert_eq!(parent_of(&after, "child", 3).as_deref(), Some("parent"));
+        // Or the run's next hook event arrives first: the same.
+        let mut hooked = Sessions::default();
+        hooked.restore_parents(saved.clone(), 2);
+        hooked.apply(
+            Provider::Claude,
+            "main",
+            Place::default,
+            &event("parent", EventKind::Start),
+            2,
+        );
+        hooked.apply(
+            Provider::Codex,
+            "a2",
+            Place::default,
+            &event("child", EventKind::Prompt),
+            2,
+        );
+        assert_eq!(parent_of(&hooked, "child", 3).as_deref(), Some("parent"));
+        // Old links, and links that are not session ids, are forgotten.
+        let mut stale = Sessions::default();
+        stale.restore_parents(saved, 1 + PARENT_LINK_MS + 1);
+        assert_eq!(stale.parent_links().get(Provider::Codex, "child"), None);
+        let bad: ParentLinks = serde_json::from_str(
+            r#"{"links":[{"provider":"codex","id":"child","parent":"bad id","at":5}]}"#,
+        )
+        .expect("links");
+        let mut cleaned = Sessions::default();
+        cleaned.restore_parents(bad, 5);
+        assert_eq!(cleaned.parent_links().get(Provider::Codex, "child"), None);
+    }
+
+    #[test]
+    fn parent_links_keep_only_the_newest_few() {
+        let mut links = ParentLinks::default();
+        for i in 0..MAX_PARENT_LINKS + 5 {
+            links.remember(Provider::Codex, &format!("run-{i}"), "parent", 10);
+        }
+        assert_eq!(links.links.len(), MAX_PARENT_LINKS);
+        assert_eq!(
+            links.get(Provider::Codex, "run-0"),
+            None,
+            "the oldest went first"
+        );
+        assert_eq!(
+            links.get(Provider::Codex, &format!("run-{}", MAX_PARENT_LINKS + 4)),
+            Some("parent")
+        );
+        // Learning a run's parent again replaces its link rather than adding one.
+        links.remember(Provider::Codex, "run-200", "other", 11);
+        assert_eq!(links.links.len(), MAX_PARENT_LINKS);
+        assert_eq!(links.get(Provider::Codex, "run-200"), Some("other"));
     }
 
     #[test]

@@ -114,11 +114,16 @@ describe('OverviewPage', () => {
     expect(mount(OverviewPage).findAll('[data-mark]')).toHaveLength(0);
   });
 
-  it('has no "Delegated work" line under the accounts; a renamed main still says it is main', () => {
+  it('has no "Delegated work" line under the accounts, and no "Main" under a renamed main (its crown says it)', () => {
     store.state = state([account({ id: 'main', label: 'Home' }), account({ id: 's', label: 'Second' })]);
-    const rows = mount(OverviewPage).findAll('[aria-labelledby=accounts-heading] [role=row]');
-    expect(rows[1]!.text()).toContain('Main');
+    const page = mount(OverviewPage);
+    const rows = page.findAll('[aria-labelledby=accounts-heading] [role=row]');
+    expect(rows[1]!.findAll('[role=cell]')[1]!.text()).not.toContain('Main');
+    expect(rows[1]!.find('[aria-label="Main account"]').exists()).toBe(true);
     expect(rows[2]!.text()).not.toContain('Delegated work');
+    // No hint under the Accounts heading, nor "All accounts" beside Sessions while nothing is checked.
+    expect(page.text()).not.toContain('Check accounts to show only their sessions.');
+    expect(page.text()).not.toContain('All accounts');
   });
 
   it('shows a changed sign-in in amber words', () => {
@@ -308,7 +313,7 @@ describe('OverviewPage', () => {
 
   it('filters the sessions by the checked accounts, with chips and Show all', async () => {
     const page = withSessions();
-    expect(page.text()).toContain('All accounts');
+    expect(page.text()).not.toContain('Stop showing only');
     await page.findAll('[aria-labelledby=accounts-heading] [role=row]')[2]!.trigger('click');
     expect(page.get('button[role=checkbox][aria-checked=true]').attributes('aria-label')).toBe(
       'Show only the sessions of Second',
@@ -364,8 +369,6 @@ describe('OverviewPage', () => {
     await accountRows()[2]!.trigger('click');
     expect(page.findAll('button[role=checkbox][aria-checked=true]')).toHaveLength(2);
     expect(sessionRows(page)).toHaveLength(3);
-    expect(page.text()).not.toContain('All accounts');
-
     // The box sits inside the row: one click on it toggles once.
     await page.get('[aria-label="Show only the sessions of Main"]').trigger('click');
     expect(page.get('[aria-label="Show only the sessions of Main"]').attributes('aria-checked')).toBe('false');
@@ -378,7 +381,7 @@ describe('OverviewPage', () => {
       .find((b) => b.text() === 'Show all')!
       .trigger('click');
     expect(page.findAll('button[role=checkbox][aria-checked=true]')).toHaveLength(0);
-    expect(page.text()).toContain('All accounts');
+    expect(page.text()).not.toContain('Stop showing only');
     expect(sessionRows(page)).toHaveLength(3);
   });
 
@@ -399,7 +402,6 @@ describe('OverviewPage', () => {
     const st = store.state!;
     store.state = { ...st, accounts: st.accounts.map((a) => (a.id === 'x' ? { ...a, enabled: false } : a)) };
     await page.vm.$nextTick();
-    expect(page.text()).toContain('All accounts');
     expect(page.text()).not.toContain('Stop showing only');
     expect(sessionRows(page).map((r) => r.find('[role=cell]').attributes('aria-label'))).toEqual(['Working', 'Idle']);
   });

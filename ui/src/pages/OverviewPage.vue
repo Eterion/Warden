@@ -37,11 +37,6 @@ const accounts = computed(() => usedAccounts(store.state));
 /** The Extra usage column shows only while some account has spent some. */
 const showExtra = computed(() => accounts.value.some((a) => extraText(a.provider, a.usage) !== null));
 
-/** Only a renamed main says it is main; where work goes is the status bar's to say. */
-function role(a: Account): string {
-  return a.id === 'main' && a.label !== 'Main' ? 'Main' : '';
-}
-
 /** Main's hand-off point on its weekly bar, while it is below 100%. */
 function mark(a: Account, k: number): number | undefined {
   const at = store.state?.delegation.handOffAt;
@@ -101,7 +96,6 @@ function row(a: Account) {
     extra: extraText(a.provider, u),
     note: readingNote(a, store.state?.settings.usageIntervalMin ?? 5, store.now),
     signedIn: signedInAs(a, store.state?.accounts ?? []),
-    role: role(a),
     // Sessions signed in as someone else are shown, but count for no account.
     now: tally(allSessions.value.filter((s) => s.accountId === a.id && !s.signedInAs)),
   };
@@ -145,7 +139,6 @@ function sessionAccount(s: Session): Account | undefined {
               </span>
             </div>
           </div>
-          <p class="text-13 text-tertiary">Check accounts to show only their sessions.</p>
         </div>
 
         <div
@@ -203,7 +196,6 @@ function sessionAccount(s: Session): Account | undefined {
               <AccountIcon :account="a" />
               <span class="flex min-w-0 flex-col">
                 <span class="truncate font-semibold">{{ a.label }}</span>
-                <span v-if="row(a).role" :class="['truncate text-12', muted(a)]">{{ row(a).role }}</span>
                 <!-- A changed sign-in takes the email line's place; the expected email is in its tooltip. -->
                 <WTooltip
                   v-if="row(a).signedIn"
@@ -273,7 +265,6 @@ function sessionAccount(s: Session): Account | undefined {
         <div class="flex flex-wrap items-baseline gap-x-4 gap-y-2">
           <h2 id="sessions-heading" class="text-16 font-semibold">Sessions</h2>
           <div class="flex flex-wrap items-baseline gap-1.5 text-13">
-            <span v-if="filter.length === 0" class="text-tertiary">All accounts</span>
             <RemovableChip
               v-for="id in filter"
               :key="id"

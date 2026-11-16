@@ -7,6 +7,7 @@ use crate::Args;
 use crate::alerts::Alerts;
 use crate::autostart::RunValue;
 use crate::updates::{self, Source, Updates};
+use crate::window_state::{self, Place, Screen, Seen};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -17,7 +18,10 @@ use tauri::ipc::CapabilityBuilder;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::NewWindowResponse;
-use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Manager, PhysicalPosition, PhysicalSize, RunEvent, Url, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
+};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
@@ -45,6 +49,10 @@ struct Core {
     page: PageLoad,
     /// WebView2's profile, inside Warden's data folder.
     webview_dir: PathBuf,
+    /// Warden's data folder, where the window's place is kept.
+    data_dir: PathBuf,
+    /// The window's place as it moves and changes size, saved when it closes and when Warden quits.
+    place: std::sync::Mutex<Option<Place>>,
 }
 
 /// What the page may ask of Tauri: its window's controls, the folder picker and Quit. Only the app's own page (the
@@ -265,18 +273,102 @@ pub fn open_window(handle: &AppHandle) {
     let Ok(own) = Url::parse(PAGE) else {
         return;
     };
+    // Where it was last, while that is still on a screen; otherwise the default size, centred.
+    let screens: Vec<Screen> = handle
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|m| Screen {
+            x: m.position().x,
+            y: m.position().y,
+            width: m.size().width,
+            height: m.size().height,
+        })
+        .collect();
+    let saved = window_state::usable(
+        store::load(&core.data_dir, window_state::FILE).unwrap_or_default(),
+        &screens,
+    );
     let built = WebviewWindowBuilder::new(handle, WINDOW, WebviewUrl::CustomProtocol(own.clone()))
         .title("Warden")
         .inner_size(1280.0, 800.0)
         .min_inner_size(800.0, 560.0)
+        .center()
+        // Shown once it is in its place, so it does not jump.
+        .visible(saved.is_none())
         .decorations(false)
         .data_directory(core.webview_dir.clone())
         // The window shows only Warden's own page; links elsewhere and new windows are refused.
         .on_navigation(move |url| url.origin() == own.origin())
         .on_new_window(|_, _| NewWindowResponse::Deny)
         .build();
-    if let Err(e) = built {
-        (core.app.log)(&format!("could not open the window: {e}"));
+    let window = match built {
+        Ok(w) => w,
+        Err(e) => {
+            (core.app.log)(&format!("could not open the window: {e}"));
+            return;
+        }
+    };
+    if let Some(p) = saved {
+        // The screen first, then the size, so a screen with another scale does not change the size afterwards.
+        let _ = window.set_position(PhysicalPosition::new(p.x, p.y));
+        let _ = window.set_size(PhysicalSize::new(p.width, p.height));
+        if p.maximized {
+            let _ = window.maximize();
+        }
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    *lock_place(&core) = saved;
+    follow_place(handle, &window);
+    let h = handle.clone();
+    window.on_window_event(move |event| match event {
+        WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+            if let Some(w) = h.get_webview_window(WINDOW) {
+                follow_place(&h, &w);
+            }
+        }
+        WindowEvent::Destroyed => save_place(&h),
+        _ => {}
+    });
+}
+
+fn lock_place(core: &Core) -> std::sync::MutexGuard<'_, Option<Place>> {
+    core.place
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Takes in where the window is now and how big, and whether it is minimized or maximized.
+fn follow_place(handle: &AppHandle, window: &WebviewWindow) {
+    let Some(core) = handle.try_state::<Core>() else {
+        return;
+    };
+    let (Ok(at), Ok(size)) = (window.outer_position(), window.inner_size()) else {
+        return;
+    };
+    let seen = Seen {
+        x: at.x,
+        y: at.y,
+        width: size.width,
+        height: size.height,
+        minimized: window.is_minimized().unwrap_or(false),
+        maximized: window.is_maximized().unwrap_or(false),
+    };
+    let mut place = lock_place(&core);
+    *place = window_state::follow(*place, seen);
+}
+
+/// Keeps the window's place in the data folder: when the window closes and when Warden quits.
+fn save_place(handle: &AppHandle) {
+    let Some(core) = handle.try_state::<Core>() else {
+        return;
+    };
+    let Some(place) = *lock_place(&core) else {
+        return;
+    };
+    if let Err(e) = store::save(&core.data_dir, window_state::FILE, &place) {
+        (core.app.log)(&format!("could not keep the window's place ({})", e.kind()));
     }
 }
 
@@ -398,6 +490,7 @@ fn start_app(
         .map_err(|e| format!("could not find Warden's own program: {e}"))?;
     let webview_dir = data_dir.join("webview");
     let update_dir = data_dir.join("update");
+    let place_dir = data_dir.clone();
     let saved: Readings = store::load(&data_dir, READINGS_FILE).unwrap_or_default();
     let alerts = Alerts::from_saved(&saved);
     window_csp(handle).ok_or("the app has no Content-Security-Policy")?;
@@ -425,6 +518,8 @@ fn start_app(
         ui_dir: core.ui_dir.clone(),
         page: PageLoad::default(),
         webview_dir,
+        data_dir: place_dir,
+        place: std::sync::Mutex::new(None),
     });
 
     if self_update {
@@ -638,6 +733,8 @@ pub fn run(
             }
         }
         RunEvent::Exit => {
+            // Quit with the window open: its place is kept as when it closes.
+            save_place(handle);
             // Only after the user's quit (never when Windows ends the session) a downloaded update installs, without
             // starting Warden again; Warden closes for it.
             if let Some(updates) = handle.try_state::<ReleaseUpdates>() {

@@ -15,6 +15,7 @@ mod alerts;
 mod autostart;
 mod shell;
 mod updates;
+mod window_state;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

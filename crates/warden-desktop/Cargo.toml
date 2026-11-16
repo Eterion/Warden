@@ -22,6 +22,7 @@ tauri-plugin-updater = "2"
 reqwest = { version = "0.13", default-features = false }
 semver = "1"
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 warden-rules = { path = "../warden-rules" }

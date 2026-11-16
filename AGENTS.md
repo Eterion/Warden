@@ -157,6 +157,7 @@ The app itself is the design. `ui/src/styles/tokens.css` and the shared componen
 - Modals and menus animate open and closed: a soft scale (from 0.96, menus 0.97) with a mild overshoot, about 200 ms opening (menus 150 ms) and quicker closing, the backdrop fading. With reduced motion they only fade, quickly. Nothing else animates, except the working spinners.
 - Every spinner shows the same angle at any moment (`v-sync-spin`: the animation starts at the timeline's zero; no timers).
 - The main window's content uses the available width, inside the panel's padding.
+- Only the app's own areas scroll (the content panel, the sidebar in a short window, a modal's body); the page itself never does (the rendered check fails if it can). Every scrolling area has thin scrollbars whose thumb is the `control` colour (3:1), set once in the base styles.
 - Menus hug their items (as wide as the longest, within the window). Every menu item has a Lucide icon; destructive ones (Remove) are red (`danger`), passing contrast at rest, highlighted and pressed.
 - A changed sign-in shows amber "Signed in as …" in place of the account's email line (the expected email in its tooltip), and in the Account column of its sessions.
 - A switched-off account shows only in Settings › Accounts: a dimmed icon, a grey name with the "Not used" tag, and its row a subtle grey background (`WTableRow` `off`, the `row-off` token).
@@ -170,13 +171,15 @@ The app itself is the design. `ui/src/styles/tokens.css` and the shared componen
 - Account icon badges: a crown on main; no other badge.
 - Work sent to the other accounts is "delegated work" everywhere.
 - A session's name is plain text: its own title, else its branch in words, else its folder. No work-item tags or numbers taken out of it.
-- The sessions table is a tree: each delegated session sits under the main session that started it, indented with a thin connector, always expanded; waiting rows come first among siblings; a session whose parent is unknown or gone stays at the top level; while accounts are checked, the ancestors of their sessions show faded in their places.
+- The sessions table is a tree: each delegated session sits under the main session that started it, indented with a thin connector, always expanded; waiting rows come first among siblings; a session whose parent is unknown or gone stays at the top level; while accounts are checked, the ancestors of their sessions show faded in their places. An ended or not-known session's whole row shows faded, as a faded parent does (text tertiary, icons muted, no amber, the provider mark in its own colour).
 
 **States and icons**
 
-- Working: a slow, neutral grey spinner (1.8 s a turn; still when reduced motion is asked for), in the sidebar and tables alike.
+- Working: a slow, neutral grey spinner, a full thin ring with a darker arc turning on it (1.8 s a turn; still when reduced motion is asked for), in the sidebar and tables alike.
 - Waiting for you: the Lucide hand in amber.
 - Idle: the Lucide coffee cup.
+- Done: a dash, muted.
+- Not known (seen only in a CLI's list): a ghost, muted.
 
 ### Shared components
 

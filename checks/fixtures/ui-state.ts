@@ -130,7 +130,10 @@ function session(s: Partial<Session> & Pick<Session, 'id' | 'accountId' | 'state
   };
 }
 
-/** Sessions on the accounts in use: one waits for you, three work, one is idle, one has just ended. */
+/**
+ * Sessions on the accounts in use: one waits for you, three work, one is idle, one has just ended, and one is seen only
+ * in a CLI's list (its state not known).
+ */
 function sessions(now: number): Session[] {
   return [
     session({
@@ -193,6 +196,17 @@ function sessions(now: number): Session[] {
       startedAt: now - 30 * MIN,
       signedInAs: 'sam@home.example',
       endedAt: now - 4 * MIN,
+    }),
+    session({
+      id: 's7',
+      accountId: 'main',
+      state: 'idle',
+      doing: 'Seen in the session list, no status hook',
+      project: 'scratch',
+      name: 'Release notes',
+      startedAt: now - 9 * MIN,
+      lastEventAt: now - 9 * MIN,
+      source: 'list',
     }),
   ];
 }

@@ -318,19 +318,20 @@ describe('OverviewPage', () => {
     expect(page.text()).not.toContain('No sessions for the checked accounts');
   });
 
-  it('shows the start of each session id in its own column', () => {
+  it('shows the end of each session id in its own column, so time-ordered ids started together differ', () => {
     store.now = NOW;
     const st = state([account({ id: 'main', label: 'Main' })]);
+    // Codex's ids are UUID v7: sessions started within about a minute share their first 8 characters.
     st.sessions = [
-      session({ id: '0a1b2c3d-4e5f-6789', accountId: 'main', state: 'working', name: 'Same task' }),
-      session({ id: '9f8e7d6c-5b4a-3210', accountId: 'main', state: 'working', name: 'Same task' }),
+      session({ id: '019a8c3e-1f2a-7b3c-9d4e-5f6a7b8c9d0e', accountId: 'main', state: 'working', name: 'Same task' }),
+      session({ id: '019a8c3e-4b5c-7d6e-8f90-a1b2c3d4e5f6', accountId: 'main', state: 'working', name: 'Same task' }),
     ];
     store.state = st;
     const page = mount(OverviewPage);
     const heads = page.findAll('[aria-labelledby=sessions-heading] [role=columnheader]').map((h) => h.text());
     expect(heads.slice(5)).toEqual(['Subagents', 'ID', 'Running for']);
     const ids = sessionRows(page).map((r) => r.findAll('[role=cell]')[6]!);
-    expect(ids.map((c) => c.text())).toEqual(['0a1b2c3d', '9f8e7d6c']);
+    expect(ids.map((c) => c.text())).toEqual(['7b8c9d0e', 'c3d4e5f6']);
     expect(ids[0]!.classes()).toEqual(expect.arrayContaining(['font-mono', 'text-tertiary']));
   });
 
@@ -518,6 +519,47 @@ describe('OverviewPage', () => {
     st.sessions = [session({ id: 'l', accountId: 'main', state: 'waiting', source: 'list' })];
     store.state = st;
     expect(sessionRows(mount(OverviewPage))[0]!.classes()).not.toContain('bg-attn-bg');
+  });
+
+  it('fades the whole row of an ended session and of one whose state is not known, but not a working one', () => {
+    store.now = NOW;
+    const st = state([account({ id: 'main', label: 'Main' })]);
+    st.sessions = [
+      session({ id: 'work', accountId: 'main', state: 'working', doing: 'Editing files' }),
+      session({ id: 'listed', accountId: 'main', state: 'waiting', doing: 'Seen in the list', source: 'list' }),
+      session({
+        id: 'ended',
+        accountId: 'main',
+        state: 'done',
+        doing: 'Ended',
+        endedAt: NOW - 60_000,
+        signedInAs: 'sam@example.com',
+      }),
+    ];
+    store.state = st;
+    const page = mount(OverviewPage);
+    const [work, listed, ended] = sessionRows(page);
+    expect(work!.findAll('[role=cell]')[1]!.text()).toBe('Session work');
+    expect(work!.classes()).not.toContain('icons-faded');
+    expect(work!.classes()).not.toContain('text-tertiary');
+    expect(work!.findAll('[role=cell]')[2]!.classes()).toContain('text-secondary');
+    for (const [row, label] of [
+      [listed!, 'State not known, no status hook'],
+      [ended!, 'Done'],
+    ] as const) {
+      expect(row.classes()).toEqual(expect.arrayContaining(['icons-faded', 'text-tertiary']));
+      expect(row.classes()).not.toContain('bg-attn-bg');
+      expect(row.findAll('[role=cell]')[0]!.attributes('aria-label')).toBe(label);
+      expect(row.text()).not.toContain('Shown only for the sessions under it');
+      // No amber anywhere in it: the doing text and a changed sign-in are tertiary too.
+      expect(row.findAll('.text-attn')).toHaveLength(0);
+      expect(row.findAll('[role=cell]')[2]!.classes()).toContain('text-tertiary');
+    }
+    expect(ended!.text()).toContain('Signed in as sam@example.com');
+    // They still count as before: the listed one as not known (not shown in the counts), the ended one not at all.
+    expect(page.get('[aria-label="Sessions shown by state"]').text().replace(/\s+/g, ' ')).toBe(
+      '1 working 0 waiting for you 0 idle',
+    );
   });
 
   it('says when there are no sessions at all', () => {

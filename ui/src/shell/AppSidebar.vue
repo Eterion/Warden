@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // The full-height sidebar: Warden, Overview, the accounts in use with their weekly bars, a newer Warden's download or
 // "Install and restart", and Settings at the bottom. In
-// the desktop app, Warden's name opens the app menu (Quit) and the row around it moves the window.
+// the desktop app, Warden's name opens the app menu (Quit) and the row around it moves the window. In a window too
+// short for all of it, the sidebar scrolls on its own (`relative`, so nothing positioned inside reaches past it).
 import { ChevronDown, LayoutDashboard, Power, Radar, Settings } from 'lucide-vue-next';
 import { DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from 'reka-ui';
 import { computed } from 'vue';
@@ -29,7 +30,7 @@ const accounts = computed(() =>
 </script>
 
 <template>
-  <aside class="flex max-w-60 shrink-0 grow basis-55 flex-col px-3 pb-3">
+  <aside class="relative flex min-h-0 max-w-60 shrink-0 grow basis-55 flex-col overflow-y-auto px-3 pb-3">
     <div v-if="desktop.inApp" class="flex h-12 shrink-0 items-center" data-tauri-drag-region="deep">
       <DropdownMenuRoot :modal="false">
         <DropdownMenuTrigger

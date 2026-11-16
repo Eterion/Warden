@@ -62,7 +62,9 @@
   --color-control: light-dark(#71717a, #71717a); /* outlines of switches, radios and checkboxes (3:1) */
   --color-fill: light-dark(#18181b, #d4d4d8); /* slider and progress fill */
   --color-track: light-dark(#e4e4e7, #27272a);
-  --color-track-win: light-dark(#d4d4d8, #3f3f46); /* a track on the window background */
+  /* A track on the window background; also the working spinner's still ring, a decorative track, not an icon colour
+     that needs 3:1 (so it has no contrast pair of its own). */
+  --color-track-win: light-dark(#d4d4d8, #3f3f46);
   --color-switch-on: light-dark(#18181b, #f4f4f5);
   --color-switch-off-bg: light-dark(#ffffff, transparent);
   --color-knob-on: light-dark(#ffffff, #09090b);
@@ -237,6 +239,19 @@
   color: var(--color-text);
 }
 
+/* Only the app's own areas scroll (the sidebar, the content panel, a modal's body); the page itself never does. The
+   shell is the window's height, so nothing should reach past it: this is the backstop. */
+html,
+body {
+  overflow: hidden;
+}
+
+/* Thin scrollbars everywhere: the thumb is a control (3:1 against what is around it), on no track of its own. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-control) transparent;
+}
+
 :root[data-theme='light'] {
   color-scheme: light;
 }
@@ -283,8 +298,10 @@
 }
 
 @utility icons-faded {
-  /* A sessions row shown only for the sessions under it: its icons (state, subagents) a step dimmer. */
-  & svg {
+  /* A faded sessions row (a parent shown only for the sessions under it, or a session that has ended or whose state is
+     not known): its icons (state, subagents) a step dimmer. The working spinner's still ring keeps its own faint
+     colour, so its turning arc still shows. */
+  & svg:not([data-ring-track]) {
     color: var(--color-icon-faded);
   }
 }

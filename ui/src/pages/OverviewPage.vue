@@ -97,6 +97,16 @@ const rows = computed(() =>
   ),
 );
 const shownTally = computed(() => tally(rows.value.filter((r) => !r.faded).map((r) => r.session)));
+/**
+ * The rows as the table draws them: `dim` when the whole row shows faded, as a parent shown only for the sessions under
+ * it, or a session that has ended or whose state is not known.
+ */
+const tableRows = computed(() =>
+  rows.value.map((r) => {
+    const shown = shownState(r.session);
+    return { ...r, dim: r.faded || shown === 'done' || shown === 'unknown' };
+  }),
+);
 
 const points = computed(() => {
   const map = new Map<string, Point[]>();
@@ -329,14 +339,15 @@ function sessionAccount(s: Session): Account | undefined {
               <span role="columnheader">ID</span>
               <span role="columnheader" class="text-right">Running for</span>
             </template>
-            <!-- A faded row is shown only for the sessions under it (while accounts are checked): its text in the
-               tertiary colour, its icons dimmed, no amber. -->
+            <!-- A dimmed row (a parent shown only for the sessions under it while accounts are checked, or a session
+               that has ended or whose state is not known): its text in the tertiary colour, its icons dimmed, no
+               amber. Only a parent shown for its children says so to screen readers; the others' state is heard. -->
             <WTableRow
-              v-for="{ session: s, depth, parent, rails, last, faded } in rows"
+              v-for="{ session: s, depth, parent, rails, last, faded, dim } in tableRows"
               :key="`${s.provider}:${s.id}`"
               :class="[
                 'py-2.25 text-13',
-                faded ? 'icons-faded text-tertiary' : s.state === 'waiting' && s.source === 'hook' && 'bg-attn-bg',
+                dim ? 'icons-faded text-tertiary' : s.state === 'waiting' && s.source === 'hook' && 'bg-attn-bg',
               ]"
             >
               <span
@@ -379,7 +390,7 @@ function sessionAccount(s: Session): Account | undefined {
                 role="cell"
                 :class="[
                   'min-w-0 truncate',
-                  faded
+                  dim
                     ? 'text-tertiary'
                     : s.state === 'waiting'
                       ? 'font-medium text-attn'
@@ -392,16 +403,16 @@ function sessionAccount(s: Session): Account | undefined {
               >
               <span
                 role="cell"
-                :class="['min-w-0 truncate', faded ? 'text-tertiary' : 'text-secondary']"
+                :class="['min-w-0 truncate', dim ? 'text-tertiary' : 'text-secondary']"
                 :title="s.project ?? undefined"
                 >{{ s.project ?? '' }}</span
               >
               <span role="cell" class="flex min-w-0 items-center gap-1.5">
-                <!-- The provider mark keeps its colour on a faded row: dimmed, Claude's spark would fall below 3:1. -->
+                <!-- The provider mark keeps its colour on a dimmed row: dimmed, Claude's spark would fall below 3:1. -->
                 <ProviderMark :provider="s.provider" size="xs" />
                 <span
                   v-if="s.signedInAs"
-                  :class="['min-w-0 truncate font-medium', faded ? 'text-tertiary' : 'text-attn']"
+                  :class="['min-w-0 truncate font-medium', dim ? 'text-tertiary' : 'text-attn']"
                   :title="`Signed in as ${s.signedInAs}`"
                   >Signed in as {{ s.signedInAs }}</span
                 >
@@ -412,7 +423,7 @@ function sessionAccount(s: Session): Account | undefined {
               <span role="cell" class="inline-flex items-center gap-1.5 text-tertiary">
                 <SubagentsBadge v-if="s.subagents.length" :label="subagentsLabel(s)" :count="s.subagents.length" />
               </span>
-              <span role="cell" class="font-mono text-tertiary">{{ s.id.slice(0, 8) }}</span>
+              <span role="cell" class="font-mono text-tertiary">{{ s.id.slice(-8) }}</span>
               <span role="cell" class="text-right text-tertiary tabular-nums">{{ runningFor(s, store.now) }}</span>
             </WTableRow>
             <div v-if="rows.length === 0" role="row">

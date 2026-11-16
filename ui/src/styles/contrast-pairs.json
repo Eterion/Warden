@@ -1234,5 +1234,23 @@
     "bg": ["panel", "selected-hover"],
     "min": 3,
     "use": "main's hand-off mark on its weekly bar, against a checked Overview row, hovered"
+  },
+  {
+    "fg": "control",
+    "bg": ["win"],
+    "min": 3,
+    "use": "scrollbar thumb in the sidebar (no track of its own)"
+  },
+  {
+    "fg": "control",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "scrollbar thumb in the content panel and a table scrolling sideways (no track of its own)"
+  },
+  {
+    "fg": "control",
+    "bg": ["modal"],
+    "min": 3,
+    "use": "scrollbar thumb in a modal's body (no track of its own)"
   }
 ]

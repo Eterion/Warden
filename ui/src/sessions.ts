@@ -28,9 +28,12 @@ export function sortSessions(list: Session[]): Session[] {
   return [...list].sort((a, b) => ORDER[shownState(a)] - ORDER[shownState(b)] || a.startedAt - b.startedAt);
 }
 
-/** A session's name as the table shows it: its own, else the start of its id. */
+/**
+ * A session's name as the table shows it: its own, else the end of its id (as the ID column shows it; Codex's ids are
+ * time-ordered, so their starts repeat).
+ */
 export function sessionName(s: Session): string {
-  return s.name ?? `Session ${s.id.slice(0, 8)}`;
+  return s.name ?? `Session ${s.id.slice(-8)}`;
 }
 
 /** A row of the sessions tree. */

@@ -174,6 +174,23 @@ export const PAGES: {
     ready: '[aria-labelledby=sessions-heading] >> text=Started by',
   },
   {
+    // The window at its smallest: the sessions table runs below the panel's bottom edge, its screen-reader-only text
+    // with it, and the page itself still does not scroll.
+    name: 'overview-sessions-tree-small',
+    path: '/',
+    fixture: 'tree',
+    ready: '[aria-labelledby=sessions-heading] >> text=Started by',
+    viewport: { width: 800, height: 560 },
+  },
+  {
+    // A browser narrower than the desktop window can be: the sidebar stays beside the panel, nothing wraps below.
+    name: 'overview-narrow-browser',
+    path: '/',
+    fixture: 'tree',
+    ready: '[aria-labelledby=sessions-heading] >> text=Started by',
+    viewport: { width: 640, height: 560 },
+  },
+  {
     name: 'overview-sessions-tree-filtered',
     path: '/',
     fixture: 'tree',
@@ -785,6 +802,17 @@ async function main(): Promise<void> {
               .map((a) => a.finished),
           ),
         );
+        // Only the app's own areas scroll (the content panel, a modal's body); the page itself never does.
+        const overflow = await page.evaluate(() => {
+          const d = document.scrollingElement ?? document.documentElement;
+          return { sh: d.scrollHeight, h: window.innerHeight, sw: d.scrollWidth, w: window.innerWidth };
+        });
+        if (overflow.sh > overflow.h || overflow.sw > overflow.w) {
+          failures++;
+          console.error(
+            `FAIL ${p.name} (${theme}): the page itself can scroll (document ${overflow.sw} × ${overflow.sh}, window ${overflow.w} × ${overflow.h})`,
+          );
+        }
         await page.screenshot({ path: join(shots, `${p.name}-${theme}.png`), fullPage: true });
         await page.addScriptTag({ url: '/__axe.js' });
         const result = (await page.evaluate(

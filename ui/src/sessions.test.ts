@@ -142,10 +142,17 @@ describe('the sessions tree', () => {
     ]);
   });
 
-  it('names a session by its own name, else the start of its id', () => {
+  it('names a session by its own name, else the end of its id', () => {
     const rows = sessionTree([s('m', 'idle', { name: 'Overview design' }), s('c0ffee1234', 'idle', { parentId: 'm' })]);
     expect(sessionName(rows[1]!.parent!)).toBe('Overview design');
-    expect(sessionName(rows[1]!.session)).toBe('Session c0ffee12');
+    expect(sessionName(rows[1]!.session)).toBe('Session ffee1234');
+  });
+
+  it('tells apart two unnamed sessions whose time-ordered ids start alike', () => {
+    const a = s('019a7f3c-0000-7000-8000-00000000a1b2', 'idle');
+    const b = s('019a7f3c-0000-7000-8000-00000000c3d4', 'idle');
+    expect(sessionName(a)).toBe('Session 0000a1b2');
+    expect(sessionName(b)).toBe('Session 0000c3d4');
   });
 });
 

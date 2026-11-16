@@ -338,7 +338,7 @@ pub fn command(account: &AccountConfig, shell: Shell, parent: Option<&str>) -> S
     let folder = shell.literal(&account.folder.to_string_lossy());
     let run = match account.provider {
         // Each CLI's own unattended mode, so a delegated run can edit inside the project within its limits.
-        Provider::Claude => "claude -p --permission-mode auto \"<task>\"",
+        Provider::Claude => "claude -p --permission-mode auto --name \"<name>\" \"<task>\"",
         Provider::Codex => "codex exec --approve-for-me \"<task>\"",
     };
     match shell {
@@ -372,6 +372,13 @@ pub const BACKGROUND_RUNS: &str = "Run a delegated command in the background and
 
 /// Told with it: a tool that starts a CLI (a review script) runs on a Warden account too, never on a CLI's default folder.
 pub const STARTED_FOR_YOU: &str = "Anything you start that runs Claude or Codex for you (a review script, say) is delegated work too: run it with the same variables as that account's command above.";
+
+/// Told with them when a Claude command is listed: what to put in its placeholders.
+pub const NAME_AND_TASK: &str =
+    "Replace `<name>` with a few words saying what the run does, and `<task>` with the task.";
+
+/// Told with them when only Codex commands are listed (Codex's command has no name).
+pub const TASK: &str = "Replace `<task>` with the task.";
 
 pub fn guidance(
     settings: &Settings,
@@ -408,6 +415,7 @@ pub fn guidance(
     // why. An account holding someone else's login (or none) gets no command, so no work ever runs on it.
     let mut lines = String::new();
     let mut any_command = false;
+    let mut any_claude_command = false;
     for listed in &decision.accounts {
         let Some(account) = settings.account(&listed.account_id) else {
             continue;
@@ -428,7 +436,9 @@ pub fn guidance(
             ),
             Some(skip) => format!("- {label} (skipped: {})", skip.words()),
         };
-        any_command |= listed.skip.is_none_or(Skip::can_run);
+        let can_run = listed.skip.is_none_or(Skip::can_run);
+        any_command |= can_run;
+        any_claude_command |= can_run && account.provider == Provider::Claude;
         lines.push('\n');
         lines.push_str(&line);
     }
@@ -438,6 +448,13 @@ pub fn guidance(
         text.push_str(BACKGROUND_RUNS);
         text.push('\n');
         text.push_str(STARTED_FOR_YOU);
+        text.push('\n');
+        // Codex's command has no name, so only the task is explained when no Claude command is listed.
+        text.push_str(if any_claude_command {
+            NAME_AND_TASK
+        } else {
+            TASK
+        });
     }
     text.push_str(&lines);
     // Percentages, reading age and reset time never cause repeated advice while the actual decision stays put: the

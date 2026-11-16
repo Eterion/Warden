@@ -656,9 +656,21 @@ fn transcripts_read_only_for_their_title() {
         serde_json::json!({ "type": "user", "message": { "role": "user", "content": message } }),
         serde_json::json!({ "type": "custom-title", "customTitle": "Payroll export", "sessionId": "s1" }),
         serde_json::json!({ "type": "assistant", "message": { "content": message } }),
+        // Claude Code's generated title never replaces the session's own.
+        serde_json::json!({ "type": "ai-title", "aiTitle": "Generated name", "sessionId": "s1" }),
     ];
     let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
     std::fs::write(&transcript, text).expect("transcript");
+    // Without a custom title, the generated one names the session; nothing else in its record or the transcript is
+    // kept.
+    let generated = projects.join("s3.jsonl");
+    let lines = [
+        serde_json::json!({ "type": "user", "message": { "role": "user", "content": message } }),
+        serde_json::json!({ "type": "ai-title", "aiTitle": "Fix the login", "sessionId": "s3", "note": message }),
+        serde_json::json!({ "type": "assistant", "message": { "content": message } }),
+    ];
+    let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    std::fs::write(&generated, text).expect("transcript");
     // A transcript path outside the account's folder is not read at all.
     let outside = f.home.path().join("s2.jsonl");
     std::fs::write(
@@ -671,6 +683,7 @@ fn transcripts_read_only_for_their_title() {
         serde_json::json!({ "session_id": "s1", "hook_event_name": "SessionStart", "cwd": f.home.path(), "transcript_path": transcript }),
         serde_json::json!({ "session_id": "s1", "hook_event_name": "Stop", "transcript_path": transcript }),
         serde_json::json!({ "session_id": "s2", "hook_event_name": "SessionStart", "cwd": f.home.path(), "transcript_path": outside }),
+        serde_json::json!({ "session_id": "s3", "hook_event_name": "SessionStart", "cwd": f.home.path(), "transcript_path": generated }),
     ];
     let mut answers = Vec::new();
     for e in events {
@@ -688,6 +701,7 @@ fn transcripts_read_only_for_their_title() {
             .expect("session")
     };
     assert_eq!(name("s1"), "Payroll export");
+    assert_eq!(name("s3"), "Fix the login");
     assert_ne!(name("s2"), "Outside");
     answers.push(state.body.clone());
     server.stop();

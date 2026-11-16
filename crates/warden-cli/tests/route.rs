@@ -194,12 +194,12 @@ fn tells_each_session_once_and_stays_silent_while_nothing_changes() {
         "{t}"
     );
     assert!(
-        t.contains("\nRun a delegated command in the background and read its result when it finishes; a long run in the foreground is cut off.\nAnything you start that runs Claude or Codex for you (a review script, say) is delegated work too: run it with the same variables as that account's command above.\n- Second (Warden's pick): WARDEN_PARENT_SESSION="),
+        t.contains("\nRun a delegated command in the background and read its result when it finishes; a long run in the foreground is cut off.\nAnything you start that runs Claude or Codex for you (a review script, say) is delegated work too: run it with the same variables as that account's command above.\nReplace `<name>` with a few words saying what the run does, and `<task>` with the task.\n- Second (Warden's pick): WARDEN_PARENT_SESSION="),
         "{t}"
     );
     assert!(
         t.contains(&format!(
-            "CLAUDE_CONFIG_DIR='{}' claude -p --permission-mode auto \"<task>\"",
+            "CLAUDE_CONFIG_DIR='{}' claude -p --permission-mode auto --name \"<name>\" \"<task>\"",
             dir.path().join("a2").display()
         )),
         "{t}"
@@ -291,7 +291,7 @@ fn a_claude_session_is_told_its_commands_for_the_shell_claude_code_uses() {
     let (bash, _) = route(&data, "main", input);
     assert!(
         text(&bash).contains(&format!(
-            "CLAUDE_CONFIG_DIR='{}' claude -p --permission-mode auto \"<task>\"",
+            "CLAUDE_CONFIG_DIR='{}' claude -p --permission-mode auto --name \"<name>\" \"<task>\"",
             second.display()
         )),
         "{}",

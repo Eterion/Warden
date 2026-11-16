@@ -434,10 +434,30 @@ pub struct Sessions {
     named_order: VecDeque<(Provider, String)>,
     /// Which main session started each delegated run, kept across restarts.
     parents: ParentLinks,
+    /// Parent ids looked up by id since the start, so one that cannot be found is not looked up on every event. At
+    /// most [`MAX_LOOKED_UP`], the oldest dropped first.
+    looked_up: VecDeque<String>,
+    /// The main sessions those lookups found, so one dropped while no run under it was shown comes back with the
+    /// run without another lookup. At most [`MAX_LOOKED_UP`], the oldest found dropped first; one the hook reports
+    /// is forgotten, as its own events say what it is from then on.
+    found: VecDeque<Found>,
+}
+
+/// A main session found by its id ([`Sessions::add_found`]), as it was added.
+#[derive(Debug, Clone)]
+struct Found {
+    provider: Provider,
+    account_id: String,
+    signed_in_as: Option<String>,
+    id: String,
+    last_at: i64,
+    place: Place,
 }
 
 /// Sessions' own names kept at most.
 pub const MAX_NAMES: usize = 2 * MAX_SESSIONS;
+/// Parent ids remembered as looked up, and main sessions remembered as found, at most.
+pub const MAX_LOOKED_UP: usize = 2 * MAX_SESSIONS;
 
 impl Sessions {
     /// The parent links saved before a restart: a session that comes back sits under its main session again.
@@ -469,7 +489,152 @@ impl Sessions {
 
     /// The sessions to show at `now`: finished ones only for a while, long-quiet ones not at all.
     pub fn shown(&self, now: i64) -> impl Iterator<Item = &Session> {
-        self.list.iter().filter(move |s| keep(s, now))
+        self.list.iter().filter(move |s| self.kept(s, now))
+    }
+
+    /// Whether a session is still shown at `now`: by the usual rule ([`keep`]), or a listed main session while one
+    /// of the delegated runs under it is shown, however long ago it was last written to.
+    fn kept(&self, s: &Session, now: i64) -> bool {
+        keep(s, now) || self.holds_a_run(s, now)
+    }
+
+    /// A listed main session (not ended, signed in as main) with a run under it that is shown.
+    fn holds_a_run(&self, s: &Session, now: i64) -> bool {
+        listed_main(s)
+            && self.list.iter().any(|c| {
+                c.account_id != "main"
+                    && c.parent_id.as_deref() == Some(s.id.as_str())
+                    && keep(c, now)
+            })
+    }
+
+    /// Drops the sessions no longer shown. Returns whether any went.
+    fn drop_gone(&mut self, now: i64) -> bool {
+        let gone: Vec<bool> = self.list.iter().map(|s| !self.kept(s, now)).collect();
+        if !gone.contains(&true) {
+            return false;
+        }
+        let mut gone = gone.into_iter();
+        self.list.retain(|_| !gone.next().unwrap_or(false));
+        true
+    }
+
+    /// The main sessions that shown runs name as their parent (through a saved link) but that are not known, each
+    /// given once per start: Warden looks them up by id in the accounts' own session files.
+    pub fn parents_to_find(&mut self, now: i64) -> Vec<String> {
+        let named: Vec<String> = self
+            .shown(now)
+            .filter(|s| s.account_id != "main")
+            .filter_map(|s| s.parent_id.clone())
+            .collect();
+        named.into_iter().filter(|p| self.take_lookup(p)).collect()
+    }
+
+    /// The main session a shown run the hook reports names as its parent (`named`, from its event, or else its saved
+    /// link), when that session is not known and was not looked up yet since the start.
+    pub fn parent_to_find(
+        &mut self,
+        provider: Provider,
+        id: &str,
+        named: Option<&str>,
+        now: i64,
+    ) -> Option<String> {
+        let parent = self.named_parent(provider, id, named, now)?;
+        self.take_lookup(&parent).then_some(parent)
+    }
+
+    /// The main session a shown run names as its parent, as for [`Sessions::parent_to_find`].
+    fn named_parent(
+        &self,
+        provider: Provider,
+        id: &str,
+        named: Option<&str>,
+        now: i64,
+    ) -> Option<String> {
+        let s = self.get(provider, id)?;
+        if s.account_id == "main" || !keep(s, now) {
+            return None;
+        }
+        named
+            .map(str::to_owned)
+            .or_else(|| s.parent_id.clone())
+            .or_else(|| self.known_parent(provider, id, now))
+            .filter(|p| p != id)
+    }
+
+    /// Adds a main session found by its id for a run's parent link, as a listed session ([`Sessions::add_listed_as`]),
+    /// and remembers it, so it can come back without another lookup ([`Sessions::restore_found_parent`]). Returns
+    /// whether it was added.
+    pub fn add_found(
+        &mut self,
+        provider: Provider,
+        account_id: &str,
+        signed_in_as: Option<&str>,
+        (id, last_at, place): (String, i64, Place),
+        now: i64,
+    ) -> bool {
+        self.found.retain(|f| f.id != id);
+        self.found.push_back(Found {
+            provider,
+            account_id: account_id.to_owned(),
+            signed_in_as: signed_in_as.map(str::to_owned),
+            id: id.clone(),
+            last_at,
+            place: place.clone(),
+        });
+        while self.found.len() > MAX_LOOKED_UP {
+            self.found.pop_front();
+        }
+        self.add_listed_as(
+            provider,
+            account_id,
+            signed_in_as,
+            vec![(id, last_at, place)],
+            now,
+        )
+    }
+
+    /// Brings back the main session a shown run names as its parent (as for [`Sessions::parent_to_find`]) when it is
+    /// not known but was found earlier since the start: dropped while no run under it was shown, it returns with the
+    /// run, from what was found then, without another lookup. Returns whether it came back.
+    pub fn restore_found_parent(
+        &mut self,
+        provider: Provider,
+        id: &str,
+        named: Option<&str>,
+        now: i64,
+    ) -> bool {
+        let Some(parent) = self.named_parent(provider, id, named, now) else {
+            return false;
+        };
+        if self.list.iter().any(|s| s.id == parent) {
+            return false;
+        }
+        let Some(f) = self.found.iter().find(|f| f.id == parent).cloned() else {
+            return false;
+        };
+        self.add_listed_as(
+            f.provider,
+            &f.account_id,
+            f.signed_in_as.as_deref(),
+            vec![(f.id, f.last_at, f.place)],
+            now,
+        )
+    }
+
+    /// Notes that `parent` is looked up now, if it is a session id that is not known and was not looked up before.
+    fn take_lookup(&mut self, parent: &str) -> bool {
+        if !crate::pipe::valid_session_id(parent)
+            || self.list.iter().any(|s| s.id == parent)
+            || self.looked_up.iter().any(|p| p == parent)
+        {
+            return false;
+        }
+        self.looked_up.push_back(parent.to_owned());
+        while self.looked_up.len() > MAX_LOOKED_UP {
+            self.looked_up.pop_front();
+        }
+        true
     }
 
     /// A snapshot clears links whose main session is no longer shown, even with no new hook event.
@@ -496,6 +661,11 @@ impl Sessions {
                 .any(|s| s.id == id && s.account_id == "main" && s.signed_in_as.is_none())
     }
 
+    /// A listed main session (not ended, signed in as main), shown or not.
+    fn is_listed_main(&self, id: &str) -> bool {
+        self.list.iter().any(|s| s.id == id && listed_main(s))
+    }
+
     /// Only main sessions may parent delegated runs; a late event without a link preserves a known parent.
     pub fn set_parent(
         &mut self,
@@ -504,7 +674,11 @@ impl Sessions {
         parent: Option<&str>,
         now: i64,
     ) -> bool {
-        let parent = parent.filter(|p| *p != id && self.valid_parent(p, now));
+        // A listed main session older than its window is shown again once a shown run sits under it.
+        let child_kept = self.get(provider, id).is_some_and(|s| keep(s, now));
+        let parent = parent.filter(|p| {
+            *p != id && (self.valid_parent(p, now) || child_kept && self.is_listed_main(p))
+        });
         let Some(s) = self
             .list
             .iter_mut()
@@ -575,9 +749,7 @@ impl Sessions {
         event: &Event,
         now: i64,
     ) -> bool {
-        let count = self.list.len();
-        self.list.retain(|s| keep(s, now));
-        let mut changed = self.list.len() != count;
+        let mut changed = self.drop_gone(now);
         let i = match self
             .list
             .iter()
@@ -591,6 +763,9 @@ impl Sessions {
                 if let Some(i) = found {
                     self.list.remove(i); // A listed session the hook now reports.
                 }
+                // A main session found for a run's parent: its own events say what it is from now on.
+                self.found
+                    .retain(|f| !(f.provider == provider && f.id == event.session_id));
                 self.make_room();
                 changed = true;
                 let title = self
@@ -794,7 +969,7 @@ impl Sessions {
         listed: Vec<(String, i64, Place)>,
         now: i64,
     ) -> bool {
-        self.list.retain(|s| keep(s, now));
+        self.drop_gone(now);
         let mut added = false;
         for (id, last_at, place) in listed {
             if self.get(provider, &id).is_some() {
@@ -977,6 +1152,14 @@ impl Sessions {
     }
 }
 
+/// A main session seen only in its CLI's list, not ended, signed in as main: one that may hold delegated runs.
+fn listed_main(s: &Session) -> bool {
+    s.source == Source::List
+        && s.ended_at.is_none()
+        && s.account_id == "main"
+        && s.signed_in_as.is_none()
+}
+
 fn keep(s: &Session, now: i64) -> bool {
     match s.ended_at {
         Some(ended) => now - ended < DONE_KEPT_MS,
@@ -1103,6 +1286,278 @@ mod parent_tests {
         assert_eq!(
             cleaned.parent_links().get(Provider::Codex, "child", 5),
             None
+        );
+    }
+
+    /// Links saved before a restart: `child` (a Codex run on a2) under main's `parent`.
+    fn saved_link(now: i64) -> ParentLinks {
+        let mut links = ParentLinks::default();
+        links.remember(Provider::Codex, "child", "parent", now);
+        links
+    }
+
+    fn shown_parent(sessions: &Sessions, id: &str, now: i64) -> Option<String> {
+        sessions
+            .shown_with_parents(now)
+            .iter()
+            .find(|s| s.id == id)
+            .and_then(|s| s.parent_id.clone())
+    }
+
+    #[test]
+    fn an_idle_main_session_is_found_by_id_once_and_stays_while_a_run_under_it_is_shown() {
+        let hour = 60 * 60_000;
+        let now = 10 * hour;
+        let mut s = Sessions::default();
+        s.restore_parents(saved_link(now - hour), now);
+        // The run was written to a minute ago; its main session an hour ago, so it is not in main's list.
+        s.add_listed(
+            Provider::Codex,
+            "a2",
+            vec![("child".into(), now - 60_000, Place::default())],
+            now,
+        );
+        assert_eq!(shown_parent(&s, "child", now), None);
+        assert_eq!(s.parents_to_find(now), vec!["parent".to_owned()]);
+        // Asked once per start: not found, it is not looked up again, at start or on an event.
+        assert!(s.parents_to_find(now).is_empty());
+        assert_eq!(
+            s.parent_to_find(Provider::Codex, "child", Some("parent"), now),
+            None
+        );
+
+        // Found: added as a listed session, older than the lists' window, and the run sits under it.
+        assert!(s.add_listed(
+            Provider::Claude,
+            "main",
+            vec![("parent".into(), now - hour, Place::default())],
+            now,
+        ));
+        let parent = s.get(Provider::Claude, "parent").expect("added").clone();
+        assert_eq!(
+            (parent.state, parent.doing.as_str(), parent.source),
+            (SessionState::Idle, LISTED_TEXT, Source::List)
+        );
+        assert_eq!(parent.last_event_at, now - hour);
+        assert_eq!(shown_parent(&s, "child", now).as_deref(), Some("parent"));
+        assert_eq!(s.shown(now).count(), 2);
+        // Another account's listing keeps it while the run is shown.
+        s.add_listed(Provider::Codex, "a3", Vec::new(), now + LISTED_KEPT_MS / 2);
+        assert!(s.get(Provider::Claude, "parent").is_some());
+        // Once the run is no longer shown, the usual rule drops it too.
+        let later = now - 60_000 + LISTED_KEPT_MS;
+        assert_eq!(s.shown(later).count(), 0);
+        s.add_listed(Provider::Codex, "a3", Vec::new(), later);
+        assert!(s.get(Provider::Claude, "parent").is_none());
+        // A hook event for a found parent takes it over.
+        let mut t = Sessions::default();
+        t.restore_parents(saved_link(now - hour), now);
+        t.add_listed(
+            Provider::Codex,
+            "a2",
+            vec![("child".into(), now - 60_000, Place::default())],
+            now,
+        );
+        t.add_listed(
+            Provider::Claude,
+            "main",
+            vec![("parent".into(), now - hour, Place::default())],
+            now,
+        );
+        t.apply(
+            Provider::Claude,
+            "main",
+            Place::default,
+            &event("parent", EventKind::Prompt),
+            now,
+        );
+        let parent = t.get(Provider::Claude, "parent").expect("hooked");
+        assert_eq!(
+            (parent.source, parent.state),
+            (Source::Hook, SessionState::Working)
+        );
+        assert_eq!(shown_parent(&t, "child", now).as_deref(), Some("parent"));
+    }
+
+    #[test]
+    fn a_found_main_session_comes_back_with_its_run_without_another_lookup() {
+        let hour = 60 * 60_000;
+        let now = 10 * hour;
+        let mut s = Sessions::default();
+        s.restore_parents(saved_link(now - hour), now);
+        // At start: the run written to a minute ago, its main session found by id, an hour idle.
+        s.add_listed(
+            Provider::Codex,
+            "a2",
+            vec![("child".into(), now - 60_000, Place::default())],
+            now,
+        );
+        assert_eq!(s.parents_to_find(now), vec!["parent".to_owned()]);
+        let place = Place {
+            project: Some("shop".into()),
+            name: None,
+        };
+        assert!(s.add_found(
+            Provider::Claude,
+            "main",
+            None,
+            ("parent".into(), now - hour, place.clone()),
+            now,
+        ));
+        assert_eq!(shown_parent(&s, "child", now).as_deref(), Some("parent"));
+        // Nothing to bring back while it is known.
+        assert!(!s.restore_found_parent(Provider::Codex, "child", None, now));
+
+        // 30 minutes without a hook event: the listed run goes, and its main session with it.
+        let later = now + LISTED_KEPT_MS;
+        assert_eq!(s.shown(later).count(), 0);
+        // The run's next event drops both before it is added again, from the hook.
+        s.apply(
+            Provider::Codex,
+            "a2",
+            Place::default,
+            &event("child", EventKind::Prompt),
+            later,
+        );
+        assert!(s.get(Provider::Claude, "parent").is_none());
+        // It was looked up already this start, so it is not looked up again...
+        assert_eq!(
+            s.parent_to_find(Provider::Codex, "child", None, later),
+            None
+        );
+        // ...but comes back from what was found, and the run sits under it again.
+        assert!(s.restore_found_parent(Provider::Codex, "child", None, later));
+        let parent = s.get(Provider::Claude, "parent").expect("back").clone();
+        assert_eq!(
+            (
+                parent.account_id.as_str(),
+                parent.source,
+                parent.last_event_at,
+                parent.folder_place
+            ),
+            ("main", Source::List, now - hour, place)
+        );
+        assert_eq!(shown_parent(&s, "child", later).as_deref(), Some("parent"));
+        assert!(!s.restore_found_parent(Provider::Codex, "child", None, later));
+
+        // One the hook has reported since is not brought back from the lookup: its own events say what it is.
+        s.apply(
+            Provider::Claude,
+            "main",
+            Place::default,
+            &event("parent", EventKind::Prompt),
+            later,
+        );
+        s.apply(
+            Provider::Claude,
+            "main",
+            Place::default,
+            &event("parent", EventKind::End),
+            later,
+        );
+        let gone = later + DONE_KEPT_MS + 1;
+        s.apply(
+            Provider::Codex,
+            "a2",
+            Place::default,
+            &event("child", EventKind::Prompt),
+            gone,
+        );
+        assert!(s.get(Provider::Claude, "parent").is_none());
+        assert!(!s.restore_found_parent(Provider::Codex, "child", None, gone));
+    }
+
+    #[test]
+    fn found_main_sessions_are_remembered_only_up_to_a_bound() {
+        let mut s = Sessions::default();
+        for n in 0..=MAX_LOOKED_UP {
+            s.add_found(
+                Provider::Claude,
+                "main",
+                None,
+                (format!("p{n}"), 0, Place::default()),
+                0,
+            );
+        }
+        assert_eq!(s.found.len(), MAX_LOOKED_UP);
+        assert!(s.found.iter().all(|f| f.id != "p0"));
+    }
+
+    #[test]
+    fn a_run_reported_later_finds_its_idle_main_session() {
+        let hour = 60 * 60_000;
+        let now = 10 * hour;
+        let mut s = Sessions::default();
+        // A run reported by the hook after the start, naming main's `parent` in its event.
+        s.apply(
+            Provider::Claude,
+            "a2",
+            Place::default,
+            &event("child", EventKind::Start),
+            now,
+        );
+        // Not known, so it cannot be its parent yet.
+        assert!(!s.set_parent(Provider::Claude, "child", Some("parent"), now));
+        assert_eq!(
+            s.parent_to_find(Provider::Claude, "child", Some("parent"), now)
+                .as_deref(),
+            Some("parent")
+        );
+        assert_eq!(
+            s.parent_to_find(Provider::Claude, "child", Some("parent"), now),
+            None
+        );
+        s.add_listed(
+            Provider::Claude,
+            "main",
+            vec![("parent".into(), now - hour, Place::default())],
+            now,
+        );
+        // Shown again once the run sits under it.
+        assert!(s.set_parent(Provider::Claude, "child", Some("parent"), now));
+        assert_eq!(shown_parent(&s, "child", now).as_deref(), Some("parent"));
+        assert_eq!(
+            s.parent_links().get(Provider::Claude, "child", now),
+            Some("parent")
+        );
+        // Nothing to look up for a main session, a known parent, itself or something that is not a session id.
+        s.apply(
+            Provider::Claude,
+            "main",
+            Place::default,
+            &event("m2", EventKind::Start),
+            now,
+        );
+        assert_eq!(
+            s.parent_to_find(Provider::Claude, "m2", Some("other"), now),
+            None
+        );
+        assert_eq!(
+            s.parent_to_find(Provider::Claude, "child", Some("child"), now),
+            None
+        );
+        assert_eq!(
+            s.parent_to_find(Provider::Claude, "child", Some("m2"), now),
+            None
+        );
+        assert_eq!(
+            s.parent_to_find(Provider::Claude, "child", Some("bad id"), now),
+            None
+        );
+        // A run's saved link counts when its event names none.
+        let mut t = Sessions::default();
+        t.restore_parents(saved_link(now - hour), now);
+        t.apply(
+            Provider::Codex,
+            "a2",
+            Place::default,
+            &event("child", EventKind::Prompt),
+            now,
+        );
+        assert_eq!(
+            t.parent_to_find(Provider::Codex, "child", None, now)
+                .as_deref(),
+            Some("parent")
         );
     }
 

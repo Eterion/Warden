@@ -417,7 +417,7 @@ impl App {
                 .is_some()
         });
         let tools = detect::tools(&env);
-        Ok(App {
+        let app = App {
             inner: Mutex::new(Inner {
                 settings,
                 readings,
@@ -469,7 +469,17 @@ impl App {
             start_with_windows_change: Mutex::new(()),
             transcripts: Mutex::new(titles::Transcripts::default()),
             desktop,
-        })
+        };
+        // The sessions the CLIs' own lists hold, before the hooks' pipe opens and before the first usage reading: the
+        // first answer already has every session Warden can know about at start, each under its main session again
+        // (the saved parent links). No hook has reported yet, so every account is listed; a folder signed in as
+        // someone else counts as the last reading found until the first reading checks it again.
+        app.list_sessions();
+        // A main session idle for longer than the lists' window is not in them: each one a shown run's saved link
+        // names is looked up by its id, so the run sits under it.
+        let to_find = app.lock().sessions.parents_to_find(now_ms());
+        app.find_parents(to_find);
+        Ok(app)
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -1308,6 +1318,25 @@ impl App {
         else {
             return Ok(());
         };
+        // The main session this run names (or its saved link names), looked up by id when it is not known: it may
+        // have been idle for longer than the lists' window since Warden started. Once per id per start; one found
+        // before and dropped since (no run under it shown for a while) comes back from what was found.
+        let to_find = {
+            let mut inner = self.lock();
+            let named = message.event.parent_session_id.as_deref();
+            if inner
+                .sessions
+                .restore_found_parent(provider, &event.session_id, named, now_ms())
+            {
+                self.touch_sessions(&mut inner);
+            }
+            inner
+                .sessions
+                .parent_to_find(provider, &event.session_id, named, now_ms())
+        };
+        if let Some(parent) = to_find {
+            self.find_parents(vec![parent]);
+        }
         {
             let mut inner = self.lock();
             if inner.sessions.set_parent(
@@ -1426,6 +1455,54 @@ impl App {
                     now,
                 )
             {
+                self.touch_sessions(&mut inner);
+            }
+        }
+    }
+
+    /// Looks up main sessions that delegated runs name as their parent, by id, in the accounts in use (main's
+    /// folder first, the Codex app's folder never), whatever their age, and adds each one found as a listed session.
+    /// Only the session files are read ([`fallback::find_session`]); nothing is started.
+    fn find_parents(&self, ids: Vec<String>) {
+        if ids.is_empty() {
+            return;
+        }
+        let accounts: Vec<(AccountConfig, Option<String>)> = {
+            let inner = self.lock();
+            inner
+                .settings
+                .all_accounts(&self.env)
+                .into_iter()
+                .filter(|a| a.enabled && !self.env.in_codex_app(&a.folder))
+                .map(|a| {
+                    let r = inner.readings.accounts.get(&a.id);
+                    let signed_in_as = r
+                        .is_some_and(|r| r.identity_change.is_some())
+                        .then(|| signed_in_as_text(r));
+                    (a, signed_in_as)
+                })
+                .collect()
+        };
+        for id in ids {
+            let Some((a, signed_in_as, found)) = accounts.iter().find_map(|(a, signed_in_as)| {
+                fallback::find_session(&self.env, a.provider, &a.folder, &id)
+                    .map(|found| (a, signed_in_as, found))
+            }) else {
+                continue;
+            };
+            let place = found
+                .cwd
+                .as_deref()
+                .map(sessions::place_of)
+                .unwrap_or_default();
+            let mut inner = self.lock();
+            if inner.sessions.add_found(
+                a.provider,
+                &a.id,
+                signed_in_as.as_deref(),
+                (found.id, found.last_at, place),
+                now_ms(),
+            ) {
                 self.touch_sessions(&mut inner);
             }
         }

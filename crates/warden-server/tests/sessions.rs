@@ -476,3 +476,260 @@ fn a_codex_session_takes_its_thread_name_from_the_index() {
     });
     server.stop();
 }
+
+#[test]
+fn after_a_restart_the_first_answer_already_shows_each_run_under_its_main_session() {
+    let f = Fixture::new();
+    let work = f.claude_folder(".claude-work", "ann@acme.example", "t1");
+    let server = f.start();
+    common::eventually("the start-up reading", || server.app.usage_idle());
+    let work_id = add(server.addr, "claude", &work, "Work");
+    server.stop();
+
+    // Before the restart: a main session started a delegated run on Work; both wrote lately, and the link is saved.
+    let line = format!(
+        "{}\n",
+        json!({ "type": "user", "cwd": f.home.path().join("shop") })
+    );
+    let main = f.home.path().join(".claude");
+    write(&main.join("projects/C--shop/main-1.jsonl"), &line);
+    write(&main.join("projects/C--shop/main-2.jsonl"), &line);
+    write(&work.join("projects/C--shop/run-1.jsonl"), &line);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time")
+        .as_millis();
+    write(
+        &f.data.path().join("session-parents.json"),
+        &json!({ "links": [{ "provider": "claude", "id": "run-1", "parent": "main-1", "at": now }] })
+            .to_string(),
+    );
+    // The first usage reading takes its time: the sessions do not wait for it.
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    *f.endpoint.during.lock().expect("lock") = Some(Box::new(move || {
+        let _ = held.recv_timeout(std::time::Duration::from_secs(10));
+    }));
+    let server = f.start();
+    let addr = server.addr;
+    let parent_of = |all: &[Value], id: &str| {
+        all.iter()
+            .find(|s| s["id"] == id)
+            .map(|s| s["parentId"].clone())
+    };
+    let first = sessions(addr);
+    assert_eq!(parent_of(&first, "main-1"), Some(Value::Null), "{first:?}");
+    assert_eq!(
+        parent_of(&first, "run-1"),
+        Some(json!("main-1")),
+        "{first:?}"
+    );
+
+    // Another main session's hook reports, and the run's own: the tree stays as it is.
+    send(
+        &f,
+        "main",
+        json!({ "session_id": "main-2", "hook_event_name": "UserPromptSubmit" }),
+    );
+    send(
+        &f,
+        &work_id,
+        json!({ "session_id": "run-1", "hook_event_name": "PreToolUse", "tool_name": "Edit" }),
+    );
+    let after = sessions(addr);
+    assert_eq!(
+        parent_of(&after, "run-1"),
+        Some(json!("main-1")),
+        "{after:?}"
+    );
+    assert!(parent_of(&after, "main-1").is_some(), "{after:?}");
+    let _ = release.send(());
+    common::eventually("the first reading", || server.app.usage_idle());
+    let settled = sessions(addr);
+    assert_eq!(parent_of(&settled, "run-1"), Some(json!("main-1")));
+    assert!(parent_of(&settled, "main-1").is_some());
+    server.stop();
+}
+
+/// Sets a file's last write time `ago` before now.
+fn written_ago(path: &std::path::Path, ago: std::time::Duration) {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .and_then(|f| f.set_modified(std::time::SystemTime::now() - ago))
+        .expect("set the write time");
+}
+
+#[test]
+fn after_a_restart_a_run_shows_under_its_main_session_idle_for_an_hour() {
+    let f = Fixture::new();
+    let work = f.claude_folder(".claude-work", "ann@acme.example", "t1");
+    let server = f.start();
+    common::eventually("the start-up reading", || server.app.usage_idle());
+    let work_id = add(server.addr, "claude", &work, "Work");
+    server.stop();
+
+    // Before the restart: a main session started a delegated run on Work and has been idle for an hour since; the
+    // run wrote lately. Another main session, idle for two hours, is named only by a run reported later.
+    let line = format!(
+        "{}\n",
+        json!({ "type": "user", "cwd": f.home.path().join("shop") })
+    );
+    let main = f.home.path().join(".claude");
+    let hour = std::time::Duration::from_secs(60 * 60);
+    for id in ["main-1", "main-3"] {
+        let file = main.join(format!("projects/C--shop/{id}.jsonl"));
+        write(&file, &line);
+        written_ago(&file, if id == "main-1" { hour } else { 2 * hour });
+    }
+    write(&work.join("projects/C--shop/run-1.jsonl"), &line);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time")
+        .as_millis();
+    write(
+        &f.data.path().join("session-parents.json"),
+        &json!({ "links": [{ "provider": "claude", "id": "run-1", "parent": "main-1", "at": now }] })
+            .to_string(),
+    );
+    // The first usage reading takes its time: the sessions do not wait for it.
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    *f.endpoint.during.lock().expect("lock") = Some(Box::new(move || {
+        let _ = held.recv_timeout(std::time::Duration::from_secs(10));
+    }));
+    let server = f.start();
+    let addr = server.addr;
+    let find = |all: &[Value], id: &str| all.iter().find(|s| s["id"] == id).cloned();
+    let first = sessions(addr);
+    let parent = find(&first, "main-1").expect("the idle main session");
+    assert_eq!(parent["parentId"], Value::Null, "{first:?}");
+    assert_eq!(parent["source"], "list", "{first:?}");
+    assert_eq!(parent["state"], "idle", "{first:?}");
+    let last = u128::try_from(parent["lastEventAt"].as_i64().expect("time")).expect("time");
+    assert!(now - last >= hour.as_millis() - 60_000, "{first:?}");
+    assert_eq!(
+        find(&first, "run-1").expect("the run")["parentId"],
+        json!("main-1"),
+        "{first:?}"
+    );
+    assert!(find(&first, "main-3").is_none(), "{first:?}");
+
+    // A run the hook reports later names main-3 in its event (`WARDEN_PARENT_SESSION`): it is looked up and the run
+    // sits under it.
+    let mut event = warden_core::pipe::HookEvent::from_hook_input(
+        json!({ "session_id": "run-2", "hook_event_name": "UserPromptSubmit" })
+            .to_string()
+            .as_bytes(),
+    )
+    .expect("event");
+    event.parent_session_id = Some("main-3".into());
+    warden_core::pipe::send(
+        f.data.path(),
+        &warden_core::pipe::Message {
+            account: work_id.clone(),
+            event,
+        },
+    )
+    .expect("sent");
+    let after = sessions(addr);
+    assert_eq!(
+        find(&after, "run-2").expect("the later run")["parentId"],
+        json!("main-3"),
+        "{after:?}"
+    );
+    assert_eq!(find(&after, "main-3").expect("found")["source"], "list");
+    let _ = release.send(());
+    common::eventually("the first reading", || server.app.usage_idle());
+    let settled = sessions(addr);
+    assert_eq!(
+        find(&settled, "run-1").expect("the run")["parentId"],
+        json!("main-1")
+    );
+    server.stop();
+}
+
+/// Each way a folder can point elsewhere that the tests can make here: a junction always, a symbolic link where
+/// Windows lets this user make one (administrators and developer mode). Runs `check` with `at` pointing at `target`
+/// each way, then takes the link away.
+fn each_link(target: &std::path::Path, at: &std::path::Path, check: impl Fn(&str)) {
+    junction::create(target, at).expect("junction");
+    check("junction");
+    junction::delete(at).expect("unjunction");
+    std::fs::remove_dir(at).expect("remove junction");
+    match std::os::windows::fs::symlink_dir(target, at) {
+        Ok(()) => {
+            check("link");
+            std::fs::remove_dir(at).expect("remove link");
+        }
+        Err(e) => eprintln!("no link made ({e}); that way is not tested here"),
+    }
+}
+
+#[test]
+fn session_lists_never_follow_a_link_into_the_codex_apps_folder() {
+    use warden_core::fallback::{find_session, listed_sessions};
+    use warden_core::model::Provider;
+    let f = Fixture::new();
+    let env = f.env();
+    let now = warden_core::time::now_ms();
+    // The Codex app's folder holds a session file in each CLI's usual place.
+    let app = f.home.path().join(".codex");
+    let meta = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"c1\",\"cwd\":\"/w\"}}\n";
+    write(
+        &app.join("sessions/2026/11/09/rollout-2026-11-09T10-00-00-c1.jsonl"),
+        meta,
+    );
+    write(&app.join("projects/p/c1.jsonl"), "{\"cwd\":\"/w\"}\n");
+    let nothing_found = |provider: Provider, folder: &std::path::Path, way: &str| {
+        assert_eq!(
+            find_session(&env, provider, folder, "c1"),
+            None,
+            "{provider:?} {way}: {folder:?}"
+        );
+        assert!(
+            listed_sessions(provider, folder, now, 60 * 60_000, 20).is_empty(),
+            "{provider:?} {way}: {folder:?}"
+        );
+    };
+
+    // The same files in plain folders are found, so what follows is the links' doing.
+    let claude = f.home.path().join(".claude-work");
+    let codex = f.home.path().join(".codex-work");
+    write(&claude.join("projects/p/c1.jsonl"), "{\"cwd\":\"/w\"}\n");
+    write(
+        &codex.join("sessions/2026/11/09/rollout-2026-11-09T10-00-00-c1.jsonl"),
+        meta,
+    );
+    for (provider, folder) in [(Provider::Claude, &claude), (Provider::Codex, &codex)] {
+        assert!(find_session(&env, provider, folder, "c1").is_some());
+        assert_eq!(
+            listed_sessions(provider, folder, now, 60 * 60_000, 20).len(),
+            1
+        );
+    }
+    std::fs::remove_dir_all(claude.join("projects")).expect("clean");
+    std::fs::remove_dir_all(codex.join("sessions")).expect("clean");
+
+    // `projects` and `sessions` themselves.
+    each_link(&app.join("projects"), &claude.join("projects"), |way| {
+        nothing_found(Provider::Claude, &claude, way)
+    });
+    each_link(&app.join("sessions"), &codex.join("sessions"), |way| {
+        nothing_found(Provider::Codex, &codex, way)
+    });
+    // One deeper: a project folder, and a year, a month or a day.
+    std::fs::create_dir_all(claude.join("projects")).expect("dirs");
+    each_link(&app.join("projects/p"), &claude.join("projects/p"), |way| {
+        nothing_found(Provider::Claude, &claude, way)
+    });
+    for (target, at) in [
+        ("sessions/2026", "sessions/2026"),
+        ("sessions/2026/11", "sessions/2025/11"),
+        ("sessions/2026/11/09", "sessions/2025/12/09"),
+    ] {
+        let at = codex.join(at);
+        std::fs::create_dir_all(at.parent().expect("parent")).expect("dirs");
+        each_link(&app.join(target), &at, |way| {
+            nothing_found(Provider::Codex, &codex, way)
+        });
+    }
+}

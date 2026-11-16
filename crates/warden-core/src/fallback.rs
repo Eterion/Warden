@@ -3,7 +3,8 @@
 //!
 //! Each CLI call starts a whole process, so it is a rare fallback, never called on a timer. The session lists are
 //! read from the files the CLIs keep them in (Claude's `projects`, Codex's `sessions`), only when Warden starts and
-//! when usage is refreshed by hand, and only for each session's folder and age: no CLI is started for them.
+//! when usage is refreshed by hand, and only for each session's folder and age: no CLI is started for them. A main
+//! session a delegated run names as its parent is looked up by its id the same way, at most once per id per start.
 //! The `cli-fallback-only` rule check fails if a process is started anywhere else in `crates/`.
 
 use crate::model::Provider;
@@ -88,7 +89,8 @@ pub struct Listed {
 }
 
 /// The sessions in an account folder's own list written to within `within_ms` of `now`, newest first, at most
-/// `max`. Only each file's age and the session's folder are read; nothing else in the files is kept.
+/// `max`. Only plain files and folders are walked, as for [`find_session`]. Only each file's age and the session's
+/// folder are read; nothing else in the files is kept.
 pub fn listed_sessions(
     provider: Provider,
     folder: &Path,
@@ -121,7 +123,7 @@ pub fn listed_sessions(
     let mut recent: Vec<(PathBuf, i64)> = files
         .into_iter()
         .filter_map(|f| {
-            let modified = f.metadata().ok()?.modified().ok()?;
+            let modified = plain(&f)?.modified().ok()?;
             let ms = i64::try_from(modified.duration_since(UNIX_EPOCH).ok()?.as_millis()).ok()?;
             (now - ms < within_ms).then_some((f, ms))
         })
@@ -143,23 +145,119 @@ pub fn listed_sessions(
         .collect()
 }
 
+/// One session in an account folder's own list, looked up by its id whatever its age: a main session named by a
+/// delegated run's parent link, idle for longer than the list's window. Only the session files' usual places are
+/// looked in (Claude's `projects/<folder name>/<id>.jsonl`, Codex's `sessions/<year>/<month>/<day>/rollout-*-<id>.jsonl`),
+/// only plain files and folders all the way down (no link, junction or other reparse point followed, `projects` and
+/// `sessions` themselves included), and only the file's age and the session's folder are read.
+/// The Codex app's folder is never looked in.
+pub fn find_session(
+    env: &crate::detect::Env,
+    provider: Provider,
+    folder: &Path,
+    id: &str,
+) -> Option<Listed> {
+    if !crate::pipe::valid_session_id(id) || env.in_codex_app(folder) {
+        return None;
+    }
+    let (file, cwd) = match provider {
+        Provider::Claude => {
+            let name = format!("{id}.jsonl");
+            let file = read_dirs(&folder.join("projects"))
+                .into_iter()
+                .map(|project| project.join(&name))
+                .find(|f| plain_file(f))?;
+            let cwd = claude_cwd(&file);
+            (file, cwd)
+        }
+        Provider::Codex => {
+            let suffix = format!("-{id}.jsonl");
+            let mut days = Vec::new();
+            for year in read_dirs(&folder.join("sessions")) {
+                for month in read_dirs(&year) {
+                    days.extend(read_dirs(&month));
+                }
+            }
+            // Newest day first: a session's file is in the day it started.
+            days.sort();
+            days.iter().rev().find_map(|day| {
+                jsonl_files(day)
+                    .into_iter()
+                    .filter(|f| {
+                        f.file_name()
+                            .and_then(|n| n.to_str())
+                            .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(&suffix))
+                    })
+                    .find_map(|f| match codex_meta(&f) {
+                        Some((found, cwd)) if found == id => Some((f, cwd)),
+                        _ => None,
+                    })
+            })?
+        }
+    };
+    let modified = plain(&file)?.modified().ok()?;
+    let last_at = i64::try_from(modified.duration_since(UNIX_EPOCH).ok()?.as_millis()).ok()?;
+    Some(Listed {
+        id: id.to_owned(),
+        last_at,
+        cwd,
+    })
+}
+
+/// A file or folder as it is on disk, not followed, when it is neither a link nor any other Windows reparse point
+/// (a junction, a mount point, a cloud placeholder): only these are stepped into or read on a session list's walk.
+fn plain(path: &Path) -> Option<std::fs::Metadata> {
+    let meta = path.symlink_metadata().ok()?;
+    if meta.file_type().is_symlink() {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return None;
+        }
+    }
+    Some(meta)
+}
+
+/// A file that is not a link or other reparse point.
+fn plain_file(path: &Path) -> bool {
+    plain(path).is_some_and(|m| m.is_file())
+}
+
+/// A folder that is not a link or other reparse point.
+fn plain_dir(path: &Path) -> bool {
+    plain(path).is_some_and(|m| m.is_dir())
+}
+
+/// The plain folders ([`plain_dir`]) in a plain folder: a link anywhere on the walk, its start (`projects`,
+/// `sessions`) included, is neither listed nor looked into.
 fn read_dirs(dir: &Path) -> Vec<PathBuf> {
+    if !plain_dir(dir) {
+        return Vec::new();
+    }
     std::fs::read_dir(dir)
         .map(|rd| {
             rd.flatten()
-                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
                 .map(|e| e.path())
+                .filter(|p| plain_dir(p))
                 .collect()
         })
         .unwrap_or_default()
 }
 
+/// The plain `.jsonl` files ([`plain_file`]) in a plain folder.
 fn jsonl_files(dir: &Path) -> Vec<PathBuf> {
+    if !plain_dir(dir) {
+        return Vec::new();
+    }
     std::fs::read_dir(dir)
         .map(|rd| {
             rd.flatten()
                 .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
+                .filter(|p| p.extension().is_some_and(|e| e == "jsonl") && plain_file(p))
                 .collect()
         })
         .unwrap_or_default()
@@ -253,6 +351,82 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, "c1");
         assert_eq!(listed[0].cwd, Some(PathBuf::from("/w")));
+    }
+
+    #[test]
+    fn finds_a_session_by_its_id_whatever_its_age() {
+        let dir = crate::testdir::Dir::new("find-session");
+        let env = crate::detect::Env {
+            home: Some(dir.path().join("home")),
+            ..Default::default()
+        };
+        let claude = dir.path().join("claude");
+        let project = claude.join("projects").join("C--work-shop");
+        std::fs::create_dir_all(&project).expect("dirs");
+        std::fs::write(
+            project.join("main-1.jsonl"),
+            "{\"type\":\"user\",\"cwd\":\"%USERPROFILE%\\\\shop\",\"message\":\"private\"}\n",
+        )
+        .expect("log");
+        // Hours later, far outside the list's window, the named session is still found.
+        let later = crate::time::now_ms() + 5 * 60 * 60_000;
+        assert!(listed_sessions(Provider::Claude, &claude, later, 60_000, 10).is_empty());
+        let found = find_session(&env, Provider::Claude, &claude, "main-1").expect("found");
+        assert_eq!(found.id, "main-1");
+        assert_eq!(found.cwd, Some(PathBuf::from("%USERPROFILE%\\shop")));
+        assert!(found.last_at <= crate::time::now_ms());
+        assert_eq!(find_session(&env, Provider::Claude, &claude, "other"), None);
+        // Only session ids: nothing outside the session files' places.
+        for bad in [
+            "",
+            "../main-1",
+            "projects\\C--work-shop\\main-1",
+            "main-1.jsonl",
+        ] {
+            assert_eq!(find_session(&env, Provider::Claude, &claude, bad), None);
+        }
+
+        let codex = dir.path().join("codex");
+        let day = codex.join("sessions/2026/10/01");
+        std::fs::create_dir_all(&day).expect("dirs");
+        std::fs::create_dir_all(codex.join("sessions/2026/11/09")).expect("dirs");
+        std::fs::write(
+            day.join("rollout-2026-10-01T10-00-00-c1.jsonl"),
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"c1\",\"cwd\":\"/w\"}}\n",
+        )
+        .expect("log");
+        let found = find_session(&env, Provider::Codex, &codex, "c1").expect("found");
+        assert_eq!(
+            (found.id.as_str(), found.cwd),
+            ("c1", Some(PathBuf::from("/w")))
+        );
+        assert_eq!(find_session(&env, Provider::Codex, &codex, "c2"), None);
+    }
+
+    #[test]
+    fn never_looks_in_the_codex_apps_folder() {
+        let dir = crate::testdir::Dir::new("find-codex-app");
+        let home = dir.path().join("home");
+        let env = crate::detect::Env {
+            home: Some(home.clone()),
+            ..Default::default()
+        };
+        let app = home.join(".codex");
+        let day = app.join("sessions/2026/11/09");
+        std::fs::create_dir_all(&day).expect("dirs");
+        std::fs::write(
+            day.join("rollout-2026-11-09T10-00-00-c1.jsonl"),
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"c1\",\"cwd\":\"/w\"}}\n",
+        )
+        .expect("log");
+        let project = app.join("projects").join("p");
+        std::fs::create_dir_all(&project).expect("dirs");
+        std::fs::write(project.join("c1.jsonl"), "{\"cwd\":\"/w\"}\n").expect("log");
+        for folder in [app.clone(), app.join("sessions"), home.join("x/../.codex")] {
+            for provider in [Provider::Claude, Provider::Codex] {
+                assert_eq!(find_session(&env, provider, &folder, "c1"), None);
+            }
+        }
     }
 
     #[test]

@@ -270,9 +270,23 @@ fn each_switched_on_account_is_listed_with_why_it_is_skipped() {
     // A listed command comes with the sentence about running it in the background, once.
     assert_eq!(text.matches(BACKGROUND_RUNS).count(), 1, "{text}");
     assert!(
-        text.contains(&format!("{BACKGROUND_RUNS}\n{STARTED_FOR_YOU}\n")),
+        text.contains(&format!(
+            "{BACKGROUND_RUNS}\n{STARTED_FOR_YOU}\n{NAME_AND_TASK}\n"
+        )),
         "{text}"
     );
+    assert!(!text.contains(TASK), "{text}");
+    // Only Codex commands listed: only the task is explained, as Codex's command has no name.
+    let mut codex_only = s.clone();
+    codex_only.accounts.retain(|a| {
+        a.provider == Provider::Codex || !matches!(a.id.as_str(), "second" | "near" | "full")
+    });
+    let text = guidance(&codex_only, &r, Some(MAIN_ID), Bash, None, NOW).text;
+    assert!(
+        text.contains(&format!("{STARTED_FOR_YOU}\n{TASK}\n- third")),
+        "{text}"
+    );
+    assert!(!text.contains(NAME_AND_TASK), "{text}");
     // Only accounts skipped for their limits keep a command: no pick, and still the sentence.
     for id in ["second", "third"] {
         s.accounts.retain(|a| a.id != id);
@@ -280,7 +294,7 @@ fn each_switched_on_account_is_listed_with_why_it_is_skipped() {
     let text = guidance(&s, &r, Some(MAIN_ID), Bash, None, NOW).text;
     assert!(
         text.starts_with(&format!(
-            "Warden: no other account can take delegated work now, so work in this session. If the user names an account, run it there.\n{BACKGROUND_RUNS}\n{STARTED_FOR_YOU}\n- near (skipped: near its 5-hour limit): CLAUDE_CONFIG_DIR="
+            "Warden: no other account can take delegated work now, so work in this session. If the user names an account, run it there.\n{BACKGROUND_RUNS}\n{STARTED_FOR_YOU}\n{NAME_AND_TASK}\n- near (skipped: near its 5-hour limit): CLAUDE_CONFIG_DIR="
         )),
         "{text}"
     );
@@ -297,6 +311,7 @@ fn each_switched_on_account_is_listed_with_why_it_is_skipped() {
     );
     assert!(!text.contains(BACKGROUND_RUNS), "{text}");
     assert!(!text.contains(STARTED_FOR_YOU), "{text}");
+    assert!(!text.contains("Replace `<"), "{text}");
 }
 #[test]
 fn main_and_other_five_hour_limits_hand_off_at_ninety() {
@@ -467,7 +482,7 @@ fn advice_is_only_for_main_and_changes_only_with_the_decision_or_command() {
     let (s, mut r) = setup();
     let g = guidance(&s, &r, Some(MAIN_ID), Bash, Some("session-1"), NOW);
     assert!(g.text.starts_with(
-        "Warden: work in this session. If the user asks to delegate, Warden's pick is second. The user can always choose: work here, or run on whichever account they name.\nRun a delegated command in the background and read its result when it finishes; a long run in the foreground is cut off.\nAnything you start that runs Claude or Codex for you (a review script, say) is delegated work too: run it with the same variables as that account's command above.\n- second (Warden's pick): WARDEN_PARENT_SESSION='session-1' CLAUDE_CONFIG_DIR="
+        "Warden: work in this session. If the user asks to delegate, Warden's pick is second. The user can always choose: work here, or run on whichever account they name.\nRun a delegated command in the background and read its result when it finishes; a long run in the foreground is cut off.\nAnything you start that runs Claude or Codex for you (a review script, say) is delegated work too: run it with the same variables as that account's command above.\nReplace `<name>` with a few words saying what the run does, and `<task>` with the task.\n- second (Warden's pick): WARDEN_PARENT_SESSION='session-1' CLAUDE_CONFIG_DIR="
     ), "{}", g.text);
     assert!(
         g.text
@@ -527,14 +542,24 @@ fn exact_official_commands_quote_paths_and_restore_both_variables() {
     a.folder = PathBuf::from("<home>/it's my ’acc’");
     assert_eq!(
         command(&a, Shell::Bash, Some("parent-1")),
-        "WARDEN_PARENT_SESSION='parent-1' CLAUDE_CONFIG_DIR='<home>/it'\\''s my ’acc’' claude -p --permission-mode auto \"<task>\""
+        "WARDEN_PARENT_SESSION='parent-1' CLAUDE_CONFIG_DIR='<home>/it'\\''s my ’acc’' claude -p --permission-mode auto --name \"<name>\" \"<task>\""
     );
     assert_eq!(
         command(&a, Shell::PowerShell, Some("parent-1")),
-        "& { $was = $env:CLAUDE_CONFIG_DIR; $parentWas = $env:WARDEN_PARENT_SESSION; try { $env:CLAUDE_CONFIG_DIR = '<home>/it''s my ’’acc’’'; $env:WARDEN_PARENT_SESSION = 'parent-1'; claude -p --permission-mode auto \"<task>\" } finally { $env:CLAUDE_CONFIG_DIR = $was; $env:WARDEN_PARENT_SESSION = $parentWas; } }"
+        "& { $was = $env:CLAUDE_CONFIG_DIR; $parentWas = $env:WARDEN_PARENT_SESSION; try { $env:CLAUDE_CONFIG_DIR = '<home>/it''s my ’’acc’’'; $env:WARDEN_PARENT_SESSION = 'parent-1'; claude -p --permission-mode auto --name \"<name>\" \"<task>\" } finally { $env:CLAUDE_CONFIG_DIR = $was; $env:WARDEN_PARENT_SESSION = $parentWas; } }"
+    );
+    // Without a parent session the run is still named.
+    assert_eq!(
+        command(&a, Shell::Bash, None),
+        "CLAUDE_CONFIG_DIR='<home>/it'\\''s my ’acc’' claude -p --permission-mode auto --name \"<name>\" \"<task>\""
+    );
+    assert_eq!(
+        command(&a, Shell::PowerShell, None),
+        "& { $was = $env:CLAUDE_CONFIG_DIR; try { $env:CLAUDE_CONFIG_DIR = '<home>/it''s my ’’acc’’'; claude -p --permission-mode auto --name \"<name>\" \"<task>\" } finally { $env:CLAUDE_CONFIG_DIR = $was; } }"
     );
     a.provider = Provider::Codex;
     assert!(command(&a, Shell::Bash, None).ends_with("codex exec --approve-for-me \"<task>\""));
+    assert!(!command(&a, Shell::PowerShell, None).contains("--name"));
     assert!(command(&a, Shell::PowerShell, None).contains("$env:CODEX_HOME"));
     for bad in ["", "bad'id", "../bad", "bad;exit", &"a".repeat(129)] {
         for shell in [Shell::Bash, Shell::PowerShell] {

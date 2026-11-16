@@ -1,5 +1,6 @@
-//! Sessions' own names: for Claude, the newest `custom-title` record in a session's transcript; for Codex, the
-//! `thread_name` lines of `session_index.jsonl` in the account's folder.
+//! Sessions' own names: for Claude, the newest `custom-title` record in a session's transcript, or without one its
+//! newest `ai-title` (Claude Code's own generated title); for Codex, the `thread_name` lines of `session_index.jsonl`
+//! in the account's folder.
 //!
 //! Both files are read only from where they were last read, when an event or a file-change notification says
 //! something may have been added, never on a timer. Only lines holding a title are parsed (others are skipped
@@ -37,16 +38,23 @@ struct Lines {
 }
 
 impl Lines {
-    /// Reads what was added to `path` since the last read and calls `found` with each complete line that holds
-    /// `needle`. A file that got shorter (replaced or rewritten) is read again from its start.
-    fn read(&mut self, path: &Path, needle: &[u8], mut found: impl FnMut(&[u8])) -> io::Result<()> {
+    /// Reads what was added to `path` since the last read and calls `found` with each complete line that holds one
+    /// of `needles`. A file that got shorter (replaced or rewritten) is read again from its start: then it answers
+    /// `true`.
+    fn read(
+        &mut self,
+        path: &Path,
+        needles: &[&[u8]],
+        mut found: impl FnMut(&[u8]),
+    ) -> io::Result<bool> {
         let mut file = File::open(path)?;
         let len = file.metadata()?.len();
-        if len < self.offset {
+        let restarted = len < self.offset;
+        if restarted {
             *self = Lines::default();
         }
         if len == self.offset {
-            return Ok(());
+            return Ok(restarted);
         }
         file.seek(SeekFrom::Start(self.offset))?;
         let mut reader = file.take(len - self.offset);
@@ -54,14 +62,14 @@ impl Lines {
         loop {
             let n = reader.read(&mut chunk)?;
             if n == 0 {
-                return Ok(());
+                return Ok(restarted);
             }
             self.offset += n as u64;
-            self.feed(&chunk[..n], needle, &mut found);
+            self.feed(&chunk[..n], needles, &mut found);
         }
     }
 
-    fn feed(&mut self, bytes: &[u8], needle: &[u8], found: &mut impl FnMut(&[u8])) {
+    fn feed(&mut self, bytes: &[u8], needles: &[&[u8]], found: &mut impl FnMut(&[u8])) {
         let mut rest = bytes;
         while let Some(i) = rest.iter().position(|&b| b == b'\n') {
             let piece = &rest[..i];
@@ -71,13 +79,13 @@ impl Lines {
                 continue;
             }
             if self.partial.is_empty() {
-                if contains(piece, needle) {
+                if contains(piece, needles) {
                     found(piece);
                 }
             } else if self.partial.len() + piece.len() <= MAX_LINE {
                 self.partial.extend_from_slice(piece);
                 let line = std::mem::take(&mut self.partial);
-                if contains(&line, needle) {
+                if contains(&line, needles) {
                     found(&line);
                 }
             } else {
@@ -95,8 +103,10 @@ impl Lines {
     }
 }
 
-fn contains(hay: &[u8], needle: &[u8]) -> bool {
-    hay.windows(needle.len()).any(|w| w == needle)
+fn contains(hay: &[u8], needles: &[&[u8]]) -> bool {
+    needles
+        .iter()
+        .any(|needle| hay.windows(needle.len()).any(|w| w == *needle))
 }
 
 /// Keeps a title short and printable, on one line; `None` when nothing is left.
@@ -113,20 +123,35 @@ pub fn clean_title(s: &str) -> Option<String> {
     (!s.is_empty()).then(|| s.to_owned())
 }
 
-/// The title in one transcript line, if it is a `custom-title` record.
-fn claude_title(line: &[u8]) -> Option<String> {
+/// The record a session's own name is in (`/rename`, `--name`): it always wins over a generated title.
+const CUSTOM_TITLE: &[u8] = b"\"custom-title\"";
+/// Claude Code's own generated title, used only while a session has no custom one.
+const AI_TITLE: &[u8] = b"\"ai-title\"";
+
+/// A title found in a transcript line.
+#[derive(Debug, PartialEq, Eq)]
+enum ClaudeTitle {
+    Custom(String),
+    Generated(String),
+}
+
+/// The title in one transcript line, if it is a `custom-title` or an `ai-title` record.
+fn claude_title(line: &[u8]) -> Option<ClaudeTitle> {
     #[derive(Deserialize)]
     struct Record {
         #[serde(rename = "type")]
         kind: Option<String>,
         #[serde(rename = "customTitle")]
         custom_title: Option<String>,
+        #[serde(rename = "aiTitle")]
+        ai_title: Option<String>,
     }
     let r: Record = serde_json::from_slice(line).ok()?;
-    if r.kind.as_deref() != Some("custom-title") {
-        return None;
+    match r.kind.as_deref()? {
+        "custom-title" => clean_title(r.custom_title.as_deref()?).map(ClaudeTitle::Custom),
+        "ai-title" => clean_title(r.ai_title.as_deref()?).map(ClaudeTitle::Generated),
+        _ => None,
     }
-    clean_title(r.custom_title.as_deref()?)
 }
 
 /// Whether a transcript path from a hook event is one Warden reads: a `.jsonl` file inside the account's folder, on
@@ -188,12 +213,15 @@ pub struct Transcripts {
 struct Tail {
     path: PathBuf,
     lines: Lines,
+    /// The file has held a custom title: generated titles no longer count.
+    has_custom: bool,
     last_use: u64,
 }
 
 impl Transcripts {
     /// Reads what was added to a session's transcript since the last time and returns the newest title in it
-    /// (`None`: no new title). A session whose transcript moved is read from the new file's start.
+    /// (`None`: no new title): its newest custom title, else, while the file has held none, its newest generated
+    /// one. A session whose transcript moved is read from the new file's start.
     pub fn read(&mut self, session_id: &str, path: &Path) -> Option<String> {
         self.uses += 1;
         if !self.tails.contains_key(session_id) && self.tails.len() >= MAX_TRANSCRIPTS {
@@ -212,20 +240,33 @@ impl Transcripts {
             .or_insert_with(|| Tail {
                 path: path.to_owned(),
                 lines: Lines::default(),
+                has_custom: false,
                 last_use: 0,
             });
         if tail.path != path {
             tail.path = path.to_owned();
             tail.lines = Lines::default();
+            tail.has_custom = false;
         }
         tail.last_use = self.uses;
-        let mut newest = None;
-        let _ = tail.lines.read(path, b"\"custom-title\"", |line| {
-            if let Some(t) = claude_title(line) {
-                newest = Some(t);
-            }
-        });
-        newest
+        let (mut custom, mut generated) = (None, None);
+        let restarted =
+            tail.lines.read(path, &[CUSTOM_TITLE, AI_TITLE], |line| {
+                match claude_title(line) {
+                    Some(ClaudeTitle::Custom(t)) => custom = Some(t),
+                    Some(ClaudeTitle::Generated(t)) => generated = Some(t),
+                    None => {}
+                }
+            });
+        // A rewritten file is read from its start and may no longer hold a custom title.
+        if restarted.unwrap_or(false) {
+            tail.has_custom = false;
+        }
+        if custom.is_some() {
+            tail.has_custom = true;
+            return custom;
+        }
+        generated.filter(|_| !tail.has_custom)
     }
 
     /// Reads what was added to a followed transcript that changed on disk; `(session id, title)` when it holds a
@@ -265,9 +306,10 @@ impl CodexIndex {
         // index never needs more than twice `MAX_NAMES`.
         let mut latest: HashMap<String, (u64, String)> = HashMap::new();
         let mut line_no = 0u64;
-        let _ = self
-            .lines
-            .read(&codex_home.join(CODEX_INDEX), b"\"thread_name\"", |line| {
+        let _ = self.lines.read(
+            &codex_home.join(CODEX_INDEX),
+            &[b"\"thread_name\""],
+            |line| {
                 let Ok(l) = serde_json::from_slice::<Line>(line) else {
                     return;
                 };
@@ -282,7 +324,8 @@ impl CodexIndex {
                 if latest.len() > 2 * MAX_NAMES {
                     keep_newest(&mut latest);
                 }
-            });
+            },
+        );
         keep_newest(&mut latest);
         let mut names: Vec<(u64, String, String)> = latest
             .into_iter()
@@ -360,19 +403,89 @@ mod tests {
     }
 
     #[test]
+    fn a_generated_title_counts_only_while_there_is_no_custom_one() {
+        let dir = Dir::new("titles-ai");
+        let t = dir.path().join("s1.jsonl");
+        let mut tr = Transcripts::default();
+        // An ai-title alone gives the title; the newest wins.
+        append(
+            &t,
+            concat!(
+                r#"{"type":"user","message":{"content":"a private prompt about ai-title"}}"#,
+                "\n",
+                r#"{"type":"ai-title","aiTitle":"Fix the login","sessionId":"s1"}"#,
+                "\n",
+                r#"{"type":"ai-title","aiTitle":"  Fix the\nlogin page  ","sessionId":"s1"}"#,
+                "\n",
+            ),
+        );
+        assert_eq!(tr.read("s1", &t), Some("Fix the login page".into()));
+        assert_eq!(tr.read("s1", &t), None);
+        // A later custom-title replaces it; a generated one in the same read does not win, before or after it.
+        append(
+            &t,
+            concat!(
+                r#"{"type":"ai-title","aiTitle":"Before"}"#,
+                "\n",
+                r#"{"type":"custom-title","customTitle":"Payroll export"}"#,
+                "\n",
+                r#"{"type":"ai-title","aiTitle":"After"}"#,
+                "\n",
+            ),
+        );
+        assert_eq!(tr.read("s1", &t), Some("Payroll export".into()));
+        // A later ai-title, read on its own, does not replace the custom title.
+        append(&t, "{\"type\":\"ai-title\",\"aiTitle\":\"Later\"}\n");
+        assert_eq!(tr.read("s1", &t), None);
+        assert_eq!(tr.changed(&t), None);
+        // Read from where it was last read: a line in two parts, of either kind.
+        append(&t, r#"{"type":"ai-title","aiTi"#);
+        assert_eq!(tr.read("s1", &t), None);
+        append(
+            &t,
+            "tle\":\"Still not\"}\n{\"type\":\"custom-title\",\"cust",
+        );
+        assert_eq!(tr.read("s1", &t), None);
+        append(&t, "omTitle\":\"Renamed\"}\n");
+        assert_eq!(tr.read("s1", &t), Some("Renamed".into()));
+        // A record of another type, or one quoting a title, is not one.
+        append(
+            &t,
+            &format!(
+                "{}\n{}\n",
+                serde_json::json!({"type":"assistant","text":r#"{"type":"ai-title","aiTitle":"Fake"}"#}),
+                serde_json::json!({"type":"user","aiTitle":"Fake"})
+            ),
+        );
+        assert_eq!(tr.read("s1", &t), None);
+        // A rewritten file with only a generated title: that title counts again.
+        std::fs::write(&t, "{\"type\":\"ai-title\",\"aiTitle\":\"New\"}\n").expect("write");
+        assert_eq!(tr.read("s1", &t), Some("New".into()));
+        // Another session's transcript keeps its own: a custom title read first is not replaced.
+        let other = dir.path().join("s2.jsonl");
+        append(
+            &other,
+            "{\"type\":\"custom-title\",\"customTitle\":\"Mine\"}\n{\"type\":\"ai-title\",\"aiTitle\":\"Not mine\"}\n",
+        );
+        assert_eq!(tr.read("s2", &other), Some("Mine".into()));
+        append(&other, "{\"type\":\"ai-title\",\"aiTitle\":\"Later\"}\n");
+        assert_eq!(tr.changed(&other), None);
+    }
+
+    #[test]
     fn an_overlong_line_is_skipped_without_being_buffered() {
         let mut lines = Lines::default();
         let mut found = Vec::new();
         let long = format!("{}\"custom-title\"", "x".repeat(MAX_LINE * 2));
         for piece in long.as_bytes().chunks(READ_CHUNK) {
-            lines.feed(piece, b"\"custom-title\"", &mut |l: &[u8]| {
+            lines.feed(piece, &[CUSTOM_TITLE], &mut |l: &[u8]| {
                 found.push(l.to_vec())
             });
             assert!(lines.partial.len() <= MAX_LINE);
         }
         lines.feed(
             b"\n{\"custom-title\"}\n",
-            b"\"custom-title\"",
+            &[CUSTOM_TITLE],
             &mut |l: &[u8]| found.push(l.to_vec()),
         );
         assert_eq!(found, vec![b"{\"custom-title\"}".to_vec()]);

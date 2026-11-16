@@ -148,6 +148,8 @@ impl Source for Releases {
             // Warden closes for the installer: its core stops first, as on Quit, and Tauri's own cleanup (the tray
             // icon) runs, which this hook replaces.
             .on_before_exit(move || {
+                // The window's place is kept, as on Quit, so the restarted Warden opens where it was.
+                save_place(&h);
                 if let Some(core) = h.try_state::<Core>() {
                     core.app.stop();
                 }
@@ -288,7 +290,8 @@ pub fn open_window(handle: &AppHandle) {
     let saved = window_state::usable(
         store::load(&core.data_dir, window_state::FILE).unwrap_or_default(),
         &screens,
-    );
+    )
+    .map(|p| window_state::opening(p, &screens));
     let built = WebviewWindowBuilder::new(handle, WINDOW, WebviewUrl::CustomProtocol(own.clone()))
         .title("Warden")
         .inner_size(1280.0, 800.0)

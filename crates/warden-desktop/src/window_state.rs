@@ -13,7 +13,8 @@ const GRAB_WIDTH: i64 = 96;
 const GRAB_HEIGHT: i64 = 32;
 
 /// Where the window was when it was last shown normally (not minimized), and whether it was maximized. The bounds are
-/// the window's normal ones even while it is maximized, so un-maximizing goes back to them.
+/// the window's normal ones even while it is maximized, so un-maximizing goes back to them; `maximized_at` is where the
+/// maximized window itself was, so it opens maximized on that screen even after moving there while maximized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Place {
@@ -22,6 +23,8 @@ pub struct Place {
     pub width: u32,
     pub height: u32,
     pub maximized: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maximized_at: Option<[i32; 2]>,
 }
 
 /// A screen, in physical pixels.
@@ -52,9 +55,11 @@ pub fn follow(before: Option<Place>, seen: Seen) -> Option<Place> {
     }
     if seen.maximized {
         // The normal bounds stay as they were; a window opened maximized with none known keeps what it shows.
+        let at = Some([seen.x, seen.y]);
         return Some(match before {
             Some(p) => Place {
                 maximized: true,
+                maximized_at: at,
                 ..p
             },
             None => Place {
@@ -63,6 +68,7 @@ pub fn follow(before: Option<Place>, seen: Seen) -> Option<Place> {
                 width: seen.width,
                 height: seen.height,
                 maximized: true,
+                maximized_at: at,
             },
         });
     }
@@ -72,7 +78,37 @@ pub fn follow(before: Option<Place>, seen: Seen) -> Option<Place> {
         width: seen.width,
         height: seen.height,
         maximized: false,
+        maximized_at: None,
     })
+}
+
+/// The screen holding a point a little inside the window's corner (a maximized window's corner can sit just off its
+/// screen).
+fn screen_at(screens: &[Screen], x: i32, y: i32) -> Option<Screen> {
+    let (px, py) = (i64::from(x) + 16, i64::from(y) + 16);
+    screens.iter().copied().find(|s| {
+        let (sl, st) = (i64::from(s.x), i64::from(s.y));
+        px >= sl && px < sl + i64::from(s.width) && py >= st && py < st + i64::from(s.height)
+    })
+}
+
+/// Where to put the window before showing it: a window maximized on another screen than its normal bounds (moved
+/// there while maximized) gets its normal bounds moved onto that screen, so it maximizes there and un-maximizes there.
+pub fn opening(place: Place, screens: &[Screen]) -> Place {
+    let Some([mx, my]) = place.maximized_at.filter(|_| place.maximized) else {
+        return place;
+    };
+    match (
+        screen_at(screens, place.x, place.y),
+        screen_at(screens, mx, my),
+    ) {
+        (Some(from), Some(to)) if from != to => Place {
+            x: place.x.saturating_add(to.x.saturating_sub(from.x)),
+            y: place.y.saturating_add(to.y.saturating_sub(from.y)),
+            ..place
+        },
+        _ => place,
+    }
 }
 
 /// The saved place, when it can be used: its top strip is on a screen far enough to grab, and it has a size. `None`
@@ -114,6 +150,7 @@ mod tests {
             width: 1280,
             height: 800,
             maximized,
+            maximized_at: None,
         }
     }
 
@@ -137,6 +174,60 @@ mod tests {
             r#"{"x":-1500,"y":40,"width":1280,"height":800,"maximized":true}"#
         );
         assert_eq!(serde_json::from_str::<Place>(&json).expect("place"), p);
+        let on = Place {
+            maximized_at: Some([-1928, -8]),
+            ..p
+        };
+        let json = serde_json::to_string(&on).expect("json");
+        assert!(
+            json.ends_with(r#""maximized":true,"maximizedAt":[-1928,-8]}"#),
+            "{json}"
+        );
+        assert_eq!(serde_json::from_str::<Place>(&json).expect("place"), on);
+    }
+
+    #[test]
+    fn a_window_maximized_onto_another_screen_opens_there() {
+        let left = Screen {
+            x: -2560,
+            y: 0,
+            width: 2560,
+            height: 1440,
+        };
+        let screens = [SCREEN, left];
+        // Normal on the main screen, then maximized there and moved to the left screen while maximized.
+        let normal = Some(place(100, 50, false));
+        let here = follow(
+            normal,
+            Seen {
+                maximized: true,
+                ..seen(-8, -8, 1936, 1048)
+            },
+        );
+        let moved = follow(
+            here,
+            Seen {
+                maximized: true,
+                ..seen(-2568, -8, 2576, 1408)
+            },
+        )
+        .expect("place");
+        assert_eq!(moved.maximized_at, Some([-2568, -8]));
+        assert_eq!((moved.x, moved.y), (100, 50), "the normal bounds stay");
+        // It opens with its normal bounds moved onto the left screen, so it maximizes there.
+        let open = opening(moved, &screens);
+        assert_eq!((open.x, open.y, open.width), (-2460, 50, 1280));
+        // Maximized on the screen it was normal on, or that screen gone: as saved.
+        assert_eq!(
+            opening(here.expect("place"), &screens),
+            here.expect("place")
+        );
+        assert_eq!(opening(moved, &[SCREEN]), moved);
+        // Un-maximized: where it was maximized no longer matters.
+        assert_eq!(
+            follow(Some(moved), seen(100, 50, 1280, 800)).and_then(|p| p.maximized_at),
+            None
+        );
     }
 
     #[test]
@@ -149,7 +240,8 @@ mod tests {
                 y: 50,
                 width: 1000,
                 height: 700,
-                maximized: false
+                maximized: false,
+                maximized_at: None,
             })
         );
         assert_eq!(follow(p, seen(300, 60, 1000, 700)).map(|p| p.x), Some(300));
@@ -165,7 +257,13 @@ mod tests {
                 ..seen(-8, -8, 1936, 1048)
             },
         );
-        assert_eq!(maximized, Some(place(100, 50, true)));
+        assert_eq!(
+            maximized,
+            Some(Place {
+                maximized_at: Some([-8, -8]),
+                ..place(100, 50, true)
+            })
+        );
         // Minimized: Windows reports the window far off screen with no size; nothing changes.
         let minimized = Seen {
             minimized: true,

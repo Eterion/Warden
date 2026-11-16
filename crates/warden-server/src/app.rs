@@ -135,7 +135,7 @@ struct Inner {
     start_with_windows: Option<bool>,
     /// A newer Warden the desktop app found, as its updater reports it.
     update: Option<UpdateView>,
-    /// A usage reading was asked for (an account added, a setting changed) and the usage loop has not started it
+    /// A usage reading was asked for (an account added, the read interval changed) and the usage loop has not started it
     /// yet. Kept as a flag, so a wake-up while a reading runs is not lost.
     usage_wanted: bool,
     /// The usage loop is reading, between two waits.
@@ -1362,6 +1362,11 @@ impl App {
             })?;
         }
         let mut inner = self.lock();
+        // Only a new interval wakes the usage loop, which then waits the new one; the rest needs no reading (the
+        // routing decision is made from the saved readings).
+        let new_interval = patch
+            .usage_interval_min
+            .is_some_and(|i| i != inner.settings.usage_interval_min);
         if let Some(i) = patch.usage_interval_min {
             inner.settings.usage_interval_min = i;
         }
@@ -1379,7 +1384,9 @@ impl App {
         }
         self.save_settings(&mut inner)?;
         drop(inner);
-        self.wake_up();
+        if new_interval {
+            self.wake_up();
+        }
         Ok(())
     }
 

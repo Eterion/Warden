@@ -726,6 +726,51 @@ fn a_new_account_gets_a_folder_and_a_sign_in() {
 }
 
 #[test]
+fn only_a_new_read_interval_reads_usage_again() {
+    let f = Fixture::new();
+    let folder = f.claude_folder(".claude-work", "work@example.com", "fixture-work");
+    let server = f.start();
+    let addr = server.addr;
+    let body = json!({"provider": "claude", "folder": folder, "label": "Work"});
+    assert_eq!(
+        call(addr, "POST", "/api/accounts", Some(&body.to_string())).status,
+        200
+    );
+    let before = f.endpoint.settled_calls(&server);
+    // Theme, reserve, work hours: no reading; the decision is made from the saved readings.
+    for body in [
+        r#"{"theme": "dark"}"#,
+        r#"{"reserve": 30}"#,
+        r#"{"workHours": {"days": [1, 2, 3, 4, 5], "from": 540, "to": 1080}}"#,
+        r#"{"usageIntervalMin": 5}"#,
+    ] {
+        assert_eq!(
+            call(addr, "PUT", "/api/settings", Some(body)).status,
+            200,
+            "{body}"
+        );
+    }
+    assert_eq!(
+        f.endpoint.settled_calls(&server),
+        before,
+        "the same interval again reads nothing either"
+    );
+    // A new interval: the usage loop reads once and then waits the new one.
+    assert_eq!(
+        call(
+            addr,
+            "PUT",
+            "/api/settings",
+            Some(r#"{"usageIntervalMin": 10}"#)
+        )
+        .status,
+        200
+    );
+    assert!(f.endpoint.settled_calls(&server) > before);
+    server.stop();
+}
+
+#[test]
 fn settings_are_checked_and_saved() {
     let f = Fixture::new();
     let server = f.start();

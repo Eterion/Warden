@@ -12,6 +12,15 @@ export function sync(el: Element): void {
 export const vSyncSpin: ObjectDirective<Element> = { mounted: sync, updated: sync };
 
 /**
+ * Puts a spinner whose animation started again back on the shared clock. The browser restarts a CSS animation when its
+ * element is drawn again or moved (a session's row when its activity changes), which the directive does not see; the
+ * browser's own `animationstart` says when, so no timer is needed.
+ */
+export function onAnimationStart(e: AnimationEvent): void {
+  if (e.animationName === 'spin' && e.target instanceof Element) sync(e.target);
+}
+
+/**
  * Pauses every spinner while the window is out of sight (hidden or minimized; `data-away` on the root, styled in
  * tokens.css) and puts them back on the shared clock when it is in sight again.
  */

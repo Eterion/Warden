@@ -4,7 +4,7 @@
 import { useDocumentVisibility, useEventListener, useIntervalFn, usePreferredReducedMotion } from '@vueuse/core';
 import { effectScope, reactive, watch } from 'vue';
 import { ApiError, api, type Account, type State, type Theme } from './api';
-import { pauseSpinners, syncSpinners } from './components/spin';
+import { onAnimationStart, pauseSpinners, syncSpinners } from './components/spin';
 import { desktop } from './desktop';
 
 export const store = reactive({
@@ -114,6 +114,8 @@ export function startStore(): void {
     // Turning reduced motion off starts the spinners' animations afresh: put them back on the shared clock once the
     // page has restyled.
     watch(usePreferredReducedMotion(), () => requestAnimationFrame(syncSpinners));
+    // A spinner drawn again or moved starts its animation afresh: back onto the shared clock.
+    useEventListener(document, 'animationstart', onAnimationStart);
 
     if (!desktop.inApp) {
       useEventListener(

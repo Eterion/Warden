@@ -1331,8 +1331,8 @@ impl App {
     /// not reported since Warden started. Read when Warden starts and when usage is refreshed by hand, never on a
     /// timer.
     pub fn list_sessions(&self) {
-        /// Sessions written to this recently count; at most this many per account.
-        const WITHIN_MS: i64 = 30 * 60_000;
+        /// Sessions written to within [`sessions::LISTED_KEPT_MS`] count (and stay that long after their last
+        /// write unless a hook event takes them over); at most this many per account.
         const MAX_PER_ACCOUNT: usize = 20;
         // As with the status hook's sessions: a folder signed in as someone else shows its sessions with who, and
         // they count for no account.
@@ -1354,14 +1354,19 @@ impl App {
         };
         let now = now_ms();
         for (a, signed_in_as) in accounts {
-            let listed: Vec<_> =
-                fallback::listed_sessions(a.provider, &a.folder, now, WITHIN_MS, MAX_PER_ACCOUNT)
-                    .into_iter()
-                    .map(|l| {
-                        let place = l.cwd.as_deref().map(sessions::place_of).unwrap_or_default();
-                        (l.id, l.last_at, place)
-                    })
-                    .collect();
+            let listed: Vec<_> = fallback::listed_sessions(
+                a.provider,
+                &a.folder,
+                now,
+                sessions::LISTED_KEPT_MS,
+                MAX_PER_ACCOUNT,
+            )
+            .into_iter()
+            .map(|l| {
+                let place = l.cwd.as_deref().map(sessions::place_of).unwrap_or_default();
+                (l.id, l.last_at, place)
+            })
+            .collect();
             if listed.is_empty() {
                 continue;
             }

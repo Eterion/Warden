@@ -21,6 +21,9 @@ pub const DONE_KEPT_MS: i64 = 10 * 60_000;
 /// A session with no event for this long is taken to be gone (its CLI ended without saying so). Only for sessions
 /// whose CLI process Warden could not find to watch: a watched session ends when its process exits.
 pub const QUIET_GONE_MS: i64 = 24 * 60 * 60_000;
+/// How recently a session must have been written to for a CLI's own session list to add it, and how long such a
+/// session stays after its last write while no hook event has taken it over.
+pub const LISTED_KEPT_MS: i64 = 30 * 60_000;
 /// One sparkline bin: five minutes.
 pub const BIN_MS: i64 = 5 * 60_000;
 /// Two hours of bins.
@@ -977,6 +980,7 @@ impl Sessions {
 fn keep(s: &Session, now: i64) -> bool {
     match s.ended_at {
         Some(ended) => now - ended < DONE_KEPT_MS,
+        None if s.source == Source::List => now - s.last_event_at < LISTED_KEPT_MS,
         None => s.process.is_some() || now - s.last_event_at < QUIET_GONE_MS,
     }
 }
@@ -1600,6 +1604,33 @@ mod tests {
             s.get(Provider::Codex, "x").expect("known").source,
             Source::Hook
         );
+    }
+
+    #[test]
+    fn listed_sessions_go_once_older_than_their_window() {
+        let mut s = Sessions::default();
+        let written = T0 - 60_000;
+        let listed = |ids: &[&str]| {
+            ids.iter()
+                .map(|id| ((*id).to_owned(), written, Place::default()))
+                .collect::<Vec<_>>()
+        };
+        assert!(s.add_listed(Provider::Claude, "c2", listed(&["old", "taken"]), T0));
+        // Inside the window both stay.
+        assert_eq!(s.shown(written + LISTED_KEPT_MS - 1).count(), 2);
+        // A hook event takes one over; from then on the hook's rules apply.
+        let e = ev(r#"{"session_id":"taken","hook_event_name":"PreToolUse","tool_name":"Bash"}"#);
+        assert!(s.apply(Provider::Claude, "c2", Place::default, &e, T0));
+        // Once its last write is older than the window, the one still listed goes.
+        let after = written + LISTED_KEPT_MS;
+        let ids: Vec<_> = s.shown(after).map(|x| x.id.as_str()).collect();
+        assert_eq!(ids, ["taken"]);
+        // Pruning also forgets it, so the CLI's list can add it again if it is written to again.
+        assert!(!s.add_listed(Provider::Claude, "c2", Vec::new(), after));
+        assert!(s.get(Provider::Claude, "old").is_none());
+        // The one the hook took over stays until the hook's own rules drop it.
+        assert_eq!(s.shown(T0 + QUIET_GONE_MS - 1).count(), 1);
+        assert_eq!(s.shown(T0 + QUIET_GONE_MS).count(), 0);
     }
 
     #[test]

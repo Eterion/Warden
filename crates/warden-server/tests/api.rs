@@ -1261,13 +1261,15 @@ fn codex_resets_are_read_kept_through_failures_and_hidden_for_someone_else() {
     assert_eq!(
         s["accounts"][0]["resets"],
         json!([{
+            "id": "credit-1",
             "title": "Full reset (Weekly + 5 hr)",
             "expiresAt": warden_core::time::parse_rfc3339_ms("2026-12-10T22:00:00Z"),
         }])
     );
+    // Its id is kept (what redeeming it needs), nothing else from the answer.
     let saved = std::fs::read_to_string(f.data.path().join("readings.json")).expect("readings");
-    assert!(saved.contains("Full reset (Weekly + 5 hr)"));
-    assert!(!saved.contains("credit-1") && !saved.contains("Ready to redeem"));
+    assert!(saved.contains("Full reset (Weekly + 5 hr)") && saved.contains("credit-1"));
+    assert!(!saved.contains("Ready to redeem") && !saved.contains("codex_rate_limits"));
 
     // A failed read keeps the last list and is logged once.
     *f.resets.answer.lock().expect("lock") = Some((503, "busy".into()));
@@ -1337,17 +1339,17 @@ fn claude_limit_resets_come_with_usage_for_main_and_warden_accounts() {
     add(addr, "claude", &folder, "Work");
     let at = |s: &str| warden_core::time::parse_rfc3339_ms(s);
     let expected = json!([
-        {"title": "5-hour reset", "expiresAt": at("2026-12-01T08:00:00Z")},
-        {"title": "Full reset", "expiresAt": at("2026-12-10T22:00:00Z")},
-        {"title": "Full reset", "expiresAt": at("2026-12-10T22:00:00Z")},
+        {"id": "grant-2", "title": "5-hour reset", "expiresAt": at("2026-12-01T08:00:00Z")},
+        {"id": "grant-1", "title": "Full reset", "expiresAt": at("2026-12-10T22:00:00Z")},
+        {"id": "grant-1", "title": "Full reset", "expiresAt": at("2026-12-10T22:00:00Z")},
     ]);
     let s = call(addr, "POST", "/api/usage/refresh", None).json();
     assert_eq!(s["main"]["usage"]["weekly"]["usedPercent"], 30.0);
     assert_eq!(s["main"]["resets"], expected);
     assert_eq!(s["accounts"][0]["resets"], expected);
-    // Only the short names and expiries are kept, and never inside the usage reading.
+    // Only the grant ids, short names and expiries are kept, and never inside the usage reading.
     let saved = std::fs::read_to_string(f.data.path().join("readings.json")).expect("readings");
-    for gone in ["grant-1", "November", "fixture-campaign", "A session reset"] {
+    for gone in ["November", "fixture-campaign", "A session reset"] {
         assert!(!saved.contains(gone), "{gone} in {saved}");
     }
     assert!(s["main"]["usage"].get("resets").is_none());
@@ -1381,6 +1383,326 @@ fn claude_limit_resets_come_with_usage_for_main_and_warden_accounts() {
     assert_eq!(s["main"]["resets"], json!([]));
     assert_eq!(s["accounts"][0]["resets"], json!([]));
     server.stop();
+}
+
+/// Asks to use one of the account's resets.
+fn use_reset(addr: std::net::SocketAddr, account: &str, reset: &str) -> common::Reply {
+    call(
+        addr,
+        "POST",
+        &format!("/api/accounts/{account}/resets/use"),
+        Some(&json!({ "resetId": reset }).to_string()),
+    )
+}
+
+/// A request id as the Claude CLI makes one: a random UUID, version 4.
+fn is_uuid_v4(id: &str) -> bool {
+    let parts: Vec<&str> = id.split('-').collect();
+    parts.iter().map(|p| p.len()).collect::<Vec<_>>() == [8, 4, 4, 4, 12]
+        && id.bytes().all(|b| b == b'-' || b.is_ascii_hexdigit())
+        && parts[2].starts_with('4')
+}
+
+#[test]
+fn using_a_claude_reset_claims_it_with_the_accounts_own_login_then_reads_it_again() {
+    let f = Fixture::new();
+    f.main_sign_in(
+        "fixture-main@example.com",
+        "own-access",
+        "own-refresh",
+        9_999_999_999_999,
+    );
+    let folder = f.claude_folder(".claude-work", "work@example.com", "work-token");
+    *f.endpoint.answer.lock().expect("lock") = Some((200, CLAUDE_RESETS_ANSWER.into()));
+    let server = f.start();
+    let addr = server.addr;
+    add(addr, "claude", &folder, "Work");
+    call(addr, "POST", "/api/usage/refresh", None);
+    // Nothing is claimed until asked.
+    assert!(f.endpoint.claims.lock().expect("lock").is_empty());
+
+    // The answer read again after the claim: one full reset fewer.
+    *f.endpoint.answer.lock().expect("lock") = Some((
+        200,
+        CLAUDE_RESETS_ANSWER.replace(r#""resets_left": 2"#, r#""resets_left": 1"#),
+    ));
+    let asked = f.endpoint.tokens_seen.lock().expect("lock").len();
+    let reply = use_reset(addr, "a1", "grant-1");
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let claims = f.endpoint.claims.lock().expect("lock").clone();
+    assert_eq!(claims.len(), 1);
+    let (token, organization, grant, request) = &claims[0];
+    assert_eq!(
+        (token.as_str(), organization.as_str(), grant.as_str()),
+        ("work-token", "org-acme", "grant-1")
+    );
+    assert!(is_uuid_v4(request), "{request}");
+    // Read again as a refresh by hand: the account's usage with its limit resets.
+    let tokens = f.endpoint.tokens_seen.lock().expect("lock")[asked..].to_vec();
+    assert_eq!(tokens, vec!["work-token".to_owned()]);
+    assert_eq!(
+        f.endpoint.resets_asked.lock().expect("lock").last(),
+        Some(&true)
+    );
+    let s = reply.json();
+    assert_eq!(s["accounts"][0]["resets"].as_array().map(Vec::len), Some(2));
+    assert!(
+        f.log_text().contains("Work: reset used (Full reset)"),
+        "{}",
+        f.log_text()
+    );
+
+    // The reset leaves the list at once, even when reading it again fails.
+    *f.endpoint.answer.lock().expect("lock") = Some((503, "busy".into()));
+    let reply = use_reset(addr, "a1", "grant-1");
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(
+        reply.json()["accounts"][0]["resets"],
+        json!([{"id": "grant-2", "title": "5-hour reset", "expiresAt": warden_core::time::parse_rfc3339_ms("2026-12-01T08:00:00Z")}])
+    );
+    let saved: Value = serde_json::from_str(
+        &std::fs::read_to_string(f.data.path().join("readings.json")).expect("readings"),
+    )
+    .expect("json");
+    assert_eq!(saved["accounts"]["a1"]["resets"][0]["id"], "grant-2");
+    assert_eq!(
+        saved["accounts"]["a1"]["resets"].as_array().map(Vec::len),
+        Some(1)
+    );
+
+    // A reset no longer on the list: refused, nothing sent.
+    let sent = f.endpoint.claims.lock().expect("lock").len();
+    for (account, reset, status) in [
+        ("a1", "grant-1", 409),
+        ("a1", "grant-9", 409),
+        ("a9", "grant-2", 404),
+    ] {
+        let reply = use_reset(addr, account, reset);
+        assert_eq!(reply.status, status, "{account} {reset}: {}", reply.body);
+    }
+    for body in [
+        r#"{}"#,
+        r#"{"resetId": 7}"#,
+        r#"{"resetId": "grant-2", "x": 1}"#,
+        "nope",
+    ] {
+        let reply = call(addr, "POST", "/api/accounts/a1/resets/use", Some(body));
+        assert_eq!(reply.status, 400, "{body}");
+    }
+    assert_eq!(f.endpoint.claims.lock().expect("lock").len(), sent);
+
+    // The provider says no: its answer in plain words, and the reset stays.
+    *f.endpoint.claim_answer.lock().expect("lock") = Some((
+        200,
+        r#"{"result": "not_limited", "reason": "x", "resets_left": 1, "cleared": []}"#.into(),
+    ));
+    let reply = use_reset(addr, "a1", "grant-2");
+    assert_eq!(reply.status, 409);
+    assert_eq!(
+        reply.json()["error"],
+        "Nothing to reset: the account is not at a limit."
+    );
+    assert!(
+        f.log_text()
+            .contains("Work: reset refused (not at a limit)")
+    );
+    *f.endpoint.claim_answer.lock().expect("lock") = Some((429, String::new()));
+    assert_eq!(
+        use_reset(addr, "a1", "grant-2").json()["error"],
+        "Try again later."
+    );
+    let s = state(addr);
+    assert_eq!(s["accounts"][0]["resets"][0]["id"], "grant-2");
+
+    // Main's: with Warden's own sign-in, for its organization.
+    *f.endpoint.claim_answer.lock().expect("lock") = None;
+    *f.endpoint.answer.lock().expect("lock") = Some((200, common::CLAUDE_ANSWER.into()));
+    let reply = use_reset(addr, "main", "grant-2");
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let last = f
+        .endpoint
+        .claims
+        .lock()
+        .expect("lock")
+        .last()
+        .cloned()
+        .expect("claim");
+    assert_eq!(
+        (last.0.as_str(), last.1.as_str(), last.2.as_str()),
+        ("own-access", "org-acme", "grant-2")
+    );
+    assert!(f.log_text().contains(": reset used (5-hour reset)"));
+
+    // Signed in as someone else: refused, nothing sent, and the login is never sent.
+    set_claude_identity(&folder, "other@example.com");
+    let sent = f.endpoint.claims.lock().expect("lock").len();
+    let reply = use_reset(addr, "a1", "grant-2");
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert_eq!(f.endpoint.claims.lock().expect("lock").len(), sent);
+    server.stop();
+}
+
+#[test]
+fn using_a_codex_reset_redeems_it_with_the_accounts_own_login() {
+    let f = Fixture::new();
+    let folder = f.codex_folder(".codex-work", "me@acme.example", "codex-token");
+    *f.resets.answer.lock().expect("lock") = Some((200, common::RESETS_ANSWER.into()));
+    let server = f.start();
+    let addr = server.addr;
+    add(addr, "codex", &folder, "Codex");
+    call(addr, "POST", "/api/usage/refresh", None);
+    assert!(f.resets.redeemed.lock().expect("lock").is_empty());
+
+    // The provider says no: the reset stays.
+    *f.resets.redeem_answer.lock().expect("lock") =
+        Some((200, r#"{"code": "already_redeemed"}"#.into()));
+    let reply = use_reset(addr, "a1", "credit-1");
+    assert_eq!(reply.status, 409);
+    assert_eq!(reply.json()["error"], "This reset was already used.");
+    assert!(f.log_text().contains("Codex: reset refused (already used)"));
+    assert_eq!(state(addr)["accounts"][0]["resets"][0]["id"], "credit-1");
+
+    // Redeemed: the list read again has none left.
+    *f.resets.redeem_answer.lock().expect("lock") = None;
+    *f.resets.answer.lock().expect("lock") =
+        Some((200, r#"{"credits": [], "available_count": 0}"#.into()));
+    let asked = f.resets.seen.lock().expect("lock").len();
+    let reply = use_reset(addr, "a1", "credit-1");
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(reply.json()["accounts"][0]["resets"], json!([]));
+    let redeemed = f.resets.redeemed.lock().expect("lock").clone();
+    assert_eq!(redeemed.len(), 2);
+    let (token, account, credit, request) = &redeemed[1];
+    assert_eq!(
+        (token.as_str(), account.as_str(), credit.as_str()),
+        ("codex-token", "ws-1", "credit-1")
+    );
+    assert!(is_uuid_v4(request), "{request}");
+    assert_ne!(redeemed[0].3, redeemed[1].3, "a new request id each time");
+    assert_eq!(f.resets.seen.lock().expect("lock").len(), asked + 1);
+    assert!(
+        f.log_text()
+            .contains("Codex: reset used (Full reset (Weekly + 5 hr))")
+    );
+
+    // Signed in as someone else: refused, the other login never sent.
+    *f.resets.answer.lock().expect("lock") = Some((200, common::RESETS_ANSWER.into()));
+    call(addr, "POST", "/api/usage/refresh", None);
+    set_codex_identity(&folder, "other@acme.example", "other-token");
+    let reply = use_reset(addr, "a1", "credit-1");
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert_eq!(f.resets.redeemed.lock().expect("lock").len(), 2);
+    server.stop();
+}
+
+#[test]
+fn a_reset_is_never_used_without_an_identity() {
+    let f = Fixture::new();
+    let codex = f.codex_folder(".codex-work", "me@acme.example", "codex-token");
+    let claude = f.claude_folder(".claude-work", "work@example.com", "work-token");
+    *f.resets.answer.lock().expect("lock") = Some((200, common::RESETS_ANSWER.into()));
+    *f.endpoint.answer.lock().expect("lock") = Some((200, CLAUDE_RESETS_ANSWER.into()));
+    let server = f.start();
+    let addr = server.addr;
+    add(addr, "codex", &codex, "Codex");
+    add(addr, "claude", &claude, "Work");
+    let s = call(addr, "POST", "/api/usage/refresh", None).json();
+    assert_eq!(s["accounts"][0]["resets"][0]["id"], "credit-1");
+    assert_eq!(s["accounts"][1]["resets"][0]["id"], "grant-2");
+
+    // A Codex login file with its access but no ID token: signed out, nothing redeemed.
+    common::write(
+        &codex.join("auth.json"),
+        r#"{"OPENAI_API_KEY": null, "tokens": {"access_token": "codex-token", "refresh_token": "r", "account_id": "ws-1"}}"#,
+    );
+    let reply = use_reset(addr, "a1", "credit-1");
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert_eq!(reply.json()["error"], "The account is signed out.");
+    assert!(f.resets.redeemed.lock().expect("lock").is_empty());
+
+    // A Claude folder with no sign-in in its settings file: signed out, nothing claimed.
+    common::write(
+        &common::claude_identity_file(&claude),
+        r#"{"numStartups": 4}"#,
+    );
+    let reply = use_reset(addr, "a2", "grant-2");
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert_eq!(reply.json()["error"], "The account is signed out.");
+    // Unreadable: refused as unchecked, nothing claimed.
+    common::write(&common::claude_identity_file(&claude), "not json");
+    let reply = use_reset(addr, "a2", "grant-2");
+    assert_eq!(reply.status, 409, "{}", reply.body);
+    assert!(f.endpoint.claims.lock().expect("lock").is_empty());
+    server.stop();
+}
+
+#[test]
+fn an_expired_reset_is_never_used() {
+    let f = Fixture::new();
+    let codex = f.codex_folder(".codex-work", "me@acme.example", "codex-token");
+    let claude = f.claude_folder(".claude-work", "work@example.com", "work-token");
+    *f.resets.answer.lock().expect("lock") = Some((
+        200,
+        common::RESETS_ANSWER.replace("2026-12-10T22:00:00Z", "2020-01-01T00:00:00Z"),
+    ));
+    *f.endpoint.answer.lock().expect("lock") = Some((
+        200,
+        CLAUDE_RESETS_ANSWER
+            .replace("2026-12-10T22:00:00Z", "2020-01-01T00:00:00Z")
+            .replace("2026-12-01T08:00:00Z", "2020-01-01T00:00:00Z"),
+    ));
+    let server = f.start();
+    let addr = server.addr;
+    add(addr, "codex", &codex, "Codex");
+    add(addr, "claude", &claude, "Work");
+    let s = call(addr, "POST", "/api/usage/refresh", None).json();
+    assert_eq!(s["accounts"][0]["resets"][0]["id"], "credit-1");
+    assert_eq!(s["accounts"][1]["resets"].as_array().map(Vec::len), Some(3));
+    for (account, reset) in [("a1", "credit-1"), ("a2", "grant-2"), ("a2", "grant-1")] {
+        let reply = use_reset(addr, account, reset);
+        assert_eq!(reply.status, 409, "{account} {reset}: {}", reply.body);
+        assert_eq!(reply.json()["error"], "This reset has expired.");
+    }
+    assert!(f.resets.redeemed.lock().expect("lock").is_empty());
+    assert!(f.endpoint.claims.lock().expect("lock").is_empty());
+    server.stop();
+}
+
+#[test]
+fn a_reset_is_never_used_in_the_codex_apps_folder() {
+    let f = Fixture::new();
+    let codex = f.codex_folder(".codex", "me@acme.example", "codex-app-token");
+    // A hand-edited settings file naming the Codex app's folder as an account, with a reading that lists a reset.
+    let mut settings = warden_core::store::Settings {
+        setup_done: true,
+        ..Default::default()
+    };
+    settings.accounts.push(warden_core::store::AccountConfig {
+        id: "a1".into(),
+        label: "App".into(),
+        provider: warden_core::model::Provider::Codex,
+        folder: codex.clone(),
+        enabled: true,
+        identity: None,
+    });
+    warden_core::store::save(f.data.path(), warden_core::store::SETTINGS_FILE, &settings)
+        .expect("settings");
+    let mut readings = warden_core::store::Readings::default();
+    readings.accounts.entry("a1".into()).or_default().resets =
+        vec![warden_core::codex_resets::Reset {
+            id: Some("credit-1".into()),
+            title: None,
+            expires_at: None,
+        }];
+    warden_core::store::save(f.data.path(), warden_core::store::READINGS_FILE, &readings)
+        .expect("readings");
+    let before = common::folder_bytes(&codex);
+    let server = f.start();
+    let reply = use_reset(server.addr, "a1", "credit-1");
+    assert!(matches!(reply.status, 400 | 404), "{}", reply.body);
+    server.stop();
+    assert!(f.resets.redeemed.lock().expect("lock").is_empty());
+    assert_eq!(common::folder_bytes(&codex), before);
 }
 
 #[test]

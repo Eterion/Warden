@@ -802,6 +802,22 @@ impl App {
             .reading
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.read_main_usage(by_hand);
+        let accounts: Vec<AccountConfig> = self.lock().settings.accounts.clone();
+        for account in accounts.iter() {
+            self.read_account_usage(account, by_hand);
+        }
+        let mut inner = self.lock();
+        let now = now_ms();
+        inner.last_read = Some(now);
+        // Tells `warden route` the readings are current, so it does not refresh them itself.
+        inner.readings.checked_at = Some(now);
+        self.save_readings(&mut inner);
+    }
+
+    /// Main's usage (and its limit resets when wanted) with Warden's own sign-in, checking who `~/.claude` is signed in
+    /// as first. The caller holds `reading`: only one renewal of the sign-in at a time.
+    fn read_main_usage(&self, by_hand: bool) {
         let main = self.lock().settings.main_account(&self.env);
         let expected = main.and_then(|main| {
             let observed = claude::read_identity(&main.folder, self.env.home.as_deref());
@@ -828,55 +844,229 @@ impl App {
         }
         self.lock().readings.main_login = login;
         self.apply_usage(store::MAIN_ID, result);
-        let accounts: Vec<AccountConfig> = self.lock().settings.accounts.clone();
-        for account in accounts.iter() {
-            if account.provider == Provider::Claude {
-                let now = claude::read_identity(&account.folder, self.env.home.as_deref());
-                // Who the folder is signed in as could not be read: its login might be someone else's, so the
-                // last reading stays until the identity can be checked again.
-                let unchecked = now.is_err() && account.identity.is_some();
-                let changed = self.apply_identity(&account.id, now);
-                let result = if changed {
-                    Err(UsageError::IdentityChanged)
-                } else if unchecked {
-                    Err(UsageError::Failed {
-                        message: "could not check who the folder is signed in as".into(),
-                    })
-                } else {
-                    claude::read_usage(
-                        &account.folder,
-                        self.endpoint.as_ref(),
-                        now_ms(),
-                        self.resets_wanted(&account.id, by_hand),
-                    )
-                };
-                self.apply_usage(&account.id, result);
+    }
+
+    /// A Warden account's usage and limit resets: a Claude account's usage (with its resets when wanted), checking who
+    /// the folder is signed in as first; a Codex account's sign-in and, when wanted, its banked resets (its usage comes
+    /// from its logs).
+    fn read_account_usage(&self, account: &AccountConfig, by_hand: bool) {
+        if account.provider == Provider::Claude {
+            let now = claude::read_identity(&account.folder, self.env.home.as_deref());
+            // Who the folder is signed in as could not be read: its login might be someone else's, so the
+            // last reading stays until the identity can be checked again.
+            let unchecked = now.is_err() && account.identity.is_some();
+            let changed = self.apply_identity(&account.id, now);
+            let result = if changed {
+                Err(UsageError::IdentityChanged)
+            } else if unchecked {
+                Err(UsageError::Failed {
+                    message: "could not check who the folder is signed in as".into(),
+                })
             } else {
-                // One reading of the login file for who it is signed in as and the resets request's access, so the
-                // token sent is the one of the identity checked here.
-                let (now, access) = match codex::read_login_with_access(&account.folder) {
-                    Ok(login) => (Ok(login.identity), login.access),
-                    Err(e) => (Err(e), None),
-                };
-                let signed_in = matches!(now, Ok(Some(_)));
-                self.apply_identity(&account.id, now);
-                // Only while the folder is signed in as the account itself (a switched-off account is not shown), and
-                // only when they are due or the usage is refreshed by hand.
-                if account.enabled
-                    && signed_in
-                    && self.resets_wanted(&account.id, by_hand)
-                    && let Some(access) = access
-                {
-                    self.read_codex_resets(&account.id, access);
-                }
+                claude::read_usage(
+                    &account.folder,
+                    self.endpoint.as_ref(),
+                    now_ms(),
+                    self.resets_wanted(&account.id, by_hand),
+                )
+            };
+            self.apply_usage(&account.id, result);
+        } else {
+            // One reading of the login file for who it is signed in as and the resets request's access, so the
+            // token sent is the one of the identity checked here.
+            let (now, access) = match codex::read_login_with_access(&account.folder) {
+                Ok(login) => (Ok(login.identity), login.access),
+                Err(e) => (Err(e), None),
+            };
+            let signed_in = matches!(now, Ok(Some(_)));
+            self.apply_identity(&account.id, now);
+            // Only while the folder is signed in as the account itself (a switched-off account is not shown), and
+            // only when they are due or the usage is refreshed by hand.
+            if account.enabled
+                && signed_in
+                && self.resets_wanted(&account.id, by_hand)
+                && let Some(access) = access
+            {
+                self.read_codex_resets(&account.id, access);
             }
         }
+    }
+
+    // ---- Limit resets ---------------------------------------------------------------------------------------
+
+    /// Uses one of the account's limit resets after the user confirmed it in the app (`POST
+    /// /api/accounts/{id}/resets/use`): only a reset on its list now, and only while its folder is signed in as the
+    /// account itself. Main's goes with Warden's own sign-in (renewed as for a usage reading), a Warden account's with
+    /// the login in its own folder (never renewed). Once the provider says it reset the limits, the reset leaves the
+    /// list at once and the account's usage and resets are read again, as a refresh by hand reads them. Logged without
+    /// a token; the provider's refusal is answered `409` in plain words.
+    pub fn use_reset(&self, id: &str, reset_id: &str) -> ApiResult<()> {
+        // One at a time with the usage readings: Warden's own sign-in is renewed by one request at a time.
+        let _one = self
+            .reading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (account, title) = {
+            let inner = self.lock();
+            let account = inner
+                .settings
+                .account_in(&self.env, id)
+                .ok_or_else(ApiError::not_found)?;
+            if self.env.in_codex_app(&account.folder) {
+                return Err(ApiError::bad("Warden never uses the Codex app's folder."));
+            }
+            if inner.readings.identity_changed(id) {
+                return Err(signed_in_as_someone_else());
+            }
+            let reset = inner
+                .readings
+                .accounts
+                .get(id)
+                .and_then(|r| r.resets.iter().find(|r| r.id.as_deref() == Some(reset_id)))
+                .ok_or_else(|| {
+                    ApiError(409, "This reset is no longer on the account's list.".into())
+                })?;
+            // Checked against the clock now: a confirmation left open across its expiry sends nothing.
+            if reset.expires_at.is_some_and(|at| at <= now_ms()) {
+                return Err(ApiError(409, "This reset has expired.".into()));
+            }
+            (
+                account,
+                reset.title.clone().unwrap_or_else(|| "reset".into()),
+            )
+        };
+        let request_id = new_request_id()?;
+        let result = if id == store::MAIN_ID {
+            self.use_main_reset(&account, reset_id, &request_id)?
+        } else if account.provider == Provider::Claude {
+            self.use_claude_reset(&account, reset_id, &request_id)?
+        } else {
+            self.use_codex_reset(&account, reset_id, &request_id)?
+        };
+        let label = account.label.clone();
+        if let Err(refused) = result {
+            (self.log)(&format!("{label}: reset refused ({})", refused.reason));
+            let mut inner = self.lock();
+            self.save_readings(&mut inner);
+            return Err(ApiError(409, refused.message));
+        }
+        (self.log)(&format!("{label}: reset used ({title})"));
+        {
+            let mut inner = self.lock();
+            inner.readings.use_reset(id, reset_id);
+            self.save_readings(&mut inner);
+        }
+        // Read again as a refresh by hand reads it: its usage and its limit resets.
+        if id == store::MAIN_ID {
+            self.read_main_usage(true);
+        } else {
+            self.read_account_usage(&account, true);
+        }
         let mut inner = self.lock();
-        let now = now_ms();
-        inner.last_read = Some(now);
-        // Tells `warden route` the readings are current, so it does not refresh them itself.
-        inner.readings.checked_at = Some(now);
         self.save_readings(&mut inner);
+        Ok(())
+    }
+
+    /// Checks who `~/.claude` is signed in as, then claims the reset with Warden's own sign-in to main. `Err`: the folder
+    /// is signed in as someone else.
+    fn use_main_reset(
+        &self,
+        main: &AccountConfig,
+        reset_id: &str,
+        request_id: &str,
+    ) -> ApiResult<Result<(), codex_resets::UseRefused>> {
+        let observed = claude::read_identity(&main.folder, self.env.home.as_deref());
+        let actual = observed.as_ref().ok().cloned().flatten();
+        if self.apply_identity(store::MAIN_ID, observed) {
+            return Err(signed_in_as_someone_else());
+        }
+        let mut login = self.lock().readings.main_login.clone();
+        let main_changed = self.lock().readings.identity_changed(store::MAIN_ID);
+        let result = mainlogin::use_reset_for_main(
+            &self._lock,
+            actual.as_ref(),
+            main_changed,
+            &mut login,
+            (self.endpoint.as_ref(), reset_id, request_id),
+            self.sign_in_server.as_ref(),
+            now_ms(),
+        );
+        for line in login.take_log_lines() {
+            (self.log)(&line);
+        }
+        self.lock().readings.main_login = login;
+        Ok(result.unwrap_or_else(|e| Err(claude::login_refusal(&e))))
+    }
+
+    /// Checks who a Claude account's folder is signed in as, then claims the reset with the login in its folder, for the
+    /// organization it is signed in to. `Err`: the folder is signed in as someone else.
+    fn use_claude_reset(
+        &self,
+        account: &AccountConfig,
+        reset_id: &str,
+        request_id: &str,
+    ) -> ApiResult<Result<(), codex_resets::UseRefused>> {
+        let observed = claude::read_identity(&account.folder, self.env.home.as_deref());
+        let unchecked = observed.is_err();
+        let actual = observed.as_ref().ok().cloned().flatten();
+        if self.apply_identity(&account.id, observed) {
+            return Err(signed_in_as_someone_else());
+        }
+        if unchecked {
+            return Err(identity_unchecked());
+        }
+        // Only while the folder is signed in as the account itself: without an identity it is signed out, and nothing
+        // is sent.
+        let Some(actual) = actual else {
+            return Ok(Err(claude::login_refusal(&UsageError::SignedOut)));
+        };
+        let Some(organization) = actual.organization_id else {
+            return Ok(Err(codex_resets::UseRefused::new(
+                "no organization id",
+                "Warden does not know the account's organization yet.",
+            )));
+        };
+        Ok(claude::use_reset(
+            &account.folder,
+            self.endpoint.as_ref(),
+            now_ms(),
+            (&organization, reset_id, request_id),
+        ))
+    }
+
+    /// Reads a Codex account's login file once for who it is signed in as and its access, then redeems the reset with
+    /// it. `Err`: the folder is signed in as someone else.
+    fn use_codex_reset(
+        &self,
+        account: &AccountConfig,
+        reset_id: &str,
+        request_id: &str,
+    ) -> ApiResult<Result<(), codex_resets::UseRefused>> {
+        let (now, access) = match codex::read_login_with_access(&account.folder) {
+            Ok(login) => (Ok(login.identity), login.access),
+            Err(e) => (Err(e), None),
+        };
+        let unchecked = now.is_err();
+        let signed_in = matches!(now, Ok(Some(_)));
+        if self.apply_identity(&account.id, now) {
+            return Err(signed_in_as_someone_else());
+        }
+        if unchecked {
+            return Err(identity_unchecked());
+        }
+        // Only while the folder is signed in as the account itself: a login file with access but no identity in it is
+        // signed out, and nothing is sent.
+        let (true, Some((token, account_id))) = (signed_in, access) else {
+            return Ok(Err(claude::login_refusal(&UsageError::SignedOut)));
+        };
+        if let Err(refused) = codex_resets::check_redeem_ids(reset_id, request_id) {
+            return Ok(Err(refused));
+        }
+        let result = self
+            .resets
+            .redeem(&token, &account_id, reset_id, request_id);
+        drop(token);
+        Ok(result)
     }
 
     /// Reads a Codex account's banked resets with the access read from its login file with its identity: the access
@@ -2271,6 +2461,40 @@ fn clean_label(label: &str) -> ApiResult<String> {
 }
 
 /// How a usage error is written in the log.
+/// Using a reset is refused while the folder is signed in as someone other than its account.
+fn signed_in_as_someone_else() -> ApiError {
+    ApiError(
+        409,
+        "The folder is signed in as someone else. Accept or undo that in Settings first.".into(),
+    )
+}
+
+/// Using a reset is refused while who the folder is signed in as cannot be read.
+fn identity_unchecked() -> ApiError {
+    ApiError(
+        409,
+        "Warden could not check who the folder is signed in as. Try again.".into(),
+    )
+}
+
+/// A new id for one use of a reset: a random UUID (version 4), as the Claude CLI makes one.
+fn new_request_id() -> ApiResult<String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes)
+        .map_err(|_| ApiError(500, "Warden could not make a request id.".into()))?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    ))
+}
+
 fn describe(e: &UsageError) -> String {
     match e {
         UsageError::SignedOut => "signed out".into(),

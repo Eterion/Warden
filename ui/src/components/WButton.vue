@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// A button with text. Primary comes first in a group; outline is the everyday one; quiet sits among chips (md) or on
-// the window background (sm); link is underlined text. An icon, when given, comes before the text; busy sets
+// A button with text. Primary comes first in a group; outline is the everyday one (sm: small, on a list row); quiet
+// sits among chips (md) or on the window background (sm); link is underlined text. An icon, when given, comes before the text; busy sets
 // aria-busy and turns the icon slowly.
 import type { Component } from 'vue';
 import { vSyncSpin } from './spin';
@@ -30,6 +30,8 @@ function look(): string {
     case 'primary':
       return `h-9 rounded-lg bg-primary text-14 font-semibold text-on-primary shadow-button hov:bg-primary-hover press:bg-primary-press focus-visible:outline-offset-2 ${icon ? 'gap-1.5 pr-3.5 pl-2.75' : 'px-3.5'}`;
     case 'outline':
+      if (props.size === 'sm')
+        return 'h-7 rounded-md px-2.5 text-12 font-semibold text-text inset-ring-1 inset-ring-outline-border hov:bg-chip-off press:bg-press focus-visible:outline-offset-2';
       return `h-9 rounded-lg text-14 font-semibold text-text inset-ring-1 inset-ring-outline-border hov:bg-chip-off press:bg-press focus-visible:outline-offset-2 ${icon ? 'gap-2 pr-3.5 pl-3' : 'px-3.5'}`;
     case 'quiet':
       return props.size === 'md'

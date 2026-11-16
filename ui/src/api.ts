@@ -40,8 +40,13 @@ export interface IdentityChange {
   knownAccountId: string | null;
 }
 
-/** A Codex account's banked reset: the backend's short name for it, and when it expires (`null`: never). */
+/**
+ * A limit reset (Claude's, or a Codex account's banked reset): what using it needs (`null`: it cannot be used until it
+ * is read again), its short name, and when it expires (`null`: never). A Claude grant with several resets left lists
+ * each with the same id.
+ */
 export interface Reset {
+  id: string | null;
   title: string | null;
   expiresAt: number | null;
 }
@@ -205,6 +210,8 @@ export const api = {
   signInMain: () => request<State>('POST', '/api/main/sign-in'),
   signIn: (id: string) => request<State>('POST', '/api/accounts/' + encodeURIComponent(id) + '/sign-in'),
   repairHooks: (id: string) => request<State>('POST', '/api/accounts/' + encodeURIComponent(id) + '/hooks/repair'),
+  useReset: (id: string, resetId: string) =>
+    request<State>('POST', '/api/accounts/' + encodeURIComponent(id) + '/resets/use', { resetId }),
   openLogFolder: () => request<State>('POST', '/api/logs/open'),
   installUpdate: () => request<State>('POST', '/api/update/install'),
 };

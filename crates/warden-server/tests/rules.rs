@@ -127,6 +127,15 @@ fn only_the_usage_endpoint_the_sign_in_server_codex_resets_and_github_releases_a
         warden_core::codex_resets::RESETS_URL,
         ALLOWED_OUTBOUND_HOSTS,
     );
+    // Using a limit reset: Claude's claim and Codex's redeem go to the same hosts.
+    hosts::assert_request_allowed(
+        &warden_core::claude::reset_url("org-acme"),
+        ALLOWED_OUTBOUND_HOSTS,
+    );
+    hosts::assert_request_allowed(
+        warden_core::codex_resets::REDEEM_URL,
+        ALLOWED_OUTBOUND_HOSTS,
+    );
 }
 
 /// The policy constant only; `server_listens_on_loopback_only` checks the address the server really listens on.
@@ -356,6 +365,13 @@ fn tokens_never_reach_logs_or_responses() {
         ),
     );
     *f.resets.answer.lock().expect("lock") = Some((200, common::RESETS_ANSWER.to_owned()));
+    // The Claude accounts' answer lists a limit reset, so one can be used.
+    let mut claude_answer: serde_json::Value =
+        serde_json::from_str(common::CLAUDE_ANSWER).expect("answer");
+    claude_answer["cedar_ember"] = serde_json::json!({"eligible": true, "grants": [
+        {"id": "grant-r", "resets_left": 1, "ends_at": null, "clears": ["five_hour", "seven_day"]}
+    ]});
+    *f.endpoint.answer.lock().expect("lock") = Some((200, claude_answer.to_string()));
     let server = f.start();
     let addr = server.addr;
 
@@ -384,8 +400,62 @@ fn tokens_never_reach_logs_or_responses() {
     eventually("the Codex account's resets", || {
         call(addr, "GET", "/api/state", None).json()["accounts"][1]["resets"][0].is_object()
     });
+    // Using a reset of each: each login goes only to its own provider's stand-in.
+    let use_reset = |account: &str, reset: &str| {
+        call(
+            addr,
+            "POST",
+            &format!("/api/accounts/{account}/resets/use"),
+            Some(&serde_json::json!({ "resetId": reset }).to_string()),
+        )
+    };
+    answers.push(("use main's reset", use_reset("main", "grant-r")));
+    answers.push(("use the Claude account's reset", use_reset("a1", "grant-r")));
+    answers.push(("use the Codex account's reset", use_reset("a2", "credit-1")));
+    // And refused: the provider says no.
+    *f.endpoint.claim_answer.lock().expect("lock") = Some((401, claude_token.clone()));
+    let refused = use_reset("a1", "grant-r");
+    assert_eq!(refused.status, 409, "{}", refused.body);
+    assert_no_token("refused use of a reset", &refused.body, &claude_token);
     answers.push(("GET /api/state", call(addr, "GET", "/api/state", None)));
     server.stop();
+
+    let claims: Vec<(String, String)> = f
+        .endpoint
+        .claims
+        .lock()
+        .expect("lock")
+        .iter()
+        .map(|(token, organization, ..)| (token.clone(), organization.clone()))
+        .collect();
+    assert_eq!(
+        claims,
+        vec![
+            (new_access.clone(), "org-acme".to_owned()),
+            (claude_token.clone(), "org-acme".to_owned()),
+            (claude_token.clone(), "org-acme".to_owned()),
+        ],
+        "main's reset goes with Warden's own sign-in, the account's with its own login"
+    );
+    let redeemed = f.resets.redeemed.lock().expect("lock").clone();
+    assert_eq!(redeemed.len(), 1);
+    assert_eq!(
+        (
+            redeemed[0].0.as_str(),
+            redeemed[0].1.as_str(),
+            redeemed[0].2.as_str()
+        ),
+        (codex_token.as_str(), "ws-1", "credit-1")
+    );
+    assert!(f.log_text().contains("Work: reset used (Full reset)"));
+    assert!(
+        f.log_text()
+            .contains("Codex: reset used (Full reset (Weekly + 5 hr))")
+    );
+    assert!(
+        f.log_text()
+            .contains("Work: reset refused (HTTP 401: the login has expired)")
+    );
 
     assert_eq!(
         *f.sign_in_server.tokens_seen.lock().expect("lock"),

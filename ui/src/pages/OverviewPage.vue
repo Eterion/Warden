@@ -4,10 +4,12 @@
 // it. Checking accounts shows only their sessions, under their faded ancestors; the chip in the Sessions header hides
 // ended and not-known sessions (remembered), an ancestor of a shown one staying faded. Beside them (under them in a
 // narrow window), the limit resets the accounts can use, while there are any; one expiring within the warning days set
-// in Settings › General in amber.
+// in Settings › General in amber. Each has Use: confirmed in a modal, it is sent, and once used its row turns to dust
+// and the list closes the gap (only a quick fade with reduced motion).
+import { usePreferredReducedMotion } from '@vueuse/core';
 import { Check, Hourglass } from 'lucide-vue-next';
-import { computed, ref } from 'vue';
-import { api, type Account, type Session } from '../api';
+import { computed, nextTick, ref, shallowRef } from 'vue';
+import { ApiError, api, type Account, type Session, type State } from '../api';
 import AccountIcon from '../components/AccountIcon.vue';
 import ActivitySparkline from '../components/ActivitySparkline.vue';
 import NowChip from '../components/NowChip.vue';
@@ -16,7 +18,9 @@ import RemovableChip from '../components/RemovableChip.vue';
 import StateIcon from '../components/StateIcon.vue';
 import SubagentsBadge from '../components/SubagentsBadge.vue';
 import UsageBar from '../components/UsageBar.vue';
+import UseResetModal from '../components/UseResetModal.vue';
 import WTooltip from '../components/WTooltip.vue';
+import { isGone, turnToDust, undoDust } from '../components/dust';
 import WButton from '../components/WButton.vue';
 import WTable from '../components/WTable.vue';
 import WTableRow from '../components/WTableRow.vue';
@@ -33,6 +37,7 @@ import {
   readingNote,
   resetRows,
   signedInAs,
+  type ResetRow,
 } from '../format';
 import { go } from '../route';
 import {
@@ -47,13 +52,129 @@ import {
   tally,
   type Point,
 } from '../sessions';
-import { act, store, usedAccounts } from '../store';
+import { act, apply, store, usedAccounts } from '../store';
 
 const accounts = computed(() => usedAccounts(store.state));
 
 // How many days before a reset expires its row warns: Settings › General.
 const warnDays = computed(() => store.state?.settings.resetWarningDays ?? 3);
-const resets = computed(() => resetRows(accounts.value, store.now, warnDays.value));
+/** The resets the state lists now. */
+const live = computed(() => resetRows(accounts.value, store.now, warnDays.value));
+/**
+ * The resets as listed. While a use is sent and its row goes, the rows on screen hold still (`held`), so an update that
+ * arrives meanwhile cannot take a row away under its animation; the state itself is always the newest.
+ */
+const held = shallowRef<ResetRow[] | null>(null);
+const resets = computed(() => held.value ?? live.value);
+/** The keys of the rows being used now (sent, or turning to dust): the list holds still while there is one. */
+const leaving = new Set<string>();
+
+const reduceMotion = usePreferredReducedMotion();
+/** The reset the confirmation is open for. */
+const using = ref<ResetRow | null>(null);
+const confirming = ref(false);
+/** Said to assistive technology once a reset is used. */
+const announced = ref('');
+const resetList = ref<HTMLElement | null>(null);
+/** The Overview's heading: where focus goes after a use when no Use button stays. */
+const heading = ref<HTMLElement | null>(null);
+/** The reset just used, while its confirmation closes: focus then goes to a Use button that stays. */
+let usedKey: string | null = null;
+
+function askToUse(r: ResetRow): void {
+  using.value = r;
+  confirming.value = true;
+}
+
+/** A row of the list on screen, by its key. */
+function rowOf(key: string): HTMLElement | null {
+  return (
+    [...(resetList.value?.querySelectorAll<HTMLElement>('[data-reset-key]') ?? [])].find(
+      (e) => e.dataset.resetKey === key,
+    ) ?? null
+  );
+}
+
+/**
+ * The Use button nearest the row `key` in `rows` (the rows after it first, then those before it, closest first) whose
+ * reset stays on the list, is not being used, and whose row is not gone (turning to dust, or collapsed until the list is
+ * released); with `self`, the row's own first.
+ */
+function nearestUse(key: string, rows: ResetRow[], self: boolean): HTMLElement | null {
+  const stays = new Set(live.value.filter((r) => r.id).map((r) => r.key));
+  const at = rows.findIndex((x) => x.key === key);
+  const order = at < 0 ? rows : [...(self ? [rows[at]!] : []), ...rows.slice(at + 1), ...rows.slice(0, at).reverse()];
+  for (const x of order) {
+    if (!stays.has(x.key) || leaving.has(x.key)) continue;
+    const row = rowOf(x.key);
+    if (!row || isGone(row)) continue;
+    const button = row.querySelector<HTMLElement>('[data-use-reset]');
+    if (button) return button;
+  }
+  return null;
+}
+
+/** Where the confirmation gives focus as it closes: after a use, a Use button that stays, else the Overview's heading. */
+function returnTo(): HTMLElement | null {
+  const key = usedKey;
+  usedKey = null;
+  return key === null ? null : (nearestUse(key, resets.value, false) ?? heading.value);
+}
+
+/**
+ * One row no longer being used. Once none is, the list shows the state as it is, and every gone row it kept (another of
+ * the same grant's resets now shows in it) is back as it was; resolves once the list is drawn again.
+ */
+async function letGo(key: string): Promise<void> {
+  leaving.delete(key);
+  if (leaving.size > 0) return;
+  held.value = null;
+  await nextTick();
+  // A row a newer use is already sending stays as it is.
+  for (const e of resetList.value?.querySelectorAll<HTMLElement>('[data-reset-key]') ?? []) {
+    if (!leaving.has(e.dataset.resetKey ?? '')) undoDust(e);
+  }
+}
+
+/** Sends the use of the reset the confirmation is open for; on success its row goes. Answers the error, or null. */
+async function sendUse(): Promise<string | null> {
+  const r = using.value;
+  if (!r?.id || leaving.has(r.key)) return null;
+  held.value = resets.value;
+  leaving.add(r.key);
+  let next: State;
+  try {
+    next = await api.useReset(r.account.id, r.id);
+  } catch (e) {
+    void letGo(r.key);
+    if (e instanceof ApiError) return e.message;
+    store.connected = false;
+    return 'Warden could not be reached.';
+  }
+  // The answer at once, unless a newer state already came: only the rows on screen wait for the animation.
+  if (!store.state || next.revision >= store.state.revision) apply(next);
+  announced.value = `${r.title} used on ${r.account.label}.`;
+  usedKey = r.key;
+  void leave(r);
+  return null;
+}
+
+/**
+ * The used reset's row turns to dust and the gap closes, then, once no other use is under way, the list shows the state
+ * as it is. Focus, already on a Use button that stays (or the heading), moves only if it was left on the heading or
+ * lost: to the nearest Use button now.
+ */
+async function leave(r: ResetRow): Promise<void> {
+  const rows = resets.value;
+  const row = rowOf(r.key);
+  if (row) await turnToDust(row, reduceMotion.value === 'reduce');
+  await letGo(r.key);
+  // Another use is under way (or began meanwhile): the last to finish releases the list and places focus.
+  if (held.value) return;
+  const focused = document.activeElement;
+  if (focused && focused !== document.body && focused !== heading.value) return;
+  (nearestUse(r.key, rows, true) ?? heading.value)?.focus();
+}
 
 /** The Extra usage column shows only while some account has spent some. */
 const showExtra = computed(() => accounts.value.some((a) => extraText(a.provider, a.usage) !== null));
@@ -165,7 +286,13 @@ function sessionAccount(s: Session): Account | undefined {
 <template>
   <div class="flex flex-col gap-4.5">
     <header class="flex items-center gap-3">
-      <h1 class="text-20 font-semibold">Overview</h1>
+      <h1
+        ref="heading"
+        tabindex="-1"
+        class="rounded-xs text-20 font-semibold outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator"
+      >
+        Overview
+      </h1>
     </header>
 
     <p v-if="!store.state && !store.connected" class="text-14 text-secondary">
@@ -482,10 +609,15 @@ function sessionAccount(s: Session): Account | undefined {
         </section>
       </div>
 
-      <section v-if="resets.length" aria-labelledby="resets-heading" class="flex min-w-0 grow basis-72 flex-col gap-3">
+      <section
+        v-if="resets.length"
+        ref="resetList"
+        aria-labelledby="resets-heading"
+        class="flex min-w-0 grow basis-72 flex-col gap-3"
+      >
         <h2 id="resets-heading" class="text-16 font-semibold">Limit resets</h2>
         <WList>
-          <WListItem v-for="r in resets" :key="r.key">
+          <WListItem v-for="r in resets" :key="r.key" :data-reset-key="r.key">
             <AccountIcon :account="r.account" />
             <span class="flex min-w-0 flex-1 flex-col">
               <span class="truncate font-semibold">{{ r.account.label }}</span>
@@ -496,9 +628,19 @@ function sessionAccount(s: Session): Account | undefined {
               </span>
               <span v-else class="text-12 text-tertiary">{{ expiryText(r.expiresAt, store.now, warnDays) }}</span>
             </span>
+            <WButton
+              v-if="r.id"
+              size="sm"
+              data-use-reset
+              :aria-label="`Use ${r.title} on ${r.account.label}`"
+              @click="askToUse(r)"
+              >Use</WButton
+            >
           </WListItem>
         </WList>
       </section>
+      <p role="status" class="sr-only">{{ announced }}</p>
     </div>
+    <UseResetModal v-model:open="confirming" :reset="using" :send="sendUse" :return-to="returnTo" />
   </div>
 </template>

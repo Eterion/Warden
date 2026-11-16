@@ -17,6 +17,7 @@ import {
   readingNote,
   expiresSoon,
   expiryText,
+  resetEffect,
   resetRows,
   resetTime,
   signedInAs,
@@ -365,16 +366,16 @@ describe('limit resets', () => {
       label: 'Codex',
       provider: 'codex',
       resets: [
-        { title: 'Full reset (Weekly + 5 hr)', expiresAt: NOW + 9 * DAY },
-        { title: null, expiresAt: null },
-        { title: 'Gone', expiresAt: NOW - 1 },
+        { id: null, title: 'Full reset (Weekly + 5 hr)', expiresAt: NOW + 9 * DAY },
+        { id: null, title: null, expiresAt: null },
+        { id: null, title: 'Gone', expiresAt: NOW - 1 },
       ],
     });
     const other = account({
       id: 'o',
       label: 'Other',
       provider: 'codex',
-      resets: [{ title: 'Soon', expiresAt: NOW + DAY }],
+      resets: [{ id: null, title: 'Soon', expiresAt: NOW + DAY }],
     });
     expect(resetRows([codex, other], NOW, 3).map((r) => [r.account.label, r.title, r.expiresAt])).toEqual([
       ['Other', 'Soon', NOW + DAY],
@@ -382,6 +383,32 @@ describe('limit resets', () => {
       ['Codex', 'Reset', null],
     ]);
     expect(resetRows([account({ id: 'm', label: 'Main' })], NOW, 3)).toEqual([]);
+  });
+
+  it('keys each row by its reset, so using one of a grant takes away the row of the last of them', () => {
+    const DAY = 24 * 3_600_000;
+    const full = { id: 'grant-full', title: 'Full reset', expiresAt: NOW + DAY };
+    const main = (resets: (typeof full | { id: null; title: string; expiresAt: null })[]) =>
+      resetRows([account({ id: 'main', label: 'Main', resets })], NOW, 3).map((r) => [r.key, r.id]);
+    const old = { id: null, title: 'Old', expiresAt: null };
+    expect(main([full, full, old])).toEqual([
+      ['main:grant-full:0', 'grant-full'],
+      ['main:grant-full:1', 'grant-full'],
+      ['main:#2', null],
+    ]);
+    expect(main([full, old])).toEqual([
+      ['main:grant-full:0', 'grant-full'],
+      ['main:#1', null],
+    ]);
+  });
+
+  it('says what using each kind of reset does', () => {
+    expect(resetEffect('Full reset')).toBe('It refills its 5-hour and weekly limits now.');
+    expect(resetEffect('Full reset (Weekly + 5 hr)')).toBe('It refills its 5-hour and weekly limits now.');
+    expect(resetEffect('5-hour reset')).toBe('It refills its 5-hour limit now.');
+    expect(resetEffect('Weekly reset')).toBe('It refills its weekly limit now.');
+    expect(resetEffect('Fable reset')).toBe('It gives what Fable used this week back to its weekly limit.');
+    expect(resetEffect('Reset')).toBe('It refills its limits now.');
   });
 
   it('says how soon a reset expires within the warning days: today, tomorrow, in N days', () => {
@@ -413,9 +440,9 @@ describe('limit resets', () => {
       id: 'main',
       label: 'Main',
       resets: [
-        { title: 'Full reset', expiresAt: NOW + 5 * DAY },
-        { title: 'Full reset', expiresAt: NOW + 2 * DAY },
-        { title: '5-hour reset', expiresAt: null },
+        { id: null, title: 'Full reset', expiresAt: NOW + 5 * DAY },
+        { id: null, title: 'Full reset', expiresAt: NOW + 2 * DAY },
+        { id: null, title: '5-hour reset', expiresAt: null },
       ],
     });
     const rows = (days: number) => resetRows([claude], NOW, days).map((r) => [r.title, r.soon]);

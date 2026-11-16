@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { store } from '../store';
-import type { Session } from '../api';
+import type { Reset, Session } from '../api';
 import { fakeServer } from '../test/api';
 import { NOW, account, state } from '../test/state';
 import OverviewPage from './OverviewPage.vue';
@@ -717,8 +717,8 @@ describe('OverviewPage', () => {
         label: 'Codex',
         provider: 'codex',
         resets: [
-          { title: 'Full reset (Weekly + 5 hr)', expiresAt: NOW + 9 * DAY },
-          { title: 'Expired', expiresAt: NOW - HOUR },
+          { id: null, title: 'Full reset (Weekly + 5 hr)', expiresAt: NOW + 9 * DAY },
+          { id: null, title: 'Expired', expiresAt: NOW - HOUR },
         ],
       }),
       account({
@@ -726,7 +726,7 @@ describe('OverviewPage', () => {
         label: 'Personal',
         provider: 'codex',
         enabled: false,
-        resets: [{ title: 'Off', expiresAt: null }],
+        resets: [{ id: null, title: 'Off', expiresAt: null }],
       }),
     ]);
     const list = mount(OverviewPage).get('[aria-labelledby=resets-heading]');
@@ -747,9 +747,9 @@ describe('OverviewPage', () => {
         id: 'main',
         label: 'Main',
         resets: [
-          { title: 'Full reset', expiresAt: NOW + 2 * DAY },
-          { title: 'Full reset', expiresAt: NOW + 2 * DAY },
-          { title: '5-hour reset', expiresAt: NOW + 9 * DAY },
+          { id: null, title: 'Full reset', expiresAt: NOW + 2 * DAY },
+          { id: null, title: 'Full reset', expiresAt: NOW + 2 * DAY },
+          { id: null, title: '5-hour reset', expiresAt: NOW + 9 * DAY },
         ],
       }),
     ]);
@@ -768,5 +768,356 @@ describe('OverviewPage', () => {
     store.state = { ...st, settings: { ...st.settings, resetWarningDays: 1 } };
     items = list().findAll('li');
     expect(items.some((i) => i.find('[data-expires-soon]').exists())).toBe(false);
+  });
+
+  describe('using a limit reset', () => {
+    const DAY = 24 * HOUR;
+    const SESSION: Reset = { id: 'grant-s', title: '5-hour reset', expiresAt: NOW + 3 * DAY };
+    const FULL: Reset = { id: 'grant-full', title: 'Full reset', expiresAt: NOW + 2 * DAY };
+    const CODEX: Reset = { id: 'credit-1', title: 'Full reset (Weekly + 5 hr)', expiresAt: NOW + 5 * DAY };
+    /** The box every element reports while motion is stood in for (happy-dom lays nothing out). */
+    const BOX = { left: 10, top: 20, width: 300, height: 60, right: 310, bottom: 80 };
+
+    function withResets(main: Reset[] = [FULL, FULL, SESSION, { id: null, title: 'Old', expiresAt: NOW + 4 * DAY }]) {
+      store.now = NOW;
+      return state([
+        account({ id: 'main', label: 'Main', resets: main }),
+        account({ id: 'c', label: 'Codex', provider: 'codex', resets: [CODEX] }),
+      ]);
+    }
+
+    const restore: (() => void)[] = [];
+    afterEach(() => {
+      restore.splice(0).forEach((undo) => undo());
+      document.body.innerHTML = '';
+    });
+
+    /**
+     * Stands in for the Web Animations API and the row's box: each animation is recorded and finishes at once, or with
+     * `finished` (one for all, or a new one for each animation).
+     */
+    function stubMotion(
+      reduce: boolean,
+      finished: Promise<void> | (() => Promise<void>) = Promise.resolve(),
+    ): Keyframe[][] {
+      const animations: Keyframe[][] = [];
+      const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+      for (const [name, value] of Object.entries({
+        animate(keyframes: Keyframe[]) {
+          animations.push(keyframes);
+          return { finished: typeof finished === 'function' ? finished() : finished, cancel() {} };
+        },
+        getBoundingClientRect: () => BOX,
+      })) {
+        const had = Object.getOwnPropertyDescriptor(proto, name);
+        Object.defineProperty(proto, name, { value, configurable: true, writable: true });
+        restore.push(() => (had ? Object.defineProperty(proto, name, had) : delete proto[name]));
+      }
+      vi.stubGlobal('matchMedia', (query: string) => ({
+        matches: reduce && query.includes('reduce'),
+        media: query,
+        onchange: null,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+        dispatchEvent: () => true,
+      }));
+      return animations;
+    }
+
+    const dialog = () => document.querySelector<HTMLElement>('[role=dialog]');
+    const useButtons = (page: ReturnType<typeof mount>) => page.findAll('[data-use-reset]');
+
+    it('gives each usable reset a small Use button named for the reset and its account', () => {
+      store.state = withResets();
+      const page = mount(OverviewPage);
+      expect(useButtons(page).map((b) => [b.text(), b.attributes('aria-label')])).toEqual([
+        ['Use', 'Use Full reset on Main'],
+        ['Use', 'Use Full reset on Main'],
+        ['Use', 'Use 5-hour reset on Main'],
+        ['Use', 'Use Full reset (Weekly + 5 hr) on Codex'],
+      ]);
+      // An outline button, small, on the row; a reset without an id (read before ids were kept) has none.
+      const button = useButtons(page)[0]!;
+      expect(button.classes()).toEqual(expect.arrayContaining(['h-7', 'inset-ring-1', 'text-12']));
+      const old = page.findAll('li').find((li) => li.text().includes('Old'))!;
+      expect(old.find('[data-use-reset]').exists()).toBe(false);
+    });
+
+    it('asks first, saying what each kind of reset does and that it cannot be undone', async () => {
+      store.state = withResets();
+      const page = mount(OverviewPage, { attachTo: document.body });
+      for (const [label, title, line] of [
+        [
+          'Use Full reset on Main',
+          'Use a Full reset on Main?',
+          "It refills its 5-hour and weekly limits now. This can't be undone.",
+        ],
+        [
+          'Use 5-hour reset on Main',
+          'Use a 5-hour reset on Main?',
+          "It refills its 5-hour limit now. This can't be undone.",
+        ],
+        [
+          'Use Full reset (Weekly + 5 hr) on Codex',
+          'Use a Full reset (Weekly + 5 hr) on Codex?',
+          "It refills its 5-hour and weekly limits now. This can't be undone.",
+        ],
+      ] as const) {
+        await page.get(`[aria-label="${label}"]`).trigger('click');
+        await flushPromises();
+        const d = dialog()!;
+        expect(d.querySelector('h2')!.textContent!.trim()).toBe(title);
+        expect(document.getElementById(d.getAttribute('aria-labelledby')!)?.textContent).toBe(title);
+        expect(d.querySelector('h2 + span')!.textContent!.trim()).toBe(line);
+        // "Use reset" first, then Cancel, which closes it without sending anything.
+        expect([...d.querySelectorAll('button')].map((b) => b.textContent!.trim())).toEqual(['Use reset', 'Cancel']);
+        [...d.querySelectorAll('button')][1]!.click();
+        await flushPromises();
+        expect(dialog()).toBeNull();
+      }
+    });
+
+    it('shows busy while it sends; a refusal stays in the modal and the row stays', async () => {
+      store.state = withResets();
+      let answer: (r: Response) => void = () => {};
+      const calls: { path: string; body: unknown }[] = [];
+      vi.stubGlobal('fetch', (path: string, init: RequestInit) => {
+        calls.push({ path, body: JSON.parse(String(init.body)) });
+        return new Promise<Response>((r) => (answer = r));
+      });
+      const page = mount(OverviewPage, { attachTo: document.body });
+      await page.get('[aria-label="Use 5-hour reset on Main"]').trigger('click');
+      await flushPromises();
+      const submit = dialog()!.querySelector<HTMLButtonElement>('button[type=submit]')!;
+      submit.click();
+      await flushPromises();
+      expect(calls).toEqual([{ path: '/api/accounts/main/resets/use', body: { resetId: 'grant-s' } }]);
+      expect(submit.getAttribute('aria-busy')).toBe('true');
+      expect(submit.querySelector('svg')!.classList).toContain('animate-spin-slow');
+      // Neither Escape nor Cancel closes it while it sends.
+      dialog()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await flushPromises();
+      expect(dialog()).not.toBeNull();
+      expect(dialog()!.querySelectorAll('button')[1]!.disabled).toBe(true);
+
+      answer(
+        new Response(JSON.stringify({ error: 'This reset was already used.' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      await flushPromises();
+      expect(dialog()).not.toBeNull();
+      const error = dialog()!.querySelector('[role=alert]')!;
+      expect(error.textContent).toBe('This reset was already used.');
+      expect(error.classList).toContain('text-attn');
+      expect(submit.getAttribute('aria-busy')).toBeNull();
+      expect(useButtons(page)).toHaveLength(4);
+    });
+
+    it('once used, the modal closes and the row turns to dust, then goes', async () => {
+      const animations = stubMotion(false);
+      store.state = withResets();
+      const after = withResets([FULL, FULL, { id: null, title: 'Old', expiresAt: NOW + 4 * DAY }]);
+      const calls = fakeServer(() => after);
+      const page = mount(OverviewPage, { attachTo: document.body });
+      await page.get('[aria-label="Use 5-hour reset on Main"]').trigger('click');
+      await flushPromises();
+      dialog()!.querySelector<HTMLButtonElement>('button[type=submit]')!.click();
+      await flushPromises();
+      await flushPromises();
+      expect(calls.map((c) => [c.method, c.path, c.body])).toEqual([
+        ['POST', '/api/accounts/main/resets/use', { resetId: 'grant-s' }],
+      ]);
+      expect(dialog()).toBeNull();
+      // Many fragments drift up and to the side and fade, then the gap closes.
+      const drifts = animations.filter((k) => String(k[k.length - 1]!.transform).startsWith('translate('));
+      expect(drifts.length).toBeGreaterThan(50);
+      for (const k of drifts) {
+        const end = k[k.length - 1]!;
+        expect(end.opacity).toBe(0);
+        const [dx, dy] = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(String(end.transform))!.slice(1).map(Number);
+        expect(dx).toBeGreaterThan(0);
+        expect(dy).toBeLessThan(0);
+      }
+      // The row's own height (the stand-in box's) down to nothing.
+      const height = `${BOX.height}px`;
+      expect(animations[animations.length - 1]!.map((k) => k.height)).toEqual([height, '0']);
+      // The fragments are gone with it.
+      expect(document.querySelectorAll('[aria-hidden=true].fixed')).toHaveLength(0);
+      expect(page.findAll('li').map((li) => li.text().includes('5-hour reset'))).not.toContain(true);
+      expect(useButtons(page)).toHaveLength(3);
+      expect(page.get('[role=status]').text()).toBe('5-hour reset used on Main.');
+    });
+
+    it('with reduced motion, the row only fades out', async () => {
+      const animations = stubMotion(true);
+      store.state = withResets();
+      fakeServer(() => withResets([FULL, SESSION, { id: null, title: 'Old', expiresAt: NOW + 4 * DAY }]));
+      const page = mount(OverviewPage, { attachTo: document.body });
+      await page.findAll('[aria-label="Use Full reset on Main"]')[1]!.trigger('click');
+      await flushPromises();
+      dialog()!.querySelector<HTMLButtonElement>('button[type=submit]')!.click();
+      await flushPromises();
+      await flushPromises();
+      expect(animations).toEqual([[{ opacity: 1 }, { opacity: 0 }]]);
+      // One of the grant's two full resets is left.
+      expect(page.findAll('[aria-label="Use Full reset on Main"]')).toHaveLength(1);
+      expect(useButtons(page)).toHaveLength(3);
+    });
+    /** Opens the confirmation from the Use button named `label` with the keyboard's focus on it, and confirms. */
+    async function useWithKeyboard(page: ReturnType<typeof mount>, label: string, nth = 0): Promise<void> {
+      const button = page.findAll(`[aria-label="${label}"]`)[nth]!;
+      (button.element as HTMLElement).focus();
+      await button.trigger('click');
+      await flushPromises();
+      dialog()!.querySelector<HTMLButtonElement>('button[type=submit]')!.click();
+      await flushPromises();
+      await flushPromises();
+    }
+
+    it('takes the answer at once, and an update during the animation is not undone when it ends', async () => {
+      let finish: () => void = () => {};
+      stubMotion(true, new Promise<void>((r) => (finish = r)));
+      store.state = withResets();
+      const answer = withResets([FULL, FULL, { id: null, title: 'Old', expiresAt: NOW + 4 * DAY }]);
+      answer.revision = 2;
+      fakeServer(() => answer);
+      const page = mount(OverviewPage, { attachTo: document.body });
+      await useWithKeyboard(page, 'Use 5-hour reset on Main');
+      // The answer is the state now; only the rows on screen wait for the animation.
+      expect(store.state?.revision).toBe(2);
+      expect(useButtons(page)).toHaveLength(4);
+
+      // A newer state arrives while the row is still going: Codex's reset was used elsewhere.
+      const newer = withResets([FULL, FULL, { id: null, title: 'Old', expiresAt: NOW + 4 * DAY }]);
+      newer.accounts = newer.accounts.map((a) => (a.id === 'c' ? { ...a, resets: [] } : a));
+      newer.revision = 3;
+      store.state = newer;
+      await flushPromises();
+      expect(useButtons(page)).toHaveLength(4);
+
+      finish();
+      await flushPromises();
+      await flushPromises();
+      expect(store.state?.revision).toBe(3);
+      expect(useButtons(page).map((b) => b.attributes('aria-label'))).toEqual([
+        'Use Full reset on Main',
+        'Use Full reset on Main',
+      ]);
+    });
+
+    it('never takes an answer older than the state already shown', async () => {
+      stubMotion(true);
+      store.state = withResets();
+      store.state.revision = 5;
+      const answer = withResets([FULL, FULL]);
+      answer.revision = 4;
+      fakeServer(() => answer);
+      const page = mount(OverviewPage, { attachTo: document.body });
+      await useWithKeyboard(page, 'Use 5-hour reset on Main');
+      expect(store.state?.revision).toBe(5);
+    });
+
+    it('gives focus to the Use button of a reset that stays, and to the heading once none does', async () => {
+      stubMotion(false);
+      store.state = withResets([SESSION]);
+      const page = mount(OverviewPage, { attachTo: document.body });
+      // The next row's Use button takes focus as the modal closes, and keeps it after the row has gone.
+      fakeServer(() => withResets([]));
+      await useWithKeyboard(page, 'Use 5-hour reset on Main');
+      await flushPromises();
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Use Full reset (Weekly + 5 hr) on Codex');
+
+      // The last one: focus goes to the Overview's heading, which shows it.
+      const none = withResets([]);
+      none.accounts = none.accounts.map((a) => ({ ...a, resets: [] }));
+      fakeServer(() => none);
+      await useWithKeyboard(page, 'Use Full reset (Weekly + 5 hr) on Codex');
+      await flushPromises();
+      expect(page.find('[aria-labelledby=resets-heading]').exists()).toBe(false);
+      const h1 = page.get('h1').element;
+      expect(document.activeElement).toBe(h1);
+      expect(h1.getAttribute('tabindex')).toBe('-1');
+      expect(h1.classList).toContain('focus-visible:outline-indicator');
+    });
+
+    it('leaves focus where the user moved it while the row was going', async () => {
+      let finish: () => void = () => {};
+      stubMotion(true, new Promise<void>((r) => (finish = r)));
+      store.state = withResets([FULL, SESSION]);
+      fakeServer(() => withResets([SESSION]));
+      const page = mount(OverviewPage, { attachTo: document.body });
+      await useWithKeyboard(page, 'Use Full reset on Main');
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Use 5-hour reset on Main');
+      const elsewhere = page.get('[aria-label="Use Full reset (Weekly + 5 hr) on Codex"]').element as HTMLElement;
+      elsewhere.focus();
+      finish();
+      await flushPromises();
+      await flushPromises();
+      expect(document.activeElement).toBe(elsewhere);
+    });
+
+    it('never gives focus to a row still gone while another use is under way', async () => {
+      // Each animation, and each request, finishes when the test says.
+      const finish: (() => void)[] = [];
+      stubMotion(true, () => new Promise<void>((r) => finish.push(r)));
+      const answer: ((s: ReturnType<typeof withResets>) => void)[] = [];
+      const sent: unknown[] = [];
+      vi.stubGlobal('fetch', (path: string, init: RequestInit) => {
+        sent.push([path, JSON.parse(String(init.body))]);
+        return new Promise<Response>((r) =>
+          answer.push((s) => r(new Response(JSON.stringify(s), { headers: { 'Content-Type': 'application/json' } }))),
+        );
+      });
+      store.state = withResets([FULL, FULL, SESSION]);
+      const page = mount(OverviewPage, { attachTo: document.body });
+      const confirm = async (label: string) => {
+        const button = page.findAll(`[aria-label="${label}"]`)[0]!;
+        (button.element as HTMLElement).focus();
+        await button.trigger('click');
+        await flushPromises();
+        dialog()!.querySelector<HTMLButtonElement>('button[type=submit]')!.click();
+        await flushPromises();
+      };
+      const rowOf = (key: string) => document.querySelector<HTMLElement>(`[data-reset-key="${key}"]`)!;
+      const focusIsVisible = () => !document.activeElement?.closest('[data-gone]');
+
+      // The first of the grant's two full resets is used; its row (kept by the list, which now shows the grant's one
+      // full reset left in it) starts to go.
+      await confirm('Use Full reset on Main');
+      answer[0]!(withResets([FULL, SESSION]));
+      await flushPromises();
+      expect(dialog()).toBeNull();
+      expect(rowOf('main:grant-full:0').dataset.gone).toBe('');
+      expect(focusIsVisible()).toBe(true);
+
+      // Before it has gone, the 5-hour reset is confirmed; while that is sent, the first row's animation ends.
+      await confirm('Use 5-hour reset on Main');
+      expect(sent).toHaveLength(2);
+      finish[0]!();
+      await flushPromises();
+      expect(dialog()).not.toBeNull();
+      // The list holds still for the use being sent, the first row still gone.
+      expect(rowOf('main:grant-full:0').dataset.gone).toBe('');
+
+      // Used, with Codex's reset gone too: the modal closes with focus on the heading, not on the gone row's button.
+      const none = withResets([FULL]);
+      none.accounts = none.accounts.map((a) => (a.id === 'c' ? { ...a, resets: [] } : a));
+      answer[1]!(none);
+      await flushPromises();
+      expect(dialog()).toBeNull();
+      expect(document.activeElement).toBe(page.get('h1').element);
+
+      // Once the 5-hour reset's row has gone, the list shows the state, the kept row back as it was and focus on its Use.
+      finish[1]!();
+      await flushPromises();
+      await flushPromises();
+      expect(useButtons(page).map((b) => b.attributes('aria-label'))).toEqual(['Use Full reset on Main']);
+      expect(document.querySelector('[data-gone]')).toBeNull();
+      expect(document.activeElement).toBe(useButtons(page)[0]!.element);
+    });
   });
 });

@@ -76,8 +76,14 @@ export function expiryText(at: number | null, now: number, warnDays = 0): string
 }
 
 export interface ResetRow {
+  /**
+   * Stays with the row while the list changes: the account, the reset's id and which of the resets with that id it is
+   * (a Claude grant lists one per reset left), so using one takes away the row of the last of them.
+   */
   key: string;
   account: Account;
+  /** What using it needs; `null`: it cannot be used. */
+  id: string | null;
   title: string;
   expiresAt: number | null;
   /** Expires within the warning window. */
@@ -90,17 +96,35 @@ export interface ResetRow {
  */
 export function resetRows(accounts: Account[], now: number, warnDays: number): ResetRow[] {
   return accounts
-    .flatMap((a) =>
-      a.resets.map((r, i) => ({
-        key: `${a.id}:${i}`,
-        account: a,
-        title: r.title ?? 'Reset',
-        expiresAt: r.expiresAt,
-        soon: expiresSoon(r.expiresAt, now, warnDays),
-      })),
-    )
+    .flatMap((a) => {
+      const seen = new Map<string, number>();
+      return a.resets.map((r, i) => {
+        const n = r.id === null ? i : (seen.get(r.id) ?? 0);
+        if (r.id !== null) seen.set(r.id, n + 1);
+        return {
+          key: r.id === null ? `${a.id}:#${n}` : `${a.id}:${r.id}:${n}`,
+          account: a,
+          id: r.id,
+          title: r.title ?? 'Reset',
+          expiresAt: r.expiresAt,
+          soon: expiresSoon(r.expiresAt, now, warnDays),
+        };
+      });
+    })
     .filter((r) => r.expiresAt === null || r.expiresAt > now)
     .sort((x, y) => (x.expiresAt ?? Infinity) - (y.expiresAt ?? Infinity));
+}
+
+/**
+ * What using a reset does, as the confirmation says it, from its short name: a full reset (Codex's "Full reset (Weekly
+ * + 5 hr)" too) refills both limits; a 5-hour or weekly reset one of them; a Fable reset gives back what Fable used.
+ */
+export function resetEffect(title: string): string {
+  if (title.startsWith('Full reset')) return 'It refills its 5-hour and weekly limits now.';
+  if (title === '5-hour reset') return 'It refills its 5-hour limit now.';
+  if (title === 'Weekly reset') return 'It refills its weekly limit now.';
+  if (title === 'Fable reset') return 'It gives what Fable used this week back to its weekly limit.';
+  return 'It refills its limits now.';
 }
 
 export type Level = 'low' | 'mid' | 'high';

@@ -4,6 +4,7 @@
 //! endpoint, and dropped (and wiped) when that call returns. Identity comes from `.claude.json` and never touches
 //! the token.
 
+use crate::codex_resets::UseRefused;
 use crate::model::{Extra, Identity, Limit, ModelLimit, Usage, UsageError};
 use crate::policy::ALLOWED_OUTBOUND_HOSTS;
 use crate::secret::Secret;
@@ -108,11 +109,172 @@ pub fn read_identity_from_files(files: &[PathBuf]) -> io::Result<Option<Identity
     Ok(None)
 }
 
-/// Sends the one request the usage endpoint needs. A trait so tests can stand in for Anthropic.
+/// Sends the requests Anthropic's API needs: the usage request, and the claim of one limit reset. A trait so tests can
+/// stand in for Anthropic.
 pub trait UsageEndpoint: Send + Sync {
     /// Calls the endpoint and returns parsed usage or a safe error, never a raw response body. `resets`: whether to ask
     /// for the account's limit resets as well ([`crate::codex_resets::resets_due`]); without, the answer has none.
     fn fetch(&self, token: &Secret, resets: bool) -> Result<Usage, UsageError>;
+
+    /// Claims one limit reset of the grant `grant_id` for the organization, `request_id` new for this use; sent only
+    /// when the user confirmed it in the app. `Ok` only when the answer's `result` is `reset`. A stand-in that does not
+    /// claim refuses.
+    fn use_reset(
+        &self,
+        _token: &Secret,
+        _organization_id: &str,
+        _grant_id: &str,
+        _request_id: &str,
+    ) -> Result<(), UseRefused> {
+        Err(UseRefused::new(
+            "not supported",
+            "Warden cannot use this reset.",
+        ))
+    }
+}
+
+/// Where a limit reset is claimed: `{RESET_URL_START}{organization}{RESET_URL_END}`.
+pub const RESET_URL_START: &str = "https://api.anthropic.com/api/organizations/";
+pub const RESET_URL_END: &str = "/reset_rate_limits";
+/// The program Claude's limit resets belong to (the usage answer's block of the same name).
+const RESET_PROGRAM: &str = "cedar_ember";
+
+/// The claim request's address for an organization.
+pub fn reset_url(organization_id: &str) -> String {
+    format!("{RESET_URL_START}{organization_id}{RESET_URL_END}")
+}
+
+/// An organization's UUID as it goes into the claim request's path: letters, digits and `-`, 1 to 64.
+pub fn valid_organization_id(id: &str) -> bool {
+    (1..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// Refuses an organization, grant or request id of another form before anything is sent.
+pub fn check_claim_ids(
+    organization_id: &str,
+    grant_id: &str,
+    request_id: &str,
+) -> Result<(), UseRefused> {
+    if !valid_organization_id(organization_id)
+        || !crate::codex_resets::valid_grant_id(grant_id)
+        || !crate::codex_resets::valid_request_id(request_id)
+    {
+        return Err(UseRefused::new(
+            "the reset's id is not in the expected form",
+            "Warden cannot use this reset.",
+        ));
+    }
+    Ok(())
+}
+
+/// The claim request's body, as the Claude CLI sends it.
+pub fn claim_body(grant_id: &str, request_id: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "program": RESET_PROGRAM,
+        "grant_id": grant_id,
+        "request_id": request_id,
+    }))
+    .expect("serialising string fields")
+}
+
+/// A failed request to use a reset: the short, token-free reason, and it in a sentence.
+pub(crate) fn use_failed(reason: &str) -> UseRefused {
+    UseRefused::new(reason, format!("The reset was not used ({reason})."))
+}
+
+/// An answer to a use of a reset in a shape Warden does not know.
+pub(crate) fn unexpected_use_answer() -> UseRefused {
+    UseRefused::new(
+        "HTTP 200: unexpected answer",
+        "The reset was not used: unexpected answer.",
+    )
+}
+
+/// The answer to a use of a reset (Claude's claim or Codex's redeem), decided from the status before the body is
+/// touched; only a successful answer is read, capped. Never any of an error's body.
+pub(crate) fn use_answer_body(status: u16, reader: impl Read) -> Result<String, UseRefused> {
+    match status {
+        200 => {}
+        401 => {
+            return Err(UseRefused::new(
+                "HTTP 401: the login has expired",
+                "The account's login has expired.",
+            ));
+        }
+        403 => {
+            return Err(UseRefused::new(
+                "HTTP 403: missing permission",
+                "The account may not use this reset.",
+            ));
+        }
+        429 => {
+            return Err(UseRefused::new(
+                "HTTP 429: rate limited",
+                "Try again later.",
+            ));
+        }
+        500..=599 => {
+            return Err(UseRefused::new(
+                format!("HTTP {status}: server error"),
+                "The server had a problem. Try again later.",
+            ));
+        }
+        _ => {
+            return Err(UseRefused::new(
+                format!("HTTP {status}: unexpected answer"),
+                "The reset was not used: unexpected answer.",
+            ));
+        }
+    }
+    const MAX_BODY_BYTES: u64 = 64 * 1024;
+    let mut body = String::new();
+    reader
+        .take(MAX_BODY_BYTES + 1)
+        .read_to_string(&mut body)
+        .map_err(|_| unexpected_use_answer())?;
+    if body.len() as u64 > MAX_BODY_BYTES {
+        return Err(unexpected_use_answer());
+    }
+    Ok(body)
+}
+
+/// The claim's answer: only `result: "reset"` is a success; each other result in plain words.
+pub fn read_claim_response(status: u16, reader: impl Read) -> Result<(), UseRefused> {
+    let body = use_answer_body(status, reader)?;
+    #[derive(Deserialize)]
+    struct Answer {
+        result: String,
+    }
+    let answer: Answer = serde_json::from_str(&body).map_err(|_| unexpected_use_answer())?;
+    let (reason, message) = match answer.result.as_str() {
+        "reset" => return Ok(()),
+        "already_used" => ("already used", "This reset was already used."),
+        "not_limited" => (
+            "not at a limit",
+            "Nothing to reset: the account is not at a limit.",
+        ),
+        "cooldown" => ("cooling down", "Try again later."),
+        "ineligible" => ("not eligible", "This account cannot use limit resets."),
+        "unavailable" => ("unavailable", "This reset cannot be used right now."),
+        _ => return Err(unexpected_use_answer()),
+    };
+    Err(UseRefused::new(reason, message))
+}
+
+/// Why a reset could not be used for the login: signed out, expired, someone else's.
+pub fn login_refusal(e: &UsageError) -> UseRefused {
+    match e {
+        UsageError::SignedOut => UseRefused::new("signed out", "The account is signed out."),
+        UsageError::LoginExpired { .. } => {
+            UseRefused::new("the login has expired", "The account's login has expired.")
+        }
+        UsageError::IdentityChanged => UseRefused::new(
+            "signed in as someone else",
+            "The folder is signed in as someone else.",
+        ),
+        UsageError::NoLogs => use_failed("no login"),
+        UsageError::Failed { message } => use_failed(message),
+    }
 }
 
 /// Windows' own TLS with Windows' own trusted roots, as any Windows program. ureq's default roots (a bundled copy of
@@ -188,6 +350,21 @@ impl AnthropicUsageEndpoint {
             .header("User-Agent", self.user_agent.as_str())
             .header("x-app", "cli")
     }
+
+    /// The claim of a limit reset: the usage request's headers, and the JSON body's type.
+    fn claim_request(
+        &self,
+        bearer: &str,
+        organization_id: &str,
+    ) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
+        self.agent
+            .post(reset_url(organization_id))
+            .header("Authorization", bearer)
+            .header("anthropic-beta", USAGE_BETA)
+            .header("User-Agent", self.user_agent.as_str())
+            .header("x-app", "cli")
+            .header("Content-Type", "application/json")
+    }
 }
 
 impl Default for AnthropicUsageEndpoint {
@@ -217,6 +394,37 @@ impl UsageEndpoint for AnthropicUsageEndpoint {
         let status = response.status().as_u16();
         read_response(status, response.body_mut().as_reader())
     }
+
+    fn use_reset(
+        &self,
+        token: &Secret,
+        organization_id: &str,
+        grant_id: &str,
+        request_id: &str,
+    ) -> Result<(), UseRefused> {
+        if !reset_url_is_allowed() {
+            return Err(UseRefused::new(
+                "the claim endpoint is not an allowed host",
+                "Warden cannot use this reset.",
+            ));
+        }
+        check_claim_ids(organization_id, grant_id, request_id)?;
+        let bearer = Zeroizing::new(format!("Bearer {}", token.expose()));
+        let mut response = self
+            .claim_request(bearer.as_str(), organization_id)
+            .send(claim_body(grant_id, request_id).as_slice())
+            .map_err(|e| use_failed(&describe_transport_error(&e)))?;
+        let status = response.status().as_u16();
+        read_claim_response(status, response.body_mut().as_reader())
+    }
+}
+
+/// The claim endpoint's host is an allowed outbound host.
+pub fn reset_url_is_allowed() -> bool {
+    RESET_URL_START
+        .strip_prefix("https://")
+        .and_then(|rest| rest.split('/').next())
+        .is_some_and(|host| ALLOWED_OUTBOUND_HOSTS.contains(&host))
 }
 
 /// Decides from the status before touching the body. Only a successful answer is read, capped and parsed.
@@ -291,6 +499,33 @@ pub fn read_usage(
     now_ms: i64,
     resets: bool,
 ) -> Result<Usage, UsageError> {
+    let token = read_token(folder, now_ms)?;
+    let result = endpoint.fetch(&token, resets);
+    drop(token);
+    result.map(|mut usage| {
+        usage.read_at = now_ms;
+        usage
+    })
+}
+
+/// Uses one of the account's limit resets, after the user confirmed it: the login token is read, sent to the claim
+/// endpoint once with the organization's id, and dropped. An expired login is not sent (Warden never renews a Warden
+/// account's login).
+pub fn use_reset(
+    folder: &Path,
+    endpoint: &dyn UsageEndpoint,
+    now_ms: i64,
+    (organization_id, grant_id, request_id): (&str, &str, &str),
+) -> Result<(), UseRefused> {
+    check_claim_ids(organization_id, grant_id, request_id)?;
+    let token = read_token(folder, now_ms).map_err(|e| login_refusal(&e))?;
+    let result = endpoint.use_reset(&token, organization_id, grant_id, request_id);
+    drop(token);
+    result
+}
+
+/// The folder's login token, unless it has expired; wiped when dropped.
+fn read_token(folder: &Path, now_ms: i64) -> Result<Secret, UsageError> {
     let path = folder.join(CREDENTIALS_FILE);
     let bytes = match fs::read(&path) {
         Ok(b) => Zeroizing::new(b),
@@ -309,12 +544,7 @@ pub fn read_usage(
     if login.expires_at.is_some_and(|exp| exp <= now_ms) {
         return Err(UsageError::LoginExpired { status: None });
     }
-    let result = endpoint.fetch(&token, resets);
-    drop(token);
-    result.map(|mut usage| {
-        usage.read_at = now_ms;
-        usage
-    })
+    Ok(token)
 }
 
 fn failed(message: &str) -> UsageError {
@@ -386,6 +616,9 @@ struct ResetsBlock {
 
 #[derive(Deserialize)]
 struct Grant {
+    /// What claiming one of its resets needs; kept only in the claim request's form.
+    #[serde(default)]
+    id: Option<serde_json::Value>,
     resets_left: u64,
     ends_at: Option<String>,
     #[serde(default)]
@@ -420,7 +653,8 @@ fn grant_name(g: &Grant) -> &'static str {
 
 /// The account's limit resets in the answer's `cedar_ember` block: one per reset left, named by its kind, soonest to
 /// expire first (those that never expire last). An account the endpoint calls not eligible has none. `None` for a
-/// block of another shape or an expiry that is not a date, so the last list stays. Nothing else is kept.
+/// block of another shape or an expiry that is not a date, so the last list stays. Only each grant's id (in the claim
+/// request's form, otherwise none) goes with its resets; nothing else is kept.
 fn parse_resets(block: &serde_json::Value) -> Option<Vec<crate::codex_resets::Reset>> {
     let block: ResetsBlock = serde_json::from_value(block.clone()).ok()?;
     if block.eligible == Some(false) {
@@ -437,6 +671,12 @@ fn parse_resets(block: &serde_json::Value) -> Option<Vec<crate::codex_resets::Re
         };
         let left = usize::try_from(g.resets_left).unwrap_or(MAX_RESETS);
         let reset = crate::codex_resets::Reset {
+            id: g
+                .id
+                .as_ref()
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| crate::codex_resets::valid_grant_id(id))
+                .map(str::to_owned),
             title: Some(grant_name(&g).to_owned()),
             expires_at,
         };
@@ -764,8 +1004,9 @@ mod tests {
         }
     }"#;
 
-    fn reset(title: &str, at: Option<&str>) -> crate::codex_resets::Reset {
+    fn reset(id: &str, title: &str, at: Option<&str>) -> crate::codex_resets::Reset {
         crate::codex_resets::Reset {
+            id: Some(id.into()),
             title: Some(title.into()),
             expires_at: at.map(|a| parse_rfc3339_ms(a).expect("date")),
         }
@@ -780,17 +1021,17 @@ mod tests {
         assert_eq!(
             resets,
             vec![
-                reset("Fable reset", Some("2026-11-20T10:00:00Z")),
-                reset("Full reset", Some("2026-11-30T23:00:00Z")),
-                reset("Full reset", Some("2026-11-30T23:00:00Z")),
-                reset("Weekly reset", Some("2026-12-01T00:00:00Z")),
-                reset("Full reset", Some("2026-12-05T00:00:00Z")),
-                reset("5-hour reset", None),
+                reset("grant-fable", "Fable reset", Some("2026-11-20T10:00:00Z")),
+                reset("grant-full", "Full reset", Some("2026-11-30T23:00:00Z")),
+                reset("grant-full", "Full reset", Some("2026-11-30T23:00:00Z")),
+                reset("grant-weekly", "Weekly reset", Some("2026-12-01T00:00:00Z")),
+                reset("grant-typed", "Full reset", Some("2026-12-05T00:00:00Z")),
+                reset("grant-session", "5-hour reset", None),
             ]
         );
-        // Nothing else from the block is kept: no ids, labels or event props.
+        // Nothing else from the block is kept: each grant's id (what claiming it needs), but no labels or event props.
         let saved = serde_json::to_string(&resets).expect("json");
-        for gone in ["grant-", "November", "Fable reset for", "fixture-campaign"] {
+        for gone in ["grant-x", "November", "Fable reset for", "fixture-campaign"] {
             assert!(!saved.contains(gone), "{gone} in {saved}");
         }
         // The usage reading itself never carries them.
@@ -837,6 +1078,237 @@ mod tests {
         .expect("resets");
         assert_eq!(many.len(), MAX_RESETS);
         assert_eq!(many[0].title.as_deref(), Some("Weekly reset"));
+    }
+
+    #[test]
+    fn a_grant_id_not_in_the_claim_requests_form_is_not_kept() {
+        let ids = |id: &str| {
+            parse_usage(
+                &format!(
+                    r#"{{"seven_day": {{"utilization": 1}}, "cedar_ember": {{"eligible": true, "grants": [
+                        {{"id": {id}, "resets_left": 1, "ends_at": null, "clears": ["five_hour"]}}]}}}}"#
+                ),
+                0,
+            )
+            .expect("parses")
+            .resets
+            .expect("resets")[0]
+                .id
+                .clone()
+        };
+        assert_eq!(ids(r#""grant_1-a""#).as_deref(), Some("grant_1-a"));
+        let long = format!(r#""{}""#, "g".repeat(41));
+        for bad in [
+            r#""""#,
+            r#""Grant-1""#,
+            r#""grant 1""#,
+            r#""grant/1""#,
+            "7",
+            "null",
+            long.as_str(),
+        ] {
+            assert_eq!(ids(bad), None, "{bad}");
+        }
+    }
+
+    /// Stands in for the claim endpoint: the token, organization and grant it was sent, and its answer.
+    struct Claims {
+        seen: Mutex<Vec<(String, String, String, String)>>,
+        status: u16,
+        body: &'static str,
+    }
+
+    impl UsageEndpoint for Claims {
+        fn fetch(&self, _: &Secret, _: bool) -> Result<Usage, UsageError> {
+            panic!("only the claim is sent")
+        }
+        fn use_reset(
+            &self,
+            token: &Secret,
+            organization_id: &str,
+            grant_id: &str,
+            request_id: &str,
+        ) -> Result<(), UseRefused> {
+            self.seen.lock().expect("lock").push((
+                token.expose().to_owned(),
+                organization_id.to_owned(),
+                grant_id.to_owned(),
+                request_id.to_owned(),
+            ));
+            read_claim_response(self.status, self.body.as_bytes())
+        }
+    }
+
+    fn claims(status: u16, body: &'static str) -> Claims {
+        Claims {
+            seen: Mutex::new(Vec::new()),
+            status,
+            body,
+        }
+    }
+
+    #[test]
+    fn the_claim_request_is_the_claude_clis() {
+        assert_eq!(
+            reset_url("org-1"),
+            "https://api.anthropic.com/api/organizations/org-1/reset_rate_limits"
+        );
+        assert!(reset_url_is_allowed());
+        assert_request_allowed(&reset_url("org-1"), ALLOWED_OUTBOUND_HOSTS);
+        let endpoint = AnthropicUsageEndpoint::new(Some("2.1.323"));
+        let request = endpoint.claim_request("Bearer fixture-only", "0e5b8b0c-org");
+        assert_eq!(request.method_ref(), Some(&ureq::http::Method::POST));
+        assert_eq!(
+            request.uri_ref().expect("URI").to_string(),
+            "https://api.anthropic.com/api/organizations/0e5b8b0c-org/reset_rate_limits"
+        );
+        let headers = request.headers_ref().expect("headers");
+        assert_eq!(headers["Authorization"], "Bearer fixture-only");
+        assert_eq!(headers["anthropic-beta"], "oauth-2025-04-20");
+        assert_eq!(headers["User-Agent"], "claude-cli/2.1.323 (external, cli)");
+        assert_eq!(headers["x-app"], "cli");
+        assert_eq!(headers["Content-Type"], "application/json");
+        let body: serde_json::Value =
+            serde_json::from_slice(&claim_body("grant-full", "req-1")).expect("json");
+        assert_eq!(
+            body,
+            serde_json::json!({"program": "cedar_ember", "grant_id": "grant-full", "request_id": "req-1"})
+        );
+        // The same client as the usage request: no redirect is followed.
+        assert_eq!(endpoint.agent.config().max_redirects(), 0);
+    }
+
+    #[test]
+    fn ids_of_another_form_are_refused_before_the_login_is_read_or_anything_sent() {
+        let dir = folder_with(r#"{"claudeAiOauth": {"accessToken": "fixture-only"}}"#);
+        let uuid = "0b6f3c1e-7a1d-4c5e-9f00-1a2b3c4d5e6f";
+        let long_grant = "g".repeat(41);
+        let long_request = "r".repeat(65);
+        for (org, grant, request) in [
+            ("", "grant", uuid),
+            ("org/../x", "grant", uuid),
+            ("org?x=1", "grant", uuid),
+            ("org", "", uuid),
+            ("org", "Grant", uuid),
+            ("org", "grant.1", uuid),
+            ("org", long_grant.as_str(), uuid),
+            ("org", "grant", ""),
+            ("org", "grant", "req 1"),
+            ("org", "grant", long_request.as_str()),
+        ] {
+            let endpoint = claims(200, r#"{"result": "reset"}"#);
+            let refused =
+                use_reset(dir.path(), &endpoint, 0, (org, grant, request)).expect_err("refused");
+            assert_eq!(refused.reason, "the reset's id is not in the expected form");
+            assert!(endpoint.seen.lock().expect("lock").is_empty());
+        }
+        let endpoint = claims(200, r#"{"result": "reset"}"#);
+        assert_eq!(
+            use_reset(dir.path(), &endpoint, 0, ("org-1", "grant_1", uuid)),
+            Ok(())
+        );
+        assert_eq!(
+            *endpoint.seen.lock().expect("lock"),
+            vec![(
+                "fixture-only".to_owned(),
+                "org-1".to_owned(),
+                "grant_1".to_owned(),
+                uuid.to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn an_expired_or_missing_login_is_not_sent_to_the_claim() {
+        let expired = folder_with(
+            r#"{"claudeAiOauth": {"accessToken": "sk-ant-oat01-x", "expiresAt": 500}}"#,
+        );
+        let endpoint = claims(200, r#"{"result": "reset"}"#);
+        let ids = ("org-1", "grant", "req-1");
+        assert_eq!(
+            use_reset(expired.path(), &endpoint, 1000, ids)
+                .expect_err("expired")
+                .message,
+            "The account's login has expired."
+        );
+        let none = tempdir::Dir::new("claude");
+        assert_eq!(
+            use_reset(none.path(), &endpoint, 1000, ids)
+                .expect_err("signed out")
+                .message,
+            "The account is signed out."
+        );
+        assert!(endpoint.seen.lock().expect("lock").is_empty());
+    }
+
+    #[test]
+    fn each_claim_result_and_status_is_said_in_plain_words() {
+        let ok = r#"{"result": "reset", "reason": null, "resets_left": 1, "cleared": ["five_hour", "seven_day"],
+            "weekly_resets_at": "2026-11-20T10:00:00Z", "cooldown_until": null}"#;
+        assert_eq!(read_claim_response(200, ok.as_bytes()), Ok(()));
+        for (result, message) in [
+            ("already_used", "This reset was already used."),
+            (
+                "not_limited",
+                "Nothing to reset: the account is not at a limit.",
+            ),
+            ("cooldown", "Try again later."),
+            ("ineligible", "This account cannot use limit resets."),
+            ("unavailable", "This reset cannot be used right now."),
+            (
+                "something_new",
+                "The reset was not used: unexpected answer.",
+            ),
+        ] {
+            let body = format!(
+                r#"{{"result": "{result}", "reason": "fixture-reason", "resets_left": 0, "cleared": []}}"#
+            );
+            let refused = read_claim_response(200, body.as_bytes()).expect_err(result);
+            assert_eq!(refused.message, message);
+            // The answer's own reason text is never repeated.
+            assert!(
+                !refused.message.contains("fixture-reason")
+                    && !refused.reason.contains("fixture-reason")
+            );
+        }
+        let canary = canary_token("claim-body");
+        for (status, reason, message) in [
+            (
+                401,
+                "HTTP 401: the login has expired",
+                "The account's login has expired.",
+            ),
+            (
+                403,
+                "HTTP 403: missing permission",
+                "The account may not use this reset.",
+            ),
+            (429, "HTTP 429: rate limited", "Try again later."),
+            (
+                500,
+                "HTTP 500: server error",
+                "The server had a problem. Try again later.",
+            ),
+            (
+                302,
+                "HTTP 302: unexpected answer",
+                "The reset was not used: unexpected answer.",
+            ),
+            (
+                200,
+                "HTTP 200: unexpected answer",
+                "The reset was not used: unexpected answer.",
+            ),
+        ] {
+            let refused = read_claim_response(status, canary.as_bytes()).expect_err("refused");
+            assert_eq!(
+                (refused.reason.as_str(), refused.message.as_str()),
+                (reason, message)
+            );
+            assert_no_token("claim refusal", &format!("{refused:?}"), &canary);
+        }
+        let oversized = format!(r#"{{"result": "reset", "x": "{}"}}"#, " ".repeat(64 * 1024));
+        assert!(read_claim_response(200, oversized.as_bytes()).is_err());
     }
 
     #[test]

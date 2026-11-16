@@ -52,6 +52,10 @@ pub struct FakeEndpoint {
     pub tokens_seen: Mutex<Vec<String>>,
     pub resets_asked: Mutex<Vec<bool>>,
     pub answer: Mutex<Option<(u16, String)>>,
+    /// Each claim of a limit reset: the token, organization id, grant id and request id.
+    pub claims: Mutex<Vec<(String, String, String, String)>>,
+    /// The claim's answer as Anthropic's status and body; `None`: `{"result": "reset"}`.
+    pub claim_answer: Mutex<Option<(u16, String)>>,
     /// Runs once while the next request is in flight.
     #[allow(clippy::type_complexity)]
     pub during: Mutex<Option<Box<dyn FnOnce() + Send>>>,
@@ -80,6 +84,27 @@ impl UsageEndpoint for FakeEndpoint {
             .unwrap_or((200, CLAUDE_ANSWER.to_owned()));
         let body = if resets { body } else { without_resets(&body) };
         warden_core::claude::read_response(status, body.as_bytes())
+    }
+
+    fn use_reset(
+        &self,
+        token: &Secret,
+        organization_id: &str,
+        grant_id: &str,
+        request_id: &str,
+    ) -> Result<(), warden_core::codex_resets::UseRefused> {
+        self.claims.lock().expect("lock").push((
+            token.expose().to_owned(),
+            organization_id.to_owned(),
+            grant_id.to_owned(),
+            request_id.to_owned(),
+        ));
+        let (status, body) = self.claim_answer.lock().expect("lock").clone().unwrap_or((
+            200,
+            r#"{"result": "reset", "resets_left": 0, "cleared": ["five_hour", "seven_day"]}"#
+                .to_owned(),
+        ));
+        warden_core::claude::read_claim_response(status, body.as_bytes())
     }
 }
 
@@ -131,6 +156,10 @@ impl warden_core::mainlogin::SignInServer for FakeSignInServer {
 pub struct FakeResetsEndpoint {
     pub seen: Mutex<Vec<(String, String)>>,
     pub answer: Mutex<Option<(u16, String)>>,
+    /// Each redeem: the token, account id, credit id and request id.
+    pub redeemed: Mutex<Vec<(String, String, String, String)>>,
+    /// The redeem's answer as the backend's status and body; `None`: `{"code": "reset"}`.
+    pub redeem_answer: Mutex<Option<(u16, String)>>,
     /// Runs once while the next request is in flight.
     #[allow(clippy::type_complexity)]
     pub during: Mutex<Option<Box<dyn FnOnce() + Send>>>,
@@ -160,6 +189,28 @@ impl warden_core::codex_resets::ResetsEndpoint for FakeResetsEndpoint {
             .clone()
             .unwrap_or((200, r#"{"credits": [], "available_count": 0}"#.to_owned()));
         warden_core::codex_resets::read_response(status, body.as_bytes())
+    }
+
+    fn redeem(
+        &self,
+        token: &Secret,
+        account_id: &str,
+        credit_id: &str,
+        request_id: &str,
+    ) -> Result<(), warden_core::codex_resets::UseRefused> {
+        self.redeemed.lock().expect("lock").push((
+            token.expose().to_owned(),
+            account_id.to_owned(),
+            credit_id.to_owned(),
+            request_id.to_owned(),
+        ));
+        let (status, body) = self
+            .redeem_answer
+            .lock()
+            .expect("lock")
+            .clone()
+            .unwrap_or((200, r#"{"code": "reset", "windows_reset": 2}"#.to_owned()));
+        warden_core::codex_resets::read_redeem_response(status, body.as_bytes())
     }
 }
 

@@ -5,8 +5,10 @@
 // switched off) and a throwaway data folder, and feeds the server believable activity: usage readings, Codex session
 // logs and status-hook events for sessions that work, wait for you, go idle, run subagents and finish. Made-up apps
 // and tools sit in the throwaway home (placeholder versions and folders, CLIs that are empty stand-ins), so Settings,
-// General finds them all. Ctrl+C stops it and removes the throwaway folders. Nothing real is read, nothing is
-// started and nothing leaves this computer.
+// General finds them all. Each account in use keeps a couple of limit resets: Use on the Overview's Limit resets list
+// is answered by the demo server's stand-ins after a second, and a used one stays gone until the demo starts again.
+// Ctrl+C stops it and removes the throwaway folders. Nothing real is read, nothing is started and nothing leaves this
+// computer.
 //
 //   npm run demo [-- --port 4787]
 
@@ -265,8 +267,40 @@ function writeClaudeUsage(a: DemoAccount, minutes: number): void {
     seven_day: { utilization: week, resets_at: new Date(resetAt(a.weeklyResetH)).toISOString() },
     seven_day_opus: { utilization: Math.round(week * 0.6), resets_at: new Date(resetAt(a.weeklyResetH)).toISOString() },
     extra_usage: { is_enabled: false, monthly_limit: null, used_credits: null, utilization: null },
-    // Main's limit resets, as the endpoint lists them to the Claude CLI: two full resets in one grant, and a 5-hour
-    // reset that expires inside the default warning days.
+    // The limit resets, as the endpoint lists them to the Claude CLI. Main: two full resets in one grant, and a 5-hour
+    // reset that expires inside the default warning days; Second: a full and a weekly reset. Each can be used in the
+    // app (the stand-in answers after a second); a used one stays gone until the demo starts again.
+    ...(a.key === 'claude-second' && {
+      cedar_ember: {
+        eligible: true,
+        ineligible_reason: null,
+        at_limit: false,
+        exhausted: [],
+        grants: [
+          {
+            id: 'demo-second-full',
+            label: 'One full limit reset (demo)',
+            resets_total: 1,
+            resets_left: 1,
+            starts_at: new Date(started).toISOString(),
+            ends_at: new Date(started + 6 * 24 * HOUR).toISOString(),
+            clears: ['five_hour', 'seven_day'],
+            gives_back_weekly: false,
+          },
+          {
+            id: 'demo-second-weekly',
+            label: 'One weekly reset (demo)',
+            resets_total: 1,
+            resets_left: 1,
+            starts_at: null,
+            ends_at: new Date(started + 20 * 24 * HOUR).toISOString(),
+            clears: ['seven_day'],
+            type: 'weekly',
+            gives_back_weekly: false,
+          },
+        ],
+      },
+    }),
     ...(a.key === 'claude-main' && {
       cedar_ember: {
         eligible: true,

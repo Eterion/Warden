@@ -399,9 +399,9 @@ export function resetsState(now: number): State {
     s.main = {
       ...s.main,
       resets: [
-        { title: 'Full reset', expiresAt: now + 2 * day },
-        { title: '5-hour reset', expiresAt: now + 6 * day },
-        { title: 'Full reset', expiresAt: now + 12 * day },
+        { id: 'grant-full', title: 'Full reset', expiresAt: now + 2 * day },
+        { id: 'grant-session', title: '5-hour reset', expiresAt: now + 6 * day },
+        { id: 'grant-later', title: 'Full reset', expiresAt: now + 12 * day },
       ],
     };
   }
@@ -410,12 +410,12 @@ export function resetsState(now: number): State {
       ? {
           ...a,
           resets: [
-            { title: 'Full reset (Weekly + 5 hr)', expiresAt: now + 9 * day },
-            { title: null, expiresAt: nextYear },
+            { id: 'credit-1', title: 'Full reset (Weekly + 5 hr)', expiresAt: now + 9 * day },
+            { id: 'credit-2', title: null, expiresAt: nextYear },
           ],
         }
       : a.id === 'a4'
-        ? { ...a, resets: [{ title: 'Full reset (Weekly + 5 hr)', expiresAt: now + 2 * day }] }
+        ? { ...a, resets: [{ id: 'credit-3', title: 'Full reset (Weekly + 5 hr)', expiresAt: now + 2 * day }] }
         : a,
   );
   return s;

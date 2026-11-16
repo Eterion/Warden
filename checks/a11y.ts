@@ -51,6 +51,8 @@ type Fixture =
   | 'quietHidden'
   | 'healthy'
   | 'resets'
+  | 'resetsRefused'
+  | 'resetsUsed'
   | 'hooks'
   | 'workHours'
   | 'delegated'
@@ -229,6 +231,42 @@ export const PAGES: {
     path: '/',
     fixture: 'resets',
     ready: '[aria-labelledby=resets-heading] [data-expires-soon]',
+  },
+  {
+    // Use on main's full reset: the confirmation, before anything is sent.
+    name: 'overview-use-reset',
+    path: '/',
+    fixture: 'resets',
+    ready: '[aria-labelledby=resets-heading] [data-use-reset]',
+    steps: [{ click: '[aria-label="Use Full reset on Main"] >> nth=0' }, { waitFor: "text=This can't be undone." }],
+    viewport: { width: 1600, height: 900 },
+  },
+  {
+    // Used: the row turns to dust and the list closes the gap, under the page's policy (the fragments' styles are
+    // set from script); then the list without it, and focus on the next row's Use.
+    name: 'overview-reset-used',
+    path: '/',
+    fixture: 'resetsUsed',
+    ready: '[aria-labelledby=resets-heading] [data-use-reset]',
+    steps: [
+      { click: '[aria-label="Use 5-hour reset on Main"]' },
+      { click: '[role=dialog] button[type=submit]' },
+      { waitFor: '[role=status] >> text=5-hour reset used on Main.' },
+    ],
+    viewport: { width: 1600, height: 900 },
+  },
+  {
+    // The provider said no: its answer in the modal, the reset still listed.
+    name: 'overview-use-reset-refused',
+    path: '/',
+    fixture: 'resetsRefused',
+    ready: '[aria-labelledby=resets-heading] [data-use-reset]',
+    steps: [
+      { click: '[aria-label="Use Full reset on Main"] >> nth=0' },
+      { click: '[role=dialog] button[type=submit]' },
+      { waitFor: '[data-use-reset-error]' },
+    ],
+    viewport: { width: 1600, height: 900 },
   },
   {
     name: 'overview-hooks-off',
@@ -640,7 +678,7 @@ function fakeApi(current: () => Fixture): Plugin {
                   ? quietHiddenState(now)
                   : fixture === 'healthy'
                     ? healthyState(now)
-                    : fixture === 'resets'
+                    : fixture === 'resets' || fixture === 'resetsRefused' || fixture === 'resetsUsed'
                       ? resetsState(now)
                       : normalState(now);
         if (fixture === 'hooksOff') state.hooksOff = true;
@@ -699,6 +737,15 @@ function fakeApi(current: () => Fixture): Plugin {
         }
         const url = req.url ?? '';
         if (url.startsWith('/state/wait')) return;
+        // Using a reset: refused as the provider would say it (nothing real is sent; the other fixtures answer the state).
+        if (fixture === 'resetsRefused' && req.method === 'POST' && /\/resets\/use$/.test(url)) {
+          res.statusCode = 409;
+          send(res, { error: 'This reset was already used.' });
+          return;
+        }
+        if (fixture === 'resetsUsed' && req.method === 'POST' && /\/resets\/use$/.test(url) && state.main) {
+          state.main.resets = state.main.resets.filter((r) => r.id !== 'grant-session');
+        }
         if (url.startsWith('/setup/candidates')) {
           const known = new Set(state.accounts.map((a) => a.folder));
           const found = fixture === 'setupFive' ? fiveCandidates : candidates;

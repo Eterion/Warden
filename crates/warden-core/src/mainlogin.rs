@@ -135,6 +135,65 @@ pub fn read_for_main(
     server: &dyn SignInServer,
     now: i64,
 ) -> Result<Usage, UsageError> {
+    with_main(
+        lock,
+        expected,
+        main_changed,
+        login,
+        server,
+        now,
+        |token, _| {
+            endpoint.fetch(token, resets).map(|mut usage| {
+                usage.read_at = now;
+                usage
+            })
+        },
+    )
+}
+
+/// Uses one of main's limit resets with Warden's own sign-in, after the user confirmed it: checked and renewed as for
+/// a usage reading ([`read_for_main`]), then sent to the claim endpoint once with the organization's id of the sign-in.
+/// The outer error is the sign-in's (it also sets the sign-in's state); the inner one the claim's.
+pub fn use_reset_for_main(
+    lock: &ServerLock,
+    expected: Option<&Identity>,
+    main_changed: bool,
+    login: &mut MainLogin,
+    (endpoint, grant_id, request_id): (&dyn UsageEndpoint, &str, &str),
+    server: &dyn SignInServer,
+    now: i64,
+) -> Result<Result<(), crate::codex_resets::UseRefused>, UsageError> {
+    with_main(
+        lock,
+        expected,
+        main_changed,
+        login,
+        server,
+        now,
+        |token, identity| {
+            let Some(organization) = identity.organization_id.as_deref() else {
+                return Ok(Err(crate::codex_resets::UseRefused::new(
+                    "no organization id",
+                    "Warden does not know the account's organization yet.",
+                )));
+            };
+            Ok(claude::check_claim_ids(organization, grant_id, request_id)
+                .and_then(|()| endpoint.use_reset(token, organization, grant_id, request_id)))
+        },
+    )
+}
+
+/// Runs `use_token` with Warden's own sign-in to main, once it is checked to be main's and renewed when it expires
+/// soon; the identity given is the sign-in's own. Sets the sign-in's state from what happened.
+fn with_main<T>(
+    lock: &ServerLock,
+    expected: Option<&Identity>,
+    main_changed: bool,
+    login: &mut MainLogin,
+    server: &dyn SignInServer,
+    now: i64,
+    use_token: impl FnOnce(&Secret, &Identity) -> Result<T, UsageError>,
+) -> Result<T, UsageError> {
     login.sign_in = SignIn::default();
     let Some(expected) = expected else {
         return Err(UsageError::SignedOut);
@@ -167,20 +226,19 @@ pub fn read_for_main(
     };
     let was_expired = login.expired;
     let mut renewed = None;
-    let result = read_usage_noting(
+    let result = with_token(
         lock,
         &mut login.expired,
         &mut renewed,
-        endpoint,
         server,
         now,
-        resets,
+        |token| use_token(token, &identity),
     );
     login.renewed_until = renewed;
     login.newly_refused = !was_expired && login.expired;
     if login.expired || matches!(result, Err(UsageError::LoginExpired { .. })) {
         login.sign_in.state = SignInState::Expired;
-    } else if result == Err(UsageError::SignedOut) {
+    } else if matches!(result, Err(UsageError::SignedOut)) {
         login.sign_in = SignIn::default();
     }
     result
@@ -327,19 +385,24 @@ pub fn read_usage(
     now: i64,
     resets: bool,
 ) -> Result<Usage, UsageError> {
-    read_usage_noting(lock, expired, &mut None, endpoint, server, now, resets)
+    with_token(lock, expired, &mut None, server, now, |token| {
+        endpoint.fetch(token, resets).map(|mut usage| {
+            usage.read_at = now;
+            usage
+        })
+    })
 }
 
-/// [`read_usage`], noting in `renewed` until when a renewed sign-in holds, for the log line.
-fn read_usage_noting(
+/// Runs `use_token` with Warden's own sign-in, renewed first when it expires soon, noting in `renewed_until` until
+/// when a renewed sign-in holds, for the log line.
+fn with_token<T>(
     lock: &ServerLock,
     expired: &mut bool,
     renewed_until: &mut Option<i64>,
-    endpoint: &dyn UsageEndpoint,
     server: &dyn SignInServer,
     now: i64,
-    resets: bool,
-) -> Result<Usage, UsageError> {
+    use_token: impl FnOnce(&Secret) -> Result<T, UsageError>,
+) -> Result<T, UsageError> {
     if *expired {
         return Err(UsageError::LoginExpired { status: None });
     }
@@ -407,7 +470,7 @@ fn read_usage_noting(
                                 .as_ref()
                                 .filter(|t| !t.is_empty())
                                 .ok_or(UsageError::SignedOut)?;
-                            return endpoint.fetch(access, resets);
+                            return use_token(access);
                         }
                         return Err(failed(
                             "Warden's sign-in changed during renewal; it will be read again",
@@ -469,10 +532,7 @@ fn read_usage_noting(
         .access_token
         .filter(|t| !t.is_empty())
         .ok_or(UsageError::SignedOut)?;
-    endpoint.fetch(&token, resets).map(|mut usage| {
-        usage.read_at = now;
-        usage
-    })
+    use_token(&token)
 }
 
 #[cfg(test)]
@@ -535,6 +595,132 @@ mod tests {
         );
         assert_eq!(login.sign_in.state, SignInState::SignedOut);
         assert!(server.seen.lock().expect("seen").is_empty());
+    }
+
+    /// Stands in for the claim endpoint: checks the token it gets is the renewed one, saved before it is used.
+    struct FakeClaim {
+        path: PathBuf,
+        expected: String,
+        seen: Mutex<Vec<(String, String)>>,
+    }
+    impl UsageEndpoint for FakeClaim {
+        fn fetch(&self, _: &Secret, _: bool) -> Result<Usage, UsageError> {
+            panic!("only the claim is sent")
+        }
+        fn use_reset(
+            &self,
+            token: &Secret,
+            organization_id: &str,
+            grant_id: &str,
+            _request_id: &str,
+        ) -> Result<(), crate::codex_resets::UseRefused> {
+            assert_eq!(token.expose(), self.expected);
+            let saved: serde_json::Value =
+                serde_json::from_slice(&fs::read(&self.path).expect("saved before use"))
+                    .expect("JSON");
+            assert_eq!(saved["claudeAiOauth"]["accessToken"], self.expected);
+            self.seen
+                .lock()
+                .expect("lock")
+                .push((organization_id.to_owned(), grant_id.to_owned()));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_reset_of_main_is_used_with_the_renewed_sign_in_and_its_organization() {
+        let dir = Dir::new("use-reset");
+        let lock = store::hold_server_lock(dir.path()).expect("lock");
+        let old = canary_token("old");
+        let new = canary_token("new");
+        let path = credentials(&lock, &old, &canary_refresh_token("old"), 10);
+        let identity = |org: Option<&str>| {
+            let mut account = serde_json::json!({"emailAddress": "main@example.com"});
+            if let Some(org) = org {
+                account["organizationUuid"] = org.into();
+            }
+            fs::write(
+                folder(lock.data_dir()).join(".claude.json"),
+                serde_json::json!({ "oauthAccount": account }).to_string(),
+            )
+            .expect("identity");
+        };
+        identity(Some("org-main"));
+        let expected = Identity {
+            email: "main@example.com".into(),
+            organization: None,
+            organization_id: Some("org-main".into()),
+        };
+        let fake = server(Ok(Renewed {
+            access_token: new.clone().into(),
+            refresh_token: None,
+            expires_in: 3600,
+        }));
+        let claim = FakeClaim {
+            path,
+            expected: new.clone(),
+            seen: Mutex::new(Vec::new()),
+        };
+        let mut login = MainLogin::default();
+        let used = use_reset_for_main(
+            &lock,
+            Some(&expected),
+            false,
+            &mut login,
+            (&claim, "grant-full", "req-1"),
+            &fake,
+            100,
+        );
+        assert_eq!(used, Ok(Ok(())));
+        assert_eq!(
+            *claim.seen.lock().expect("lock"),
+            vec![("org-main".to_owned(), "grant-full".to_owned())]
+        );
+        // Renewed as for a usage reading: logged once by the caller.
+        assert!(login.renewed_until.is_some());
+        assert_eq!(login.sign_in.state, SignInState::SignedIn);
+
+        // Without the organization's id, or with a grant id of another form, nothing is sent.
+        for (org, grant) in [(None, "grant-full"), (Some("org-main"), "Grant Full")] {
+            identity(org);
+            let expected = Identity {
+                organization_id: org.map(str::to_owned),
+                ..expected.clone()
+            };
+            let refused = use_reset_for_main(
+                &lock,
+                Some(&expected),
+                false,
+                &mut login,
+                (&claim, grant, "req-2"),
+                &fake,
+                100,
+            )
+            .expect("the sign-in is main's")
+            .expect_err("refused");
+            assert!(!refused.message.is_empty());
+        }
+        assert_eq!(claim.seen.lock().expect("lock").len(), 1);
+
+        // Signed in as someone else: the sign-in's error, nothing sent.
+        identity(Some("org-main"));
+        let other = Identity {
+            email: "other@example.com".into(),
+            ..expected.clone()
+        };
+        assert_eq!(
+            use_reset_for_main(
+                &lock,
+                Some(&other),
+                false,
+                &mut login,
+                (&claim, "grant-full", "req-3"),
+                &fake,
+                100,
+            ),
+            Err(UsageError::IdentityChanged)
+        );
+        assert_eq!(claim.seen.lock().expect("lock").len(), 1);
     }
 
     #[cfg(windows)]

@@ -8,8 +8,16 @@ import { watch } from 'vue';
 
 const open = defineModel<boolean>('open', { required: true });
 const props = withDefaults(
-  defineProps<{ title: string; description?: string; stacked?: boolean; escapeOnly?: boolean; blocking?: boolean }>(),
-  { description: undefined, stacked: false, escapeOnly: false, blocking: false },
+  defineProps<{
+    title: string;
+    description?: string;
+    stacked?: boolean;
+    escapeOnly?: boolean;
+    blocking?: boolean;
+    /** Where focus goes as it closes, in place of whatever opened it, when this gives an element. */
+    returnTo?: () => HTMLElement | null;
+  }>(),
+  { description: undefined, stacked: false, escapeOnly: false, blocking: false, returnTo: undefined },
 );
 
 /**
@@ -26,9 +34,10 @@ watch(
 );
 
 function returnFocus(e: Event): void {
-  if (opener?.isConnected) {
+  const to = props.returnTo?.() ?? (opener?.isConnected ? opener : null);
+  if (to) {
     e.preventDefault();
-    opener.focus();
+    to.focus();
   }
   opener = null;
 }

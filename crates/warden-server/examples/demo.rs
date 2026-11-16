@@ -9,26 +9,46 @@
 //! The stand-in endpoint answers a token's request with `<usage-dir>/<token>.json` (as Anthropic's body, its limit
 //! resets block only when the request asks for it), or 401 when there is no such file; the stand-in for ChatGPT's
 //! backend answers a Codex account's banked resets with `<usage-dir>/<token>.resets.json` (as the backend's body), or
-//! none. Nothing leaves this computer, and no program is started: the CLIs on the demo's PATH (the home's `bin`) are
-//! stand-ins the driver writes, and the sign-in only prints.
+//! none. Using a limit reset in the app answers success after about a second (Claude's claim and Codex's redeem alike),
+//! and the stand-ins remember it until the demo stops: a used reset no longer comes back in their answers, and starting
+//! the demo again brings it back. Nothing leaves this computer, and no program is started: the CLIs on the demo's PATH
+//! (the home's `bin`) are stand-ins the driver writes, and the sign-in only prints.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use warden_core::claude::UsageEndpoint;
 use warden_core::detect::Env;
 use warden_core::secret::Secret;
 use warden_core::time::now_ms;
 use warden_server::{Config, start};
 
-/// Stands in for Anthropic's usage endpoint: the answer for each token is a file the demo driver writes.
-struct DemoUsageEndpoint {
-    dir: PathBuf,
+/// How long the stand-ins take to answer a use of a reset, so the app's busy state shows.
+const USE_TAKES: Duration = Duration::from_millis(1000);
+
+/// The answer file's name for a token: its plain characters only.
+fn file_name(token: &Secret) -> String {
+    token
+        .expose()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect()
 }
 
-/// Stands in for ChatGPT's backend: a Codex account's banked resets are a file the demo driver writes.
+/// Stands in for Anthropic's usage endpoint: the answer for each token is a file the demo driver writes. Each claimed
+/// limit reset is remembered per token and grant, and taken off that grant's resets left in later answers.
+struct DemoUsageEndpoint {
+    dir: PathBuf,
+    claimed: Mutex<HashMap<(String, String), u64>>,
+}
+
+/// Stands in for ChatGPT's backend: a Codex account's banked resets are a file the demo driver writes. Each redeemed
+/// credit is remembered per token and shows as redeemed in later answers.
 struct DemoResetsEndpoint {
     dir: PathBuf,
+    redeemed: Mutex<Vec<(String, String)>>,
 }
 
 impl warden_core::codex_resets::ResetsEndpoint for DemoResetsEndpoint {
@@ -37,14 +57,45 @@ impl warden_core::codex_resets::ResetsEndpoint for DemoResetsEndpoint {
         token: &Secret,
         _account_id: &str,
     ) -> Result<Vec<warden_core::codex_resets::Reset>, String> {
-        let name: String = token
-            .expose()
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-            .collect();
+        let name = file_name(token);
         let body = std::fs::read_to_string(self.dir.join(format!("{name}.resets.json")))
             .unwrap_or_else(|_| r#"{"credits": []}"#.to_owned());
+        // Redeemed in this run: no longer available.
+        let redeemed = self.redeemed.lock().expect("lock").clone();
+        let body = match serde_json::from_str::<serde_json::Value>(&body) {
+            Ok(mut answer) => {
+                if let Some(credits) = answer["credits"].as_array_mut() {
+                    for credit in credits {
+                        let id = credit["id"].as_str().unwrap_or_default().to_owned();
+                        if redeemed.contains(&(name.clone(), id)) {
+                            credit["status"] = "redeemed".into();
+                        }
+                    }
+                }
+                answer.to_string()
+            }
+            Err(_) => body,
+        };
         warden_core::codex_resets::read_response(200, body.as_bytes())
+    }
+
+    fn redeem(
+        &self,
+        token: &Secret,
+        _account_id: &str,
+        credit_id: &str,
+        request_id: &str,
+    ) -> Result<(), warden_core::codex_resets::UseRefused> {
+        warden_core::codex_resets::check_redeem_ids(credit_id, request_id)?;
+        std::thread::sleep(USE_TAKES);
+        self.redeemed
+            .lock()
+            .expect("lock")
+            .push((file_name(token), credit_id.to_owned()));
+        warden_core::codex_resets::read_redeem_response(
+            200,
+            r#"{"code": "reset", "windows_reset": 2}"#.as_bytes(),
+        )
     }
 }
 
@@ -72,25 +123,56 @@ impl UsageEndpoint for DemoUsageEndpoint {
         token: &Secret,
         resets: bool,
     ) -> Result<warden_core::model::Usage, warden_core::model::UsageError> {
-        let name: String = token
-            .expose()
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-            .collect();
+        let name = file_name(token);
         match std::fs::read_to_string(self.dir.join(format!("{name}.json"))) {
             Ok(body) => {
-                // As the endpoint: the limit resets block only when the request asks for it.
+                // As the endpoint: the limit resets block only when the request asks for it, each grant's resets
+                // left less those claimed in this run.
+                let claimed = self.claimed.lock().expect("lock").clone();
                 let body = match serde_json::from_str::<serde_json::Value>(&body) {
                     Ok(serde_json::Value::Object(mut answer)) if !resets => {
                         answer.remove("cedar_ember");
                         serde_json::Value::Object(answer).to_string()
                     }
-                    _ => body,
+                    Ok(mut answer) => {
+                        if let Some(grants) = answer["cedar_ember"]["grants"].as_array_mut() {
+                            for grant in grants {
+                                let id = grant["id"].as_str().unwrap_or_default().to_owned();
+                                let used = claimed.get(&(name.clone(), id)).copied().unwrap_or(0);
+                                let left = grant["resets_left"].as_u64().unwrap_or(0);
+                                grant["resets_left"] = left.saturating_sub(used).into();
+                            }
+                        }
+                        answer.to_string()
+                    }
+                    Err(_) => body,
                 };
                 warden_core::claude::read_response(200, body.as_bytes())
             }
             Err(_) => warden_core::claude::read_response(401, std::io::empty()),
         }
+    }
+
+    fn use_reset(
+        &self,
+        token: &Secret,
+        organization_id: &str,
+        grant_id: &str,
+        request_id: &str,
+    ) -> Result<(), warden_core::codex_resets::UseRefused> {
+        warden_core::claude::check_claim_ids(organization_id, grant_id, request_id)?;
+        std::thread::sleep(USE_TAKES);
+        *self
+            .claimed
+            .lock()
+            .expect("lock")
+            .entry((file_name(token), grant_id.to_owned()))
+            .or_default() += 1;
+        warden_core::claude::read_claim_response(
+            200,
+            r#"{"result": "reset", "reason": null, "resets_left": 0, "cleared": ["five_hour", "seven_day"]}"#
+                .as_bytes(),
+        )
     }
 }
 
@@ -158,9 +240,11 @@ fn main() -> ExitCode {
         },
         resets: Arc::new(DemoResetsEndpoint {
             dir: args.usage_dir.clone(),
+            redeemed: Mutex::new(Vec::new()),
         }),
         endpoint: Arc::new(DemoUsageEndpoint {
             dir: args.usage_dir,
+            claimed: Mutex::new(HashMap::new()),
         }),
         sign_in: Arc::new(|provider, _cli, folder, _done| {
             eprintln!(

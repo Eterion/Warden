@@ -101,6 +101,12 @@ struct IdentityBody {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UseResetBody {
+    reset_id: String,
+}
+
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SetupBody {
     accounts: Vec<AddBody>,
@@ -191,6 +197,10 @@ pub fn answer(app: &App, ui_dir: Option<&Path>, method: &str, url: &str, body: &
             }
             ("POST", ["accounts", id, "sign-in"]) => app.sign_in_account(id)?,
             ("POST", ["accounts", id, "hooks", "repair"]) => app.repair_account_hooks(id)?,
+            ("POST", ["accounts", id, "resets", "use"]) => {
+                let b: UseResetBody = self::body(body)?;
+                app.use_reset(id, &b.reset_id)?;
+            }
             ("POST", ["logs", "open"]) => app.open_log_folder()?,
             ("POST", ["update", "install"]) => app.install_update()?,
             _ => return Err(ApiError(404, "There is no such API.".into())),

@@ -303,7 +303,7 @@ pub struct AccountReading {
     /// previous identity, such as Codex's older session logs read again after a restart, and are never used.
     pub identity_since: Option<i64>,
     /// The account's limit resets as last read (a Claude account's from its usage answer, a Codex account's banked
-    /// resets), soonest to expire first; only their short names and expiries.
+    /// resets), soonest to expire first; only their ids (what using one needs), short names and expiries.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub resets: Vec<crate::codex_resets::Reset>,
 }
@@ -368,6 +368,20 @@ impl Readings {
                 IdentityUpdate::Changed { new }
             }
         }
+    }
+
+    /// Takes one reset with this id off the account's list, once it has been used: the first of them (a Claude grant
+    /// with several resets left has one entry, with the same id, for each). `None` when the account has none with it.
+    pub fn use_reset(
+        &mut self,
+        account: &str,
+        reset_id: &str,
+    ) -> Option<crate::codex_resets::Reset> {
+        let resets = &mut self.accounts.get_mut(account)?.resets;
+        let at = resets
+            .iter()
+            .position(|r| r.id.as_deref() == Some(reset_id))?;
+        Some(resets.remove(at))
     }
 
     /// Records a usage attempt: a reading replaces the last one; an error is kept beside the last good reading.
@@ -942,6 +956,7 @@ mod tests {
             resets,
         };
         let one = vec![Reset {
+            id: Some("grant-1".into()),
             title: Some("Full reset".into()),
             expires_at: Some(5),
         }];
@@ -962,5 +977,34 @@ mod tests {
         // An empty list (none left, or not eligible) replaces it.
         r.apply_usage("a", Ok(usage(3, Some(Vec::new()))));
         assert!(r.accounts["a"].resets.is_empty());
+    }
+
+    #[test]
+    fn a_used_reset_leaves_the_list_once_and_old_readings_load_without_ids() {
+        use crate::codex_resets::Reset;
+        let reset = |id: &str, at: i64| Reset {
+            id: Some(id.into()),
+            title: Some("Full reset".into()),
+            expires_at: Some(at),
+        };
+        let mut r = Readings::default();
+        r.accounts.entry("a".into()).or_default().resets =
+            vec![reset("full", 1), reset("full", 1), reset("session", 2)];
+        assert_eq!(r.use_reset("a", "full"), Some(reset("full", 1)));
+        assert_eq!(
+            r.accounts["a"].resets,
+            vec![reset("full", 1), reset("session", 2)]
+        );
+        assert_eq!(r.use_reset("a", "other"), None);
+        assert_eq!(r.use_reset("b", "full"), None);
+        assert_eq!(r.accounts["a"].resets.len(), 2);
+        // Saved before ids were kept: they load without one.
+        let old: Readings = serde_json::from_str(
+            r#"{"accounts": {"a": {"resets": [{"title": "Full reset", "expiresAt": 5}]}}}"#,
+        )
+        .expect("loads");
+        assert_eq!(old.accounts["a"].resets[0].id, None);
+        let saved = serde_json::to_value(&r).expect("json");
+        assert_eq!(saved["accounts"]["a"]["resets"][0]["id"], "full");
     }
 }

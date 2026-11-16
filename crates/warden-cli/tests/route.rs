@@ -193,7 +193,7 @@ fn tells_each_session_once_and_stays_silent_while_nothing_changes() {
         "{t}"
     );
     assert!(
-        t.contains("\nRun a delegated command in the background and read its result when it finishes; a long run in the foreground is cut off.\n- Second (Warden's pick): WARDEN_PARENT_SESSION="),
+        t.contains("\nRun a delegated command in the background and read its result when it finishes; a long run in the foreground is cut off.\nAnything you start that runs Claude or Codex for you (a review script, say) is delegated work too: run it with the same variables as that account's command above.\n- Second (Warden's pick): WARDEN_PARENT_SESSION="),
         "{t}"
     );
     assert!(

@@ -268,6 +268,10 @@ fn each_switched_on_account_is_listed_with_why_it_is_skipped() {
     assert!(!text.contains("- off"), "{text}");
     // A listed command comes with the sentence about running it in the background, once.
     assert_eq!(text.matches(BACKGROUND_RUNS).count(), 1, "{text}");
+    assert!(
+        text.contains(&format!("{BACKGROUND_RUNS}\n{STARTED_FOR_YOU}\n")),
+        "{text}"
+    );
     // Only accounts skipped for their limits keep a command: no pick, and still the sentence.
     for id in ["second", "third"] {
         s.accounts.retain(|a| a.id != id);
@@ -275,7 +279,7 @@ fn each_switched_on_account_is_listed_with_why_it_is_skipped() {
     let text = guidance(&s, &r, Some(MAIN_ID), Bash, None, NOW).text;
     assert!(
         text.starts_with(&format!(
-            "Warden: no other account can take delegated work now, so work in this session. If the user names an account, run it there.\n{BACKGROUND_RUNS}\n- near (skipped: near its 5-hour limit): CLAUDE_CONFIG_DIR="
+            "Warden: no other account can take delegated work now, so work in this session. If the user names an account, run it there.\n{BACKGROUND_RUNS}\n{STARTED_FOR_YOU}\n- near (skipped: near its 5-hour limit): CLAUDE_CONFIG_DIR="
         )),
         "{text}"
     );
@@ -291,6 +295,7 @@ fn each_switched_on_account_is_listed_with_why_it_is_skipped() {
         "{text}"
     );
     assert!(!text.contains(BACKGROUND_RUNS), "{text}");
+    assert!(!text.contains(STARTED_FOR_YOU), "{text}");
 }
 #[test]
 fn main_and_other_five_hour_limits_hand_off_at_ninety() {
@@ -461,7 +466,7 @@ fn advice_is_only_for_main_and_changes_only_with_the_decision_or_command() {
     let (s, mut r) = setup();
     let g = guidance(&s, &r, Some(MAIN_ID), Bash, Some("session-1"), NOW);
     assert!(g.text.starts_with(
-        "Warden: work in this session. If the user asks to delegate, Warden's pick is second. The user can always choose: work here, or run on whichever account they name.\nRun a delegated command in the background and read its result when it finishes; a long run in the foreground is cut off.\n- second (Warden's pick): WARDEN_PARENT_SESSION='session-1' CLAUDE_CONFIG_DIR="
+        "Warden: work in this session. If the user asks to delegate, Warden's pick is second. The user can always choose: work here, or run on whichever account they name.\nRun a delegated command in the background and read its result when it finishes; a long run in the foreground is cut off.\nAnything you start that runs Claude or Codex for you (a review script, say) is delegated work too: run it with the same variables as that account's command above.\n- second (Warden's pick): WARDEN_PARENT_SESSION='session-1' CLAUDE_CONFIG_DIR="
     ), "{}", g.text);
     assert!(
         g.text

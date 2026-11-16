@@ -370,6 +370,9 @@ pub fn command(account: &AccountConfig, shell: Shell, parent: Option<&str>) -> S
 /// Told to main whenever its advice lists a command.
 pub const BACKGROUND_RUNS: &str = "Run a delegated command in the background and read its result when it finishes; a long run in the foreground is cut off.";
 
+/// Told with it: a tool that starts a CLI (a review script) runs on a Warden account too, never on a CLI's default folder.
+pub const STARTED_FOR_YOU: &str = "Anything you start that runs Claude or Codex for you (a review script, say) is delegated work too: run it with the same variables as that account's command above.";
+
 pub fn guidance(
     settings: &Settings,
     readings: &Readings,
@@ -433,6 +436,8 @@ pub fn guidance(
     if any_command {
         text.push('\n');
         text.push_str(BACKGROUND_RUNS);
+        text.push('\n');
+        text.push_str(STARTED_FOR_YOU);
     }
     text.push_str(&lines);
     // Percentages, reading age and reset time never cause repeated advice while the actual decision stays put: the

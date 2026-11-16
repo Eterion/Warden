@@ -194,12 +194,7 @@ function goTo(r: (typeof INDEX)[number]): void {
             <span class="text-14 text-tertiary">{{ subtitle }}</span>
           </div>
           <div class="flex shrink-0 items-center gap-2">
-            <WButton
-              v-if="!searching && section === 'accounts'"
-              variant="primary"
-              :icon="Plus"
-              @click="addOpen = true"
-            >
+            <WButton v-if="!searching && section === 'accounts'" variant="primary" :icon="Plus" @click="addOpen = true">
               Add account
             </WButton>
             <WIconButton label="Close settings" :icon="X" @click="open = false" />

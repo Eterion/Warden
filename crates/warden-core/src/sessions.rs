@@ -387,12 +387,12 @@ pub const MAX_PARENT_LINKS: usize = MAX_SESSIONS;
 pub const PARENT_LINK_MS: i64 = QUIET_GONE_MS;
 
 impl ParentLinks {
-    /// The main session that started this run, if known.
-    pub fn get(&self, provider: Provider, id: &str) -> Option<&str> {
+    /// The main session that started this run, if known and learned within [`PARENT_LINK_MS`].
+    pub fn get(&self, provider: Provider, id: &str, now: i64) -> Option<&str> {
         self.links
             .iter()
             .rev()
-            .find(|l| l.provider == provider && l.id == id)
+            .find(|l| l.provider == provider && l.id == id && now - l.at <= PARENT_LINK_MS)
             .map(|l| l.parent.as_str())
     }
 
@@ -448,8 +448,8 @@ impl Sessions {
         &self.parents
     }
 
-    fn known_parent(&self, provider: Provider, id: &str) -> Option<String> {
-        self.parents.get(provider, id).map(str::to_owned)
+    fn known_parent(&self, provider: Provider, id: &str, now: i64) -> Option<String> {
+        self.parents.get(provider, id, now).map(str::to_owned)
     }
 
     pub fn get(&self, provider: Provider, id: &str) -> Option<&Session> {
@@ -595,7 +595,7 @@ impl Sessions {
                     .get(&(provider, event.session_id.clone()))
                     .cloned();
                 let folder_place = place();
-                let parent_id = self.known_parent(provider, &event.session_id);
+                let parent_id = self.known_parent(provider, &event.session_id, now);
                 self.list.push(Session {
                     id: event.session_id.clone(),
                     parent_id,
@@ -799,7 +799,7 @@ impl Sessions {
             }
             self.make_room();
             let title = self.names.get(&(provider, id.clone())).cloned();
-            let parent_id = self.known_parent(provider, &id);
+            let parent_id = self.known_parent(provider, &id, now);
             self.list.push(Session {
                 parent_id,
                 id,
@@ -1023,8 +1023,12 @@ mod parent_tests {
         let saved: ParentLinks =
             serde_json::from_str(&serde_json::to_string(before.parent_links()).expect("json"))
                 .expect("links");
-        assert_eq!(saved.get(Provider::Codex, "child"), Some("parent"));
-        assert_eq!(saved.get(Provider::Claude, "child"), None, "per provider");
+        assert_eq!(saved.get(Provider::Codex, "child", 1), Some("parent"));
+        assert_eq!(
+            saved.get(Provider::Claude, "child", 1),
+            None,
+            "per provider"
+        );
 
         // After the restart: both come back from the CLIs' session lists, the run under its main session at once.
         let mut after = Sessions::default();
@@ -1060,17 +1064,42 @@ mod parent_tests {
             2,
         );
         assert_eq!(parent_of(&hooked, "child", 3).as_deref(), Some("parent"));
+        // A link older than a day is not used, even while Warden keeps running (no restart to prune it).
+        let mut running = Sessions::default();
+        running.restore_parents(saved.clone(), 2);
+        let late = 1 + PARENT_LINK_MS + 1;
+        running.add_listed(
+            Provider::Claude,
+            "main",
+            vec![("parent".into(), late, Place::default())],
+            late,
+        );
+        running.add_listed(
+            Provider::Codex,
+            "a2",
+            vec![("child".into(), late, Place::default())],
+            late,
+        );
+        assert_eq!(parent_of(&running, "child", late), None);
         // Old links, and links that are not session ids, are forgotten.
         let mut stale = Sessions::default();
         stale.restore_parents(saved, 1 + PARENT_LINK_MS + 1);
-        assert_eq!(stale.parent_links().get(Provider::Codex, "child"), None);
+        assert_eq!(
+            stale
+                .parent_links()
+                .get(Provider::Codex, "child", 1 + PARENT_LINK_MS + 1),
+            None
+        );
         let bad: ParentLinks = serde_json::from_str(
             r#"{"links":[{"provider":"codex","id":"child","parent":"bad id","at":5}]}"#,
         )
         .expect("links");
         let mut cleaned = Sessions::default();
         cleaned.restore_parents(bad, 5);
-        assert_eq!(cleaned.parent_links().get(Provider::Codex, "child"), None);
+        assert_eq!(
+            cleaned.parent_links().get(Provider::Codex, "child", 5),
+            None
+        );
     }
 
     #[test]
@@ -1081,18 +1110,22 @@ mod parent_tests {
         }
         assert_eq!(links.links.len(), MAX_PARENT_LINKS);
         assert_eq!(
-            links.get(Provider::Codex, "run-0"),
+            links.get(Provider::Codex, "run-0", 10),
             None,
             "the oldest went first"
         );
         assert_eq!(
-            links.get(Provider::Codex, &format!("run-{}", MAX_PARENT_LINKS + 4)),
+            links.get(
+                Provider::Codex,
+                &format!("run-{}", MAX_PARENT_LINKS + 4),
+                10
+            ),
             Some("parent")
         );
         // Learning a run's parent again replaces its link rather than adding one.
         links.remember(Provider::Codex, "run-200", "other", 11);
         assert_eq!(links.links.len(), MAX_PARENT_LINKS);
-        assert_eq!(links.get(Provider::Codex, "run-200"), Some("other"));
+        assert_eq!(links.get(Provider::Codex, "run-200", 11), Some("other"));
     }
 
     #[test]

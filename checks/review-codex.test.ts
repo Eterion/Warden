@@ -5,10 +5,16 @@ import { withoutAppAliases } from './review-codex.ts';
 describe('review-codex', () => {
   it('hides app execution aliases from Codex, and nothing else', () => {
     const env = withoutAppAliases({
-      Path: '%SystemRoot%\\System32;%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps;%ProgramFiles%\\tools',
+      Path: [
+        '%SystemRoot%\\System32',
+        '%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps\\Microsoft.PowerShell_8wekyb3d8bbwe',
+        '%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps',
+        '%ProgramFiles%\\tools',
+        '%ProgramFiles%\\MyWindowsAppsTool',
+      ].join(';'),
       OTHER: 'x',
     });
-    assert.equal(env.Path, '%SystemRoot%\\System32;%ProgramFiles%\\tools');
+    assert.equal(env.Path, '%SystemRoot%\\System32;%ProgramFiles%\\tools;%ProgramFiles%\\MyWindowsAppsTool');
     assert.equal(env.OTHER, 'x');
   });
 });

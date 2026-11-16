@@ -21,16 +21,17 @@ function arg(name: string): string | undefined {
 }
 
 /**
- * The environment without the folders of Windows app execution aliases (`...\WindowsApps`) on PATH. Codex's
- * read-only sandbox starts its shell with a restricted token, which cannot start an alias such as the Store's
- * pwsh.exe ("Access is denied"); without them on PATH, Codex falls back to a shell it can start.
+ * The environment without the folders of Windows app execution aliases on PATH: `...\WindowsApps` and every folder
+ * under it (a PowerShell session also has the Store PowerShell's own alias folder there). Codex's read-only sandbox
+ * starts its shell with a restricted token, which cannot start an alias such as the Store's pwsh.exe ("Access is
+ * denied", or "blocked by policy"); without them on PATH, Codex falls back to a shell it can start.
  */
 export function withoutAppAliases(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out = { ...env };
   for (const key of Object.keys(out).filter((k) => k.toLowerCase() === 'path')) {
     out[key] = (out[key] ?? '')
       .split(';')
-      .filter((dir) => !/[\\/]WindowsApps[\\/]?$/i.test(dir))
+      .filter((dir) => !/[\\/]WindowsApps([\\/]|$)/i.test(dir))
       .join(';');
   }
   return out;

@@ -1416,6 +1416,37 @@ fn the_reset_warning_is_checked_and_saved() {
     server.stop();
 }
 
+#[test]
+fn showing_quiet_sessions_is_checked_and_saved() {
+    let f = Fixture::new();
+    let server = f.start();
+    let addr = server.addr;
+    assert_eq!(state(addr)["settings"]["showQuietSessions"], true);
+    for bad in [json!("false"), json!(0), json!({}), json!(null)] {
+        let reply = call(
+            addr,
+            "PUT",
+            "/api/settings",
+            Some(&json!({"showQuietSessions": bad, "theme": "dark"}).to_string()),
+        );
+        assert_eq!(reply.status, 400, "{bad}");
+        assert_eq!(state(addr)["settings"]["showQuietSessions"], true);
+        assert_eq!(state(addr)["settings"]["theme"], "system");
+    }
+    let set = call(
+        addr,
+        "PUT",
+        "/api/settings",
+        Some(&json!({ "showQuietSessions": false }).to_string()),
+    );
+    assert_eq!(set.status, 200, "{}", set.body);
+    assert_eq!(set.json()["settings"]["showQuietSessions"], false);
+    server.stop();
+    let server = f.start();
+    assert_eq!(state(server.addr)["settings"]["showQuietSessions"], false);
+    server.stop();
+}
+
 /// What the stand-in endpoints were asked since `from`: per Claude token whether the request asked for the limit
 /// resets, and how many Codex resets requests were sent.
 fn asked_since(f: &Fixture, from: (usize, usize)) -> (Vec<(String, bool)>, usize) {

@@ -31,6 +31,7 @@ export function state(accounts: Account[]): State {
       keepInTray: false,
       workHours: null,
       resetWarningDays: 3,
+      showQuietSessions: true,
     },
     main: main ? { ...main, signIn: { state: 'signedIn', email: main.identity?.email ?? null } } : null,
     accounts: accounts.filter((a) => a.id !== 'main'),

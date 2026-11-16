@@ -39,6 +39,7 @@ describe('apply', () => {
         keepInTray: false,
         workHours: null,
         resetWarningDays: 3,
+        showQuietSessions: true,
       },
     };
     apply(next);

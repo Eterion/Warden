@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Session } from './api';
 import {
   BIN_MS,
+  isQuiet,
   nowLabel,
   runningFor,
   sessionName,
@@ -157,6 +158,14 @@ describe('the sessions tree', () => {
 });
 
 describe('sessions', () => {
+  it('calls ended and not-known sessions quiet, and no others', () => {
+    expect(
+      [s('d', 'done'), s('l', 'working', { source: 'list' }), s('w', 'working'), s('a', 'waiting'), s('i', 'idle')].map(
+        isQuiet,
+      ),
+    ).toEqual([true, true, false, false, false]);
+  });
+
   it('sorts waiting first and done last', () => {
     const sorted = sortSessions([
       s('d', 'done'),

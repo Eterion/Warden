@@ -92,6 +92,7 @@ export function normalState(now: number): State {
       keepInTray: false,
       workHours: null,
       resetWarningDays: 3,
+      showQuietSessions: true,
     },
     accounts: accounts.slice(1),
     main: { ...accounts[0]!, signIn: { state: 'signedIn', email: accounts[0]!.identity?.email ?? null } },
@@ -369,6 +370,20 @@ export function treeState(now: number): State {
   byId.get('s5')!.parentId = 's1';
   byId.get('s4')!.parentId = 'a-session-that-has-ended';
   s.sessions = s.sessions.filter((x) => x.id !== 's6');
+  return s;
+}
+
+/**
+ * The sessions tree with ended and not-known sessions hidden: Codex's ended session started a session on Second, so
+ * it stays as its faded parent; the not-known one is left out.
+ */
+export function quietHiddenState(now: number): State {
+  const s = normalState(now);
+  s.settings.showQuietSessions = false;
+  const byId = new Map(s.sessions.map((x) => [x.id, x]));
+  byId.get('s3')!.parentId = 's1';
+  byId.get('s5')!.parentId = 's1';
+  byId.get('s4')!.parentId = 's6';
   return s;
 }
 

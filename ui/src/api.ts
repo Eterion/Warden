@@ -94,6 +94,8 @@ export interface Settings {
   workHours: WorkHours | null;
   /** How many days before a limit reset expires it shows as a warning: 1 to 14. */
   resetWarningDays: number;
+  /** Whether the Overview's sessions table shows ended and not-known sessions. Set only by its checkbox there. */
+  showQuietSessions: boolean;
 }
 
 /** One window on each work day, in local time: ISO weekdays (1 = Monday), minutes after midnight in steps of 30. */

@@ -22,6 +22,7 @@ import {
   hooksState,
   normalState,
   problemsState,
+  quietHiddenState,
   resetsState,
   setupState,
   treeState,
@@ -47,6 +48,7 @@ type Fixture =
   | 'setupOtherAccount'
   | 'problems'
   | 'tree'
+  | 'quietHidden'
   | 'healthy'
   | 'resets'
   | 'hooks'
@@ -204,6 +206,14 @@ export const PAGES: {
     fixture: 'tree',
     ready: '[aria-labelledby=sessions-heading] >> text=Started by',
     steps: [{ click: 'button[role=checkbox][aria-label$="of Codex"]' }, { waitFor: 'text=Show all' }],
+  },
+  {
+    // Ended and not-known sessions hidden (the checkbox off): Codex's ended session stays as the faded parent of a shown
+    // session on Second.
+    name: 'overview-sessions-quiet-hidden',
+    path: '/',
+    fixture: 'quietHidden',
+    ready: '[data-quiet-toggle] [role=checkbox][aria-checked=false]',
   },
   {
     name: 'overview-resets',
@@ -626,11 +636,13 @@ function fakeApi(current: () => Fixture): Plugin {
               ? desktopState(now)
               : fixture === 'tree'
                 ? treeState(now)
-                : fixture === 'healthy'
-                  ? healthyState(now)
-                  : fixture === 'resets'
-                    ? resetsState(now)
-                    : normalState(now);
+                : fixture === 'quietHidden'
+                  ? quietHiddenState(now)
+                  : fixture === 'healthy'
+                    ? healthyState(now)
+                    : fixture === 'resets'
+                      ? resetsState(now)
+                      : normalState(now);
         if (fixture === 'hooksOff') state.hooksOff = true;
         if (fixture === 'desktopDownloading') state.update = { version: '0.2.0', downloaded: 45, ready: false };
         if (fixture === 'desktopUpdate') state.update = { version: '0.2.0', downloaded: 100, ready: true };

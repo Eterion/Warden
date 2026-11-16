@@ -115,6 +115,16 @@ pub struct Settings {
     /// of the wrong type or out of range loads as [`DEFAULT_RESET_WARNING_DAYS`], never failing the file.
     #[serde(deserialize_with = "lenient_reset_warning_days")]
     pub reset_warning_days: u8,
+    /// Whether the Overview's sessions table shows ended and not-known sessions. Its only control is the checkbox in the
+    /// Sessions header; it is not in Settings › General. A value of the wrong type loads as `true`, never failing the
+    /// file.
+    #[serde(deserialize_with = "lenient_show_quiet_sessions")]
+    pub show_quiet_sessions: bool,
+}
+
+fn lenient_show_quiet_sessions<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(value.and_then(|v| v.as_bool()).unwrap_or(true))
 }
 
 /// The days before a limit reset expires that Settings offers for its warning.
@@ -200,6 +210,7 @@ impl Default for Settings {
             reserve: 25,
             work_hours: None,
             reset_warning_days: DEFAULT_RESET_WARNING_DAYS,
+            show_quiet_sessions: true,
         }
     }
 }
@@ -890,6 +901,33 @@ mod tests {
         };
         s.normalise();
         assert_eq!(s.reset_warning_days, 3);
+    }
+
+    #[test]
+    fn quiet_sessions_show_by_default_and_a_bad_value_never_breaks_the_file() {
+        assert!(Settings::default().show_quiet_sessions);
+        let s = Settings {
+            show_quiet_sessions: false,
+            ..Settings::default()
+        };
+        let json = serde_json::to_value(&s).expect("json");
+        assert_eq!(json["showQuietSessions"], false);
+        let back: Settings = serde_json::from_value(json).expect("back");
+        assert!(!back.show_quiet_sessions);
+        // Missing or of the wrong type: shown, and the rest of the file loads.
+        for raw in [
+            r#"{"version":2,"reserve":30}"#,
+            r#"{"version":2,"reserve":30,"showQuietSessions":null}"#,
+            r#"{"version":2,"reserve":30,"showQuietSessions":"false"}"#,
+            r#"{"version":2,"reserve":30,"showQuietSessions":0}"#,
+            r#"{"version":2,"reserve":30,"showQuietSessions":{}}"#,
+        ] {
+            let s: Settings = serde_json::from_str(raw).expect(raw);
+            assert_eq!((s.show_quiet_sessions, s.reserve), (true, 30), "{raw}");
+        }
+        let s: Settings =
+            serde_json::from_str(r#"{"version":2,"showQuietSessions":false}"#).expect("loads");
+        assert!(!s.show_quiet_sessions);
     }
 
     #[test]

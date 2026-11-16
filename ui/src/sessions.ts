@@ -13,6 +13,12 @@ export function shownState(s: Session): Shown {
   return s.source === 'list' ? 'unknown' : s.state;
 }
 
+/** Ended, or its state not known (seen only in a CLI's list): the sessions the table shows faded, and can hide. */
+export function isQuiet(s: Session): boolean {
+  const shown = shownState(s);
+  return shown === 'done' || shown === 'unknown';
+}
+
 export const STATE_LABEL: Record<Shown, string> = {
   working: 'Working',
   waiting: 'Waiting for you',

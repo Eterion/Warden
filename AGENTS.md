@@ -171,7 +171,7 @@ The app itself is the design. `ui/src/styles/tokens.css` and the shared componen
 - Account icon badges: a crown on main; no other badge.
 - Work sent to the other accounts is "delegated work" everywhere.
 - A session's name is plain text: its own title, else its branch in words, else its folder. No work-item tags or numbers taken out of it.
-- The sessions table is a tree: each delegated session sits under the main session that started it, indented with a thin connector, always expanded; waiting rows come first among siblings; a session whose parent is unknown or gone stays at the top level; while accounts are checked, the ancestors of their sessions show faded in their places. An ended or not-known session's whole row shows faded, as a faded parent does (text tertiary, icons muted, no amber, the provider mark in its own colour).
+- The sessions table is a tree: each delegated session sits under the main session that started it, indented with a thin connector, always expanded; waiting rows come first among siblings; a session whose parent is unknown or gone stays at the top level; while accounts are checked, the ancestors of their sessions show faded in their places. An ended or not-known session's whole row shows faded, as a faded parent does (text tertiary, icons muted, no amber, the provider mark in its own colour). Ended and not-known sessions can be hidden with the "Ended and not known" checkbox at the right end of the Sessions header, beside the counts (its label with their count, shown while there is one), and the choice is remembered; a hidden one still shows as the faded parent of a shown session.
 
 **States and icons**
 

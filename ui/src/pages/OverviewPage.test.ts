@@ -1,7 +1,8 @@
-import { mount } from '@vue/test-utils';
-import { afterEach, describe, expect, it } from 'vitest';
+import { flushPromises, mount } from '@vue/test-utils';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { store } from '../store';
 import type { Session } from '../api';
+import { fakeServer } from '../test/api';
 import { NOW, account, state } from '../test/state';
 import OverviewPage from './OverviewPage.vue';
 
@@ -10,6 +11,7 @@ const HOUR = 3_600_000;
 afterEach(() => {
   store.state = null;
   store.connected = true;
+  vi.unstubAllGlobals();
 });
 
 describe('OverviewPage', () => {
@@ -566,6 +568,93 @@ describe('OverviewPage', () => {
     store.now = NOW;
     store.state = state([account({ id: 'main', label: 'Main' })]);
     expect(mount(OverviewPage).text()).toContain('No sessions right now');
+  });
+
+  describe('the ended and not-known checkbox', () => {
+    function quietState(show = true) {
+      store.now = NOW;
+      const st = state([account({ id: 'main', label: 'Main' }), account({ id: 'x', label: 'Second' })]);
+      st.settings = { ...st.settings, showQuietSessions: show };
+      st.sessions = [
+        session({ id: 'm1', accountId: 'main', state: 'done', name: 'Ended parent', endedAt: NOW - 60_000 }),
+        session({ id: 'k1', accountId: 'x', state: 'working', name: 'Child', parentId: 'm1' }),
+        session({ id: 'm2', accountId: 'main', state: 'idle', name: 'Listed', source: 'list' }),
+        session({ id: 'm3', accountId: 'main', state: 'idle', name: 'Idle' }),
+        session({ id: 'x2', accountId: 'x', state: 'done', name: 'Ended alone', endedAt: NOW - 60_000 }),
+      ];
+      return st;
+    }
+    const toggle = (page: ReturnType<typeof mount>) => page.find('[data-quiet-toggle]');
+    const box = (page: ReturnType<typeof mount>) => toggle(page).get('[role=checkbox]');
+    const names = (page: ReturnType<typeof mount>) => sessionRows(page).map((r) => r.findAll('[role=cell]')[1]!.text());
+
+    it('shows only while there is such a session, with how many after the account filter', async () => {
+      store.state = quietState();
+      const page = mount(OverviewPage);
+      expect(toggle(page).text().replace(/\s+/g, ' ')).toBe('Ended and not known 3');
+      expect(box(page).attributes('aria-checked')).toBe('true');
+      // A labelled checkbox at the right end, after the counts.
+      const right = page.get('#sessions-heading').element.parentElement!.lastElementChild!;
+      expect(right.firstElementChild!.getAttribute('aria-label')).toBe('Sessions shown by state');
+      expect(right.lastElementChild).toBe(toggle(page).element);
+      expect(toggle(page).get('label').attributes('for')).toBe(box(page).attributes('id'));
+      await page.get('button[role=checkbox][aria-label$="of Second"]').trigger('click');
+      expect(toggle(page).text().replace(/\s+/g, ' ')).toBe('Ended and not known 1');
+
+      const st = quietState();
+      st.sessions = st.sessions.filter((s) => s.state !== 'done' && s.source !== 'list');
+      store.state = st;
+      expect(toggle(mount(OverviewPage)).exists()).toBe(false);
+    });
+
+    it('hides ended and not-known rows while off, keeping a faded parent of a shown one, and the counts', () => {
+      store.state = quietState(false);
+      const page = mount(OverviewPage);
+      expect(box(page).attributes('aria-checked')).toBe('false');
+      expect(names(page)).toEqual([
+        'Idle',
+        'Ended parent. Shown only for the sessions under it',
+        'Child. Started by Ended parent',
+      ]);
+      expect(sessionRows(page).map((r) => r.classes().includes('icons-faded'))).toEqual([false, true, false]);
+      expect(page.get('[aria-label="Sessions shown by state"]').text().replace(/\s+/g, ' ')).toBe(
+        '1 working 0 waiting for you 1 idle',
+      );
+
+      store.state = quietState(true);
+      const shown = mount(OverviewPage);
+      expect(names(shown)).toHaveLength(5);
+      expect(names(shown)).toContain('Ended parent');
+      expect(shown.get('[aria-label="Sessions shown by state"]').text().replace(/\s+/g, ' ')).toBe(
+        '1 working 0 waiting for you 1 idle',
+      );
+    });
+
+    it('says when only hidden sessions are left, or the filtered message while accounts are checked', async () => {
+      const st = quietState(false);
+      st.sessions = st.sessions.filter((s) => s.state === 'done' || s.source === 'list');
+      store.state = st;
+      const page = mount(OverviewPage);
+      expect(sessionRows(page)).toHaveLength(1);
+      expect(page.text()).toContain('Only ended and not-known sessions, hidden');
+      expect(page.text()).not.toContain('No sessions right now');
+      await page.get('button[role=checkbox][aria-label$="of Second"]').trigger('click');
+      expect(page.text()).toContain('No sessions for the checked accounts');
+    });
+
+    it('saves the choice when pressed', async () => {
+      store.state = quietState();
+      const calls = fakeServer(() => ({
+        ...store.state!,
+        settings: { ...store.state!.settings, showQuietSessions: false },
+      }));
+      const page = mount(OverviewPage);
+      await box(page).trigger('click');
+      await flushPromises();
+      expect(calls).toEqual([{ method: 'PUT', path: '/api/settings', body: { showQuietSessions: false } }]);
+      expect(box(page).attributes('aria-checked')).toBe('false');
+      expect(names(page)).not.toContain('Ended alone');
+    });
   });
 
   it('filters by several accounts, unchecks one from its box, and Show all clears the rest', async () => {

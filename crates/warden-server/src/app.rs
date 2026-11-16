@@ -88,6 +88,15 @@ pub struct SettingsPatch {
     pub work_hours: Option<serde_json::Value>,
     /// How many days before a limit reset expires the Overview warns of it.
     pub reset_warning_days: Option<u8>,
+    /// Whether the Overview's sessions table shows ended and not-known sessions. `null` is refused, as any other
+    /// value that is not a boolean.
+    #[serde(default, deserialize_with = "strict_bool")]
+    pub show_quiet_sessions: Option<bool>,
+}
+
+/// A boolean that, when there, must be `true` or `false`; absent leaves the setting.
+fn strict_bool<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<bool>, D::Error> {
+    bool::deserialize(d).map(Some)
 }
 
 /// A field that is there, even as `null`, is `Some`: so `null` can clear a setting while absent leaves it.
@@ -255,6 +264,7 @@ pub struct SettingsView {
     keep_in_tray: bool,
     work_hours: Option<WorkHours>,
     reset_warning_days: u8,
+    show_quiet_sessions: bool,
 }
 
 /// Present only in the desktop app.
@@ -564,6 +574,7 @@ impl App {
                 keep_in_tray: s.keep_in_tray,
                 work_hours: s.work_hours.clone(),
                 reset_warning_days: s.reset_warning_days,
+                show_quiet_sessions: s.show_quiet_sessions,
             },
             main: s.main_account(&self.env).as_ref().map(|a| MainView {
                 account: self.account_view(&inner, a),
@@ -1632,6 +1643,9 @@ impl App {
         }
         if let Some(d) = patch.reset_warning_days {
             inner.settings.reset_warning_days = d;
+        }
+        if let Some(q) = patch.show_quiet_sessions {
+            inner.settings.show_quiet_sessions = q;
         }
         self.save_settings(&mut inner)?;
         drop(inner);

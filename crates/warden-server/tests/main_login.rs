@@ -20,7 +20,11 @@ fn app_with(f: &Fixture, dones: Arc<Mutex<Vec<Done>>>, log: warden_server::app::
     App::new(
         f.data.path().to_owned(),
         f.env(),
-        (f.endpoint.clone(), f.sign_in_server.clone()),
+        (
+            f.endpoint.clone(),
+            f.sign_in_server.clone(),
+            f.resets.clone(),
+        ),
         Arc::new(move |p, cli, folder, done| {
             sign_ins
                 .lock()

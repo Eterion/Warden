@@ -1,9 +1,12 @@
-//! Rule: outbound calls go only to Anthropic's usage and sign-in servers, and to GitHub for the installed app's
-//! updates (the release manifest and installer, and the asset hosts GitHub sends the download on to).
+//! Rule: outbound calls go only to Anthropic's usage and sign-in servers, ChatGPT's backend for Codex accounts' banked
+//! resets, and GitHub for the installed app's updates (the release manifest and installer, and the asset hosts GitHub
+//! sends the download on to).
 
 /// The usage endpoint's host.
 pub const USAGE_ENDPOINT_HOST: &str = "api.anthropic.com";
 pub const SIGN_IN_HOST: &str = "platform.claude.com";
+/// Where Codex accounts' banked resets are read.
+pub const RESETS_HOST: &str = "chatgpt.com";
 /// Where the installed app's updates come from.
 pub const UPDATE_HOSTS: &[&str] = &[
     "github.com",
@@ -11,16 +14,16 @@ pub const UPDATE_HOSTS: &[&str] = &[
     "release-assets.githubusercontent.com",
 ];
 
-/// Panics unless `allowed` holds exactly the usage and sign-in hosts and the update hosts, each once.
+/// Panics unless `allowed` holds exactly the usage, sign-in and resets hosts and the update hosts, each once.
 pub fn assert_only_known_hosts(allowed: &[&str]) {
-    let mut expected = vec![USAGE_ENDPOINT_HOST, SIGN_IN_HOST];
+    let mut expected = vec![USAGE_ENDPOINT_HOST, SIGN_IN_HOST, RESETS_HOST];
     expected.extend(UPDATE_HOSTS);
     expected.sort_unstable();
     let mut got = allowed.to_vec();
     got.sort_unstable();
     assert!(
         got == expected,
-        "rule broken: allowed outbound hosts are {allowed:?}, expected only the usage and sign-in servers and the update hosts {UPDATE_HOSTS:?}"
+        "rule broken: allowed outbound hosts are {allowed:?}, expected only the usage, sign-in and resets servers and the update hosts {UPDATE_HOSTS:?}"
     );
 }
 
@@ -55,7 +58,7 @@ mod tests {
     use super::*;
 
     fn known() -> Vec<&'static str> {
-        let mut all = vec![SIGN_IN_HOST];
+        let mut all = vec![SIGN_IN_HOST, RESETS_HOST];
         all.extend(UPDATE_HOSTS.iter().rev());
         all.push(USAGE_ENDPOINT_HOST);
         all
@@ -78,6 +81,29 @@ mod tests {
     #[should_panic(expected = "rule broken")]
     fn missing_sign_in_host_is_caught() {
         assert_only_known_hosts(&[USAGE_ENDPOINT_HOST]);
+    }
+
+    #[test]
+    #[should_panic(expected = "rule broken")]
+    fn missing_resets_host_is_caught() {
+        let hosts: Vec<&str> = known().into_iter().filter(|h| *h != RESETS_HOST).collect();
+        assert_only_known_hosts(&hosts);
+    }
+
+    #[test]
+    #[should_panic(expected = "rule broken")]
+    fn another_chatgpt_host_is_caught() {
+        let mut hosts = known();
+        hosts[1] = "api.chatgpt.com";
+        assert_only_known_hosts(&hosts);
+    }
+
+    #[test]
+    fn resets_request_passes() {
+        assert_request_allowed(
+            "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits",
+            &known(),
+        );
     }
 
     #[test]

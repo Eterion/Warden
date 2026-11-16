@@ -405,4 +405,41 @@ describe('OverviewPage', () => {
     expect(page.text()).not.toContain('Stop showing only');
     expect(sessionRows(page).map((r) => r.find('[role=cell]').attributes('aria-label'))).toEqual(['Working', 'Idle']);
   });
+
+  it('lists the limit resets of the accounts in use beside them, and nothing while there are none', () => {
+    store.now = NOW;
+    store.state = state([
+      account({ id: 'main', label: 'Main' }),
+      account({ id: 'c', label: 'Codex', provider: 'codex' }),
+    ]);
+    expect(mount(OverviewPage).find('[aria-labelledby=resets-heading]').exists()).toBe(false);
+
+    const DAY = 24 * HOUR;
+    store.state = state([
+      account({ id: 'main', label: 'Main' }),
+      account({
+        id: 'c',
+        label: 'Codex',
+        provider: 'codex',
+        resets: [
+          { title: 'Full reset (Weekly + 5 hr)', expiresAt: NOW + 9 * DAY },
+          { title: 'Expired', expiresAt: NOW - HOUR },
+        ],
+      }),
+      account({
+        id: 'p',
+        label: 'Personal',
+        provider: 'codex',
+        enabled: false,
+        resets: [{ title: 'Off', expiresAt: null }],
+      }),
+    ]);
+    const list = mount(OverviewPage).get('[aria-labelledby=resets-heading]');
+    expect(list.get('h2').text()).toBe('Limit resets');
+    const items = list.findAll('li');
+    expect(items).toHaveLength(1);
+    expect(items[0]!.text()).toContain('Codex');
+    expect(items[0]!.text()).toContain('Full reset (Weekly + 5 hr)');
+    expect(items[0]!.text()).toContain('Expires 18 Nov, 10:00');
+  });
 });

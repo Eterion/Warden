@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // The Overview: the title, the accounts in use with their limits (main's hand-off point marked on its weekly bar), the last 2 hours of sessions and the
 // "now" chip, then every account's sessions in one table, each delegated session under the main session that started
-// it. Checking accounts shows only their sessions.
+// it. Checking accounts shows only their sessions. Beside them (under them in a narrow window), the limit resets the
+// accounts can use, while there are any.
 import { Check } from 'lucide-vue-next';
 import { computed, ref } from 'vue';
 import type { Account, Session } from '../api';
@@ -17,7 +18,19 @@ import WTooltip from '../components/WTooltip.vue';
 import WButton from '../components/WButton.vue';
 import WTable from '../components/WTable.vue';
 import WTableRow from '../components/WTableRow.vue';
-import { IDLE_LOGIN, expectedSignIn, extraText, limitView, loginIdle, readingNote, signedInAs } from '../format';
+import WList from '../components/WList.vue';
+import WListItem from '../components/WListItem.vue';
+import {
+  IDLE_LOGIN,
+  expectedSignIn,
+  expiryText,
+  extraText,
+  limitView,
+  loginIdle,
+  readingNote,
+  resetRows,
+  signedInAs,
+} from '../format';
 import { go } from '../route';
 import {
   STATE_LABEL,
@@ -33,6 +46,8 @@ import {
 import { store, usedAccounts } from '../store';
 
 const accounts = computed(() => usedAccounts(store.state));
+
+const resets = computed(() => resetRows(accounts.value, store.now));
 
 /** The Extra usage column shows only while some account has spent some. */
 const showExtra = computed(() => accounts.value.some((a) => extraText(a.provider, a.usage) !== null));
@@ -121,254 +136,270 @@ function sessionAccount(s: Session): Account | undefined {
       Warden's core is not running. Start it, and this page fills in by itself.
     </p>
 
-    <template v-else-if="store.state">
-      <section aria-labelledby="accounts-heading" class="flex flex-col gap-3">
-        <div class="flex flex-col gap-0.5">
+    <div v-else-if="store.state" class="flex flex-wrap items-start gap-x-6 gap-y-4.5">
+      <div class="flex min-w-0 grow-999 basis-192 flex-col gap-4.5">
+        <section aria-labelledby="accounts-heading" class="flex flex-col gap-3">
+          <div class="flex flex-col gap-0.5">
+            <div class="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+              <h2 id="accounts-heading" class="text-16 font-semibold">Accounts</h2>
+              <div
+                v-if="accounts.length"
+                aria-label="Activity line"
+                class="ml-auto flex flex-wrap items-center gap-x-3.5 gap-y-1 text-12 text-secondary"
+              >
+                <span class="inline-flex items-center gap-1.5">
+                  <span aria-hidden="true" class="h-0 w-3.5 border-t-2 border-act-working"></span>Sessions working
+                </span>
+                <span class="inline-flex items-center gap-1.5">
+                  <span aria-hidden="true" class="size-1.75 rounded-full bg-attn-icon"></span>Waited for you
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="accounts.length === 0"
+            class="flex flex-col items-start gap-3 rounded-lg border border-divider-strong p-4"
+          >
+            <p class="text-14 text-secondary">No accounts yet.</p>
+            <WButton variant="primary" @click="go('settings/accounts/add')">Add account</WButton>
+          </div>
+
+          <WTable
+            v-else
+            on="panel"
+            aria-labelledby="accounts-heading"
+            :cols="`${showExtra ? 'grid-cols-overview' : 'grid-cols-overview-no-extra'} gap-x-4 gap-y-3`"
+            :class="showExtra ? 'min-w-overview' : 'min-w-overview-no-extra'"
+          >
+            <template #head>
+              <span role="columnheader"><span class="sr-only">Show only its sessions</span></span>
+              <span role="columnheader">Account</span>
+              <span role="columnheader">5-hour limit</span>
+              <span role="columnheader">Weekly limit</span>
+              <span v-if="showExtra" role="columnheader">Extra usage</span>
+              <span role="columnheader">Last 2 hours, then now</span>
+            </template>
+            <WTableRow
+              v-for="a in accounts"
+              :key="a.id"
+              :class="[
+                'group cursor-pointer py-2.5',
+                filter.includes(a.id)
+                  ? 'bg-selected-bg hov:bg-selected-hover press:bg-selected-press'
+                  : 'hov:bg-row-hover press:bg-row-press',
+              ]"
+              @click="toggle(a.id)"
+            >
+              <span role="cell" class="inline-flex items-center justify-center">
+                <button
+                  type="button"
+                  role="checkbox"
+                  :aria-checked="filter.includes(a.id)"
+                  :aria-label="`Show only the sessions of ${a.label}`"
+                  :class="[
+                    'inline-flex size-4 cursor-pointer items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator',
+                    filter.includes(a.id)
+                      ? 'bg-primary text-on-primary group-hov:bg-primary-hover group-press:bg-primary-press'
+                      : 'border-2 border-control group-hov:bg-chip-off group-press:bg-press',
+                  ]"
+                >
+                  <Check v-if="filter.includes(a.id)" class="size-3" :stroke-width="3" aria-hidden="true" />
+                </button>
+              </span>
+
+              <div role="cell" class="flex min-w-0 items-center gap-3">
+                <AccountIcon :account="a" />
+                <span class="flex min-w-0 flex-col">
+                  <span class="truncate font-semibold">{{ a.label }}</span>
+                  <!-- A changed sign-in takes the email line's place; the expected email is in its tooltip. -->
+                  <WTooltip
+                    v-if="row(a).signedIn"
+                    :text="expectedSignIn(a)"
+                    class="max-w-full min-w-0 text-left text-12 font-medium wrap-anywhere text-attn"
+                    @click.stop
+                    >{{ row(a).signedIn }}</WTooltip
+                  >
+                  <span v-else-if="a.identity" :class="['truncate text-12', muted(a)]" :title="a.identity.email">{{
+                    a.identity.email
+                  }}</span>
+                </span>
+              </div>
+
+              <div
+                v-for="(limit, k) in [row(a).five, row(a).week]"
+                :key="k"
+                role="cell"
+                class="flex min-w-0 flex-col gap-1.25"
+              >
+                <span v-if="k === 0 && row(a).note && !row(a).note!.idle" class="sr-only"
+                  >{{ [row(a).note!.problem, row(a).note!.age].filter(Boolean).join('. ') }}.</span
+                >
+                <span v-if="mark(a, k) !== undefined" class="sr-only">Hands off at {{ mark(a, k) }}%.</span>
+                <template v-if="limit">
+                  <span class="flex flex-wrap justify-between gap-x-2 text-12">
+                    <span class="font-semibold whitespace-nowrap tabular-nums">{{ limit.used }}</span>
+                    <span :class="['whitespace-nowrap', muted(a)]">{{ limit.reset }}</span>
+                  </span>
+                  <UsageBar :percent="limit.percent" :level="loginIdle(a) ? 'idle' : limit.level" :mark="mark(a, k)" />
+                </template>
+                <span v-else :class="['text-12', muted(a)]">
+                  {{ k === 0 && row(a).noFive ? 'No 5-hour limit' : 'Not read yet' }}
+                </span>
+                <!-- An idle login's age, in the 5-hour cell so it can take focus: its tooltip says why it is grey. -->
+                <WTooltip
+                  v-if="k === 0 && row(a).note?.idle"
+                  :text="IDLE_LOGIN"
+                  :class="['self-start text-left text-12', muted(a)]"
+                  @click.stop
+                  >{{ row(a).note!.age }}</WTooltip
+                >
+              </div>
+
+              <span v-if="showExtra" role="cell" class="text-12 text-secondary tabular-nums">{{ row(a).extra }}</span>
+
+              <div role="cell" class="flex min-w-0 items-center gap-4">
+                <ActivitySparkline :points="points.get(a.id) ?? []" :most="most" :name="a.label" />
+                <NowChip :tally="row(a).now" />
+              </div>
+
+              <!-- Under the limits, only when it matters: a problem reading usage, or an old reading. Shown across both
+                 limit columns; assistive technology hears it in the 5-hour cell, so the table keeps its columns. -->
+              <p
+                v-if="row(a).note && !row(a).note!.idle"
+                aria-hidden="true"
+                class="col-span-2 col-start-3 -mt-1.5 flex min-w-0 flex-wrap gap-x-2 text-12"
+              >
+                <span v-if="row(a).note!.problem" class="font-medium text-attn">{{ row(a).note!.problem }}</span>
+                <span v-if="row(a).note!.age" :class="muted(a)">{{ row(a).note!.age }}</span>
+              </p>
+            </WTableRow>
+          </WTable>
+        </section>
+
+        <section v-if="accounts.length" aria-labelledby="sessions-heading" class="flex flex-col gap-3">
           <div class="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-            <h2 id="accounts-heading" class="text-16 font-semibold">Accounts</h2>
+            <h2 id="sessions-heading" class="text-16 font-semibold">Sessions</h2>
+            <div class="flex flex-wrap items-baseline gap-1.5 text-13">
+              <RemovableChip
+                v-for="id in filter"
+                :key="id"
+                size="sm"
+                :label="`Stop showing only the sessions of ${byId.get(id)?.label}`"
+                @click="toggle(id)"
+              >
+                {{ byId.get(id)?.label }}
+              </RemovableChip>
+              <WButton v-if="filter.length" variant="link" @click="checked = []">Show all</WButton>
+            </div>
             <div
-              v-if="accounts.length"
-              aria-label="Activity line"
+              aria-label="Sessions shown by state"
               class="ml-auto flex flex-wrap items-center gap-x-3.5 gap-y-1 text-12 text-secondary"
             >
               <span class="inline-flex items-center gap-1.5">
-                <span aria-hidden="true" class="h-0 w-3.5 border-t-2 border-act-working"></span>Sessions working
+                <StateIcon state="working" size="sm" />
+                <strong class="font-semibold text-text tabular-nums">{{ shownTally.working }}</strong> working
               </span>
               <span class="inline-flex items-center gap-1.5">
-                <span aria-hidden="true" class="size-1.75 rounded-full bg-attn-icon"></span>Waited for you
+                <StateIcon state="waiting" size="sm" />
+                <strong class="font-semibold text-text tabular-nums">{{ shownTally.waiting }}</strong> waiting for you
+              </span>
+              <span class="inline-flex items-center gap-1.5">
+                <StateIcon state="idle" size="sm" />
+                <strong class="font-semibold text-text tabular-nums">{{ shownTally.idle }}</strong> idle
               </span>
             </div>
           </div>
-        </div>
 
-        <div
-          v-if="accounts.length === 0"
-          class="flex flex-col items-start gap-3 rounded-lg border border-divider-strong p-4"
-        >
-          <p class="text-14 text-secondary">No accounts yet.</p>
-          <WButton variant="primary" @click="go('settings/accounts/add')">Add account</WButton>
-        </div>
-
-        <WTable
-          v-else
-          on="panel"
-          aria-labelledby="accounts-heading"
-          :cols="`${showExtra ? 'grid-cols-overview' : 'grid-cols-overview-no-extra'} gap-x-4 gap-y-3`"
-          :class="showExtra ? 'min-w-overview' : 'min-w-overview-no-extra'"
-        >
-          <template #head>
-            <span role="columnheader"><span class="sr-only">Show only its sessions</span></span>
-            <span role="columnheader">Account</span>
-            <span role="columnheader">5-hour limit</span>
-            <span role="columnheader">Weekly limit</span>
-            <span v-if="showExtra" role="columnheader">Extra usage</span>
-            <span role="columnheader">Last 2 hours, then now</span>
-          </template>
-          <WTableRow
-            v-for="a in accounts"
-            :key="a.id"
-            :class="[
-              'group cursor-pointer py-2.5',
-              filter.includes(a.id)
-                ? 'bg-selected-bg hov:bg-selected-hover press:bg-selected-press'
-                : 'hov:bg-row-hover press:bg-row-press',
-            ]"
-            @click="toggle(a.id)"
-          >
-            <span role="cell" class="inline-flex items-center justify-center">
-              <button
-                type="button"
-                role="checkbox"
-                :aria-checked="filter.includes(a.id)"
-                :aria-label="`Show only the sessions of ${a.label}`"
-                :class="[
-                  'inline-flex size-4 cursor-pointer items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator',
-                  filter.includes(a.id)
-                    ? 'bg-primary text-on-primary group-hov:bg-primary-hover group-press:bg-primary-press'
-                    : 'border-2 border-control group-hov:bg-chip-off group-press:bg-press',
-                ]"
+          <WTable on="panel" aria-labelledby="sessions-heading" cols="grid-cols-sessions gap-3" class="min-w-sessions">
+            <template #head>
+              <span role="columnheader"><span class="sr-only">State</span></span>
+              <span role="columnheader">Session</span>
+              <span role="columnheader">Doing now</span>
+              <span role="columnheader">Project</span>
+              <span role="columnheader">Account</span>
+              <span role="columnheader">Subagents</span>
+              <span role="columnheader" class="text-right">Running for</span>
+            </template>
+            <WTableRow
+              v-for="{ session: s, depth, parent, rails, last } in rows"
+              :key="`${s.provider}:${s.id}`"
+              :class="['py-2.25 text-13', s.state === 'waiting' && s.source === 'hook' && 'bg-attn-bg']"
+            >
+              <span
+                role="cell"
+                :aria-label="STATE_LABEL[shownState(s)]"
+                :title="STATE_LABEL[shownState(s)]"
+                class="inline-flex items-center justify-center"
               >
-                <Check v-if="filter.includes(a.id)" class="size-3" :stroke-width="3" aria-hidden="true" />
-              </button>
-            </span>
-
-            <div role="cell" class="flex min-w-0 items-center gap-3">
-              <AccountIcon :account="a" />
-              <span class="flex min-w-0 flex-col">
-                <span class="truncate font-semibold">{{ a.label }}</span>
-                <!-- A changed sign-in takes the email line's place; the expected email is in its tooltip. -->
-                <WTooltip
-                  v-if="row(a).signedIn"
-                  :text="expectedSignIn(a)"
-                  class="max-w-full min-w-0 text-left text-12 font-medium wrap-anywhere text-attn"
-                  @click.stop
-                  >{{ row(a).signedIn }}</WTooltip
-                >
-                <span v-else-if="a.identity" :class="['truncate text-12', muted(a)]" :title="a.identity.email">{{
-                  a.identity.email
-                }}</span>
+                <StateIcon :state="shownState(s)" />
               </span>
-            </div>
-
-            <div
-              v-for="(limit, k) in [row(a).five, row(a).week]"
-              :key="k"
-              role="cell"
-              class="flex min-w-0 flex-col gap-1.25"
-            >
-              <span v-if="k === 0 && row(a).note && !row(a).note!.idle" class="sr-only"
-                >{{ [row(a).note!.problem, row(a).note!.age].filter(Boolean).join('. ') }}.</span
-              >
-              <span v-if="mark(a, k) !== undefined" class="sr-only">Hands off at {{ mark(a, k) }}%.</span>
-              <template v-if="limit">
-                <span class="flex flex-wrap justify-between gap-x-2 text-12">
-                  <span class="font-semibold whitespace-nowrap tabular-nums">{{ limit.used }}</span>
-                  <span :class="['whitespace-nowrap', muted(a)]">{{ limit.reset }}</span>
-                </span>
-                <UsageBar :percent="limit.percent" :level="loginIdle(a) ? 'idle' : limit.level" :mark="mark(a, k)" />
-              </template>
-              <span v-else :class="['text-12', muted(a)]">
-                {{ k === 0 && row(a).noFive ? 'No 5-hour limit' : 'Not read yet' }}
-              </span>
-              <!-- An idle login's age, in the 5-hour cell so it can take focus: its tooltip says why it is grey. -->
-              <WTooltip
-                v-if="k === 0 && row(a).note?.idle"
-                :text="IDLE_LOGIN"
-                :class="['self-start text-left text-12', muted(a)]"
-                @click.stop
-                >{{ row(a).note!.age }}</WTooltip
-              >
-            </div>
-
-            <span v-if="showExtra" role="cell" class="text-12 text-secondary tabular-nums">{{ row(a).extra }}</span>
-
-            <div role="cell" class="flex min-w-0 items-center gap-4">
-              <ActivitySparkline :points="points.get(a.id) ?? []" :most="most" :name="a.label" />
-              <NowChip :tally="row(a).now" />
-            </div>
-
-            <!-- Under the limits, only when it matters: a problem reading usage, or an old reading. Shown across both
-                 limit columns; assistive technology hears it in the 5-hour cell, so the table keeps its columns. -->
-            <p
-              v-if="row(a).note && !row(a).note!.idle"
-              aria-hidden="true"
-              class="col-span-2 col-start-3 -mt-1.5 flex min-w-0 flex-wrap gap-x-2 text-12"
-            >
-              <span v-if="row(a).note!.problem" class="font-medium text-attn">{{ row(a).note!.problem }}</span>
-              <span v-if="row(a).note!.age" :class="muted(a)">{{ row(a).note!.age }}</span>
-            </p>
-          </WTableRow>
-        </WTable>
-      </section>
-
-      <section v-if="accounts.length" aria-labelledby="sessions-heading" class="flex flex-col gap-3">
-        <div class="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-          <h2 id="sessions-heading" class="text-16 font-semibold">Sessions</h2>
-          <div class="flex flex-wrap items-baseline gap-1.5 text-13">
-            <RemovableChip
-              v-for="id in filter"
-              :key="id"
-              size="sm"
-              :label="`Stop showing only the sessions of ${byId.get(id)?.label}`"
-              @click="toggle(id)"
-            >
-              {{ byId.get(id)?.label }}
-            </RemovableChip>
-            <WButton v-if="filter.length" variant="link" @click="checked = []">Show all</WButton>
-          </div>
-          <div
-            aria-label="Sessions shown by state"
-            class="ml-auto flex flex-wrap items-center gap-x-3.5 gap-y-1 text-12 text-secondary"
-          >
-            <span class="inline-flex items-center gap-1.5">
-              <StateIcon state="working" size="sm" />
-              <strong class="font-semibold text-text tabular-nums">{{ shownTally.working }}</strong> working
-            </span>
-            <span class="inline-flex items-center gap-1.5">
-              <StateIcon state="waiting" size="sm" />
-              <strong class="font-semibold text-text tabular-nums">{{ shownTally.waiting }}</strong> waiting for you
-            </span>
-            <span class="inline-flex items-center gap-1.5">
-              <StateIcon state="idle" size="sm" />
-              <strong class="font-semibold text-text tabular-nums">{{ shownTally.idle }}</strong> idle
-            </span>
-          </div>
-        </div>
-
-        <WTable on="panel" aria-labelledby="sessions-heading" cols="grid-cols-sessions gap-3" class="min-w-sessions">
-          <template #head>
-            <span role="columnheader"><span class="sr-only">State</span></span>
-            <span role="columnheader">Session</span>
-            <span role="columnheader">Doing now</span>
-            <span role="columnheader">Project</span>
-            <span role="columnheader">Account</span>
-            <span role="columnheader">Subagents</span>
-            <span role="columnheader" class="text-right">Running for</span>
-          </template>
-          <WTableRow
-            v-for="{ session: s, depth, parent, rails, last } in rows"
-            :key="`${s.provider}:${s.id}`"
-            :class="['py-2.25 text-13', s.state === 'waiting' && s.source === 'hook' && 'bg-attn-bg']"
-          >
-            <span
-              role="cell"
-              :aria-label="STATE_LABEL[shownState(s)]"
-              :title="STATE_LABEL[shownState(s)]"
-              class="inline-flex items-center justify-center"
-            >
-              <StateIcon :state="shownState(s)" />
-            </span>
-            <!-- A delegated session sits under the main session that started it: one step in per level, with a thin
+              <!-- A delegated session sits under the main session that started it: one step in per level, with a thin
                  connector through the row padding to the rows above and below. The lines are decoration; screen
                  readers hear who started it. -->
-            <span role="cell" class="flex min-w-0 items-center self-stretch">
-              <span v-for="level in depth" :key="level" aria-hidden="true" class="relative w-6 shrink-0 self-stretch">
-                <span
-                  v-if="level < depth ? rails[level - 1] : !last"
-                  class="absolute -top-2.5 -bottom-2.5 left-2 border-l border-divider-strong"
-                ></span>
-                <span
-                  v-if="level === depth"
-                  class="absolute -top-2.5 bottom-1/2 left-2 w-3 rounded-bl-sm border-b border-l border-divider-strong"
-                ></span>
+              <span role="cell" class="flex min-w-0 items-center self-stretch">
+                <span v-for="level in depth" :key="level" aria-hidden="true" class="relative w-6 shrink-0 self-stretch">
+                  <span
+                    v-if="level < depth ? rails[level - 1] : !last"
+                    class="absolute -top-2.5 -bottom-2.5 left-2 border-l border-divider-strong"
+                  ></span>
+                  <span
+                    v-if="level === depth"
+                    class="absolute -top-2.5 bottom-1/2 left-2 w-3 rounded-bl-sm border-b border-l border-divider-strong"
+                  ></span>
+                </span>
+                <span class="min-w-0 font-medium break-words"
+                  >{{ sessionName(s)
+                  }}<span v-if="parent" class="sr-only">. Started by {{ sessionName(parent) }}</span></span
+                >
               </span>
-              <span class="min-w-0 font-medium break-words"
-                >{{ sessionName(s)
-                }}<span v-if="parent" class="sr-only">. Started by {{ sessionName(parent) }}</span></span
+              <span
+                role="cell"
+                :class="[
+                  'min-w-0 break-words',
+                  s.state === 'waiting'
+                    ? 'font-medium text-attn'
+                    : s.state === 'working'
+                      ? 'text-secondary'
+                      : 'text-tertiary',
+                ]"
+                >{{ s.doing }}</span
               >
+              <span role="cell" class="min-w-0 break-words text-secondary">{{ s.project ?? '' }}</span>
+              <span role="cell" class="flex min-w-0 items-center gap-1.5">
+                <ProviderMark :provider="s.provider" size="xs" />
+                <span v-if="s.signedInAs" class="min-w-0 font-medium break-words text-attn"
+                  >Signed in as {{ s.signedInAs }}</span
+                >
+                <span v-else class="truncate">{{ sessionAccount(s)?.label }}</span>
+              </span>
+              <span role="cell" class="inline-flex items-center gap-1.5 text-tertiary">
+                <SubagentsBadge v-if="s.subagents.length" :label="subagentsLabel(s)" :count="s.subagents.length" />
+              </span>
+              <span role="cell" class="text-right text-tertiary tabular-nums">{{ runningFor(s, store.now) }}</span>
+            </WTableRow>
+            <div v-if="rows.length === 0" role="row">
+              <span role="cell" class="block p-4 text-13 text-tertiary">
+                {{ filter.length ? 'No sessions for the checked accounts' : 'No sessions right now' }}
+              </span>
+            </div>
+          </WTable>
+        </section>
+      </div>
+
+      <section v-if="resets.length" aria-labelledby="resets-heading" class="flex min-w-0 grow basis-72 flex-col gap-3">
+        <h2 id="resets-heading" class="text-16 font-semibold">Limit resets</h2>
+        <WList>
+          <WListItem v-for="r in resets" :key="r.key">
+            <AccountIcon :account="r.account" />
+            <span class="flex min-w-0 flex-1 flex-col">
+              <span class="truncate font-semibold">{{ r.account.label }}</span>
+              <span class="text-12 text-secondary">{{ r.title }}</span>
+              <span class="text-12 text-tertiary">{{ expiryText(r.expiresAt, store.now) }}</span>
             </span>
-            <span
-              role="cell"
-              :class="[
-                'min-w-0 break-words',
-                s.state === 'waiting'
-                  ? 'font-medium text-attn'
-                  : s.state === 'working'
-                    ? 'text-secondary'
-                    : 'text-tertiary',
-              ]"
-              >{{ s.doing }}</span
-            >
-            <span role="cell" class="min-w-0 break-words text-secondary">{{ s.project ?? '' }}</span>
-            <span role="cell" class="flex min-w-0 items-center gap-1.5">
-              <ProviderMark :provider="s.provider" size="xs" />
-              <span v-if="s.signedInAs" class="min-w-0 font-medium break-words text-attn"
-                >Signed in as {{ s.signedInAs }}</span
-              >
-              <span v-else class="truncate">{{ sessionAccount(s)?.label }}</span>
-            </span>
-            <span role="cell" class="inline-flex items-center gap-1.5 text-tertiary">
-              <SubagentsBadge v-if="s.subagents.length" :label="subagentsLabel(s)" :count="s.subagents.length" />
-            </span>
-            <span role="cell" class="text-right text-tertiary tabular-nums">{{ runningFor(s, store.now) }}</span>
-          </WTableRow>
-          <div v-if="rows.length === 0" role="row">
-            <span role="cell" class="block p-4 text-13 text-tertiary">
-              {{ filter.length ? 'No sessions for the checked accounts' : 'No sessions right now' }}
-            </span>
-          </div>
-        </WTable>
+          </WListItem>
+        </WList>
       </section>
-    </template>
+    </div>
   </div>
 </template>

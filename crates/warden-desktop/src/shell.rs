@@ -502,6 +502,7 @@ fn start_app(
         ui_dir,
         env: args.environment(),
         endpoint: Arc::new(AnthropicUsageEndpoint::new()),
+        resets: Arc::new(warden_core::codex_resets::ChatGptResetsEndpoint::new()),
         sign_in_server: Arc::new(warden_core::mainlogin::AnthropicSignInServer::default()),
         sign_in: Arc::new(fallback::start_sign_in),
         log: Arc::new(|line| eprintln!("{} warden: {line}", now_ms())),

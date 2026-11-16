@@ -52,7 +52,11 @@ fn the_codex_apps_folder_is_left_alone() {
     let app = App::new(
         f.data.path().to_owned(),
         env,
-        (f.endpoint.clone(), f.sign_in_server.clone()),
+        (
+            f.endpoint.clone(),
+            f.sign_in_server.clone(),
+            f.resets.clone(),
+        ),
         Arc::new(|_, _, _, _| panic!("no sign-in")),
         Arc::new(|_| {}),
         Some(f.route_exe.clone()),
@@ -108,7 +112,7 @@ fn the_codex_apps_folder_is_left_alone() {
 }
 
 #[test]
-fn only_the_usage_endpoint_the_sign_in_server_and_github_releases_are_allowed() {
+fn only_the_usage_endpoint_the_sign_in_server_codex_resets_and_github_releases_are_allowed() {
     hosts::assert_only_known_hosts(ALLOWED_OUTBOUND_HOSTS);
     hosts::assert_request_allowed(
         "https://github.com/Eterion/Warden/releases/latest/download/latest.json",
@@ -119,6 +123,10 @@ fn only_the_usage_endpoint_the_sign_in_server_and_github_releases_are_allowed() 
         ALLOWED_OUTBOUND_HOSTS,
     );
     hosts::assert_request_allowed(warden_core::claude::USAGE_URL, ALLOWED_OUTBOUND_HOSTS);
+    hosts::assert_request_allowed(
+        warden_core::codex_resets::RESETS_URL,
+        ALLOWED_OUTBOUND_HOSTS,
+    );
 }
 
 /// The policy constant only; `server_listens_on_loopback_only` checks the address the server really listens on.
@@ -347,6 +355,7 @@ fn tokens_never_reach_logs_or_responses() {
             codex_token_count("2026-11-07T10:00:00Z", 12.0, 31.0)
         ),
     );
+    *f.resets.answer.lock().expect("lock") = Some((200, common::RESETS_ANSWER.to_owned()));
     let server = f.start();
     let addr = server.addr;
 
@@ -372,6 +381,9 @@ fn tokens_never_reach_logs_or_responses() {
     eventually("the Codex reading", || {
         call(addr, "GET", "/api/state", None).json()["accounts"][1]["usage"].is_object()
     });
+    eventually("the Codex account's resets", || {
+        call(addr, "GET", "/api/state", None).json()["accounts"][1]["resets"][0].is_object()
+    });
     answers.push(("GET /api/state", call(addr, "GET", "/api/state", None)));
     server.stop();
 
@@ -391,7 +403,27 @@ fn tokens_never_reach_logs_or_responses() {
             .any(|t| t == &claude_token),
         "the usage endpoint was called with the account's token"
     );
+    // The Codex access token was read, and sent only to ChatGPT's backend with its account id.
+    let resets_seen = f.resets.seen.lock().expect("lock").clone();
+    assert!(!resets_seen.is_empty());
+    assert!(
+        resets_seen
+            .iter()
+            .all(|(token, account)| token == &codex_token && account == "ws-1"),
+        "only the Codex account's own access token goes to the resets endpoint"
+    );
+    assert!(
+        !f.endpoint
+            .tokens_seen
+            .lock()
+            .expect("lock")
+            .contains(&codex_token)
+    );
     let state = answers.last().expect("state").1.json();
+    assert_eq!(
+        state["accounts"][1]["resets"][0]["title"],
+        "Full reset (Weekly + 5 hr)"
+    );
     assert_eq!(
         state["accounts"][0]["usage"]["fiveHour"]["usedPercent"],
         61.0
@@ -473,7 +505,11 @@ fn account_logins_are_never_written() {
     let app = App::new(
         f.data.path().to_owned(),
         f.env(),
-        (f.endpoint.clone(), f.sign_in_server.clone()),
+        (
+            f.endpoint.clone(),
+            f.sign_in_server.clone(),
+            f.resets.clone(),
+        ),
         Arc::new(|_, _, _, _| panic!("no sign-in")),
         Arc::new(|_| {}),
         Some(f.route_exe.clone()),

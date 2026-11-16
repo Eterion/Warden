@@ -8,6 +8,7 @@
 //! [`LogTail`] reads only what was appended since the last read, when the server's file watcher reports a change.
 
 use crate::model::{Identity, Limit, Usage};
+use crate::secret::Secret;
 use crate::time::parse_rfc3339_ms;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -38,6 +39,57 @@ struct LoginFile {
 #[derive(Deserialize)]
 struct LoginTokens {
     id_token: Option<Zeroizing<String>>,
+}
+
+#[derive(Deserialize)]
+struct AccessFile {
+    tokens: Option<AccessTokens>,
+}
+
+/// For the banked resets' request only: the access token and account id; the ID and refresh tokens are skipped.
+#[derive(Deserialize)]
+struct AccessTokens {
+    access_token: Option<Secret>,
+    account_id: Option<String>,
+}
+
+/// One reading of a Codex folder's login file: who it is signed in as, and the access the banked resets' request needs,
+/// both from the same bytes, so the token sent is the one of the identity checked.
+pub struct LoginWithAccess {
+    /// `None`: signed out, or signed in with an API key.
+    pub identity: Option<Identity>,
+    /// The access token and ChatGPT account id, for the one request that asks for the account's banked resets
+    /// (`codex_resets`); nothing else may use them, and they are not kept beyond that call. `None` without both.
+    pub access: Option<(Secret, String)>,
+}
+
+/// Reads the folder's login file once for its identity and the resets request's access.
+pub fn read_login_with_access(folder: &Path) -> io::Result<LoginWithAccess> {
+    let Some(bytes) = read_login_bytes(folder)? else {
+        return Ok(LoginWithAccess {
+            identity: None,
+            access: None,
+        });
+    };
+    let identity = identity_from(&bytes)?;
+    let access = serde_json::from_slice::<AccessFile>(&bytes)
+        .ok()
+        .and_then(|f| f.tokens)
+        .and_then(|t| {
+            let token = t.access_token.filter(|s| !s.is_empty())?;
+            let account = t.account_id.filter(|a| !a.trim().is_empty())?;
+            Some((token, account))
+        });
+    Ok(LoginWithAccess { identity, access })
+}
+
+/// The login file's bytes, wiped when dropped; `Ok(None)` when there is none.
+fn read_login_bytes(folder: &Path) -> io::Result<Option<Zeroizing<Vec<u8>>>> {
+    match fs::read(folder.join(LOGIN_FILE)) {
+        Ok(b) => Ok(Some(Zeroizing::new(b))),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 #[derive(Deserialize)]
@@ -72,22 +124,24 @@ struct OrgClaim {
 /// Who the Codex folder is signed in as, read from the ID token's claims in the login file. `Ok(None)`: signed out,
 /// or signed in with an API key (no identity to read).
 ///
-/// This is the only function that opens Codex's login file. The token's signature is not checked: the claims only
+/// With [`read_login_with_access`] (for the banked resets' one request), the only functions that open Codex's
+/// login file. The token's signature is not checked: the claims only
 /// tell accounts apart, they grant nothing.
 pub fn read_identity_from_login_file(folder: &Path) -> io::Result<Option<Identity>> {
-    let bytes = match fs::read(folder.join(LOGIN_FILE)) {
-        Ok(b) => Zeroizing::new(b),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e),
-    };
+    match read_login_bytes(folder)? {
+        Some(bytes) => identity_from(&bytes),
+        None => Ok(None),
+    }
+}
+
+fn identity_from(bytes: &[u8]) -> io::Result<Option<Identity>> {
     let invalid = |what: &str| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Codex login file: {what}"),
         )
     };
-    let login: LoginFile = serde_json::from_slice(&bytes).map_err(|_| invalid("unknown format"))?;
-    drop(bytes);
+    let login: LoginFile = serde_json::from_slice(bytes).map_err(|_| invalid("unknown format"))?;
     let Some(id_token) = login.tokens.and_then(|t| t.id_token) else {
         return Ok(None);
     };
@@ -473,6 +527,39 @@ pub(crate) mod tests {
         format!(
             r#"{{"OPENAI_API_KEY": null, "tokens": {{"id_token": "{jwt}", "access_token": "{access_token}", "refresh_token": "{access_token}-r", "account_id": "ws-1"}}, "last_refresh": "2026-11-01T00:00:00Z"}}"#
         )
+    }
+
+    #[test]
+    fn reads_the_identity_and_the_resets_access_from_one_reading() {
+        let dir = crate::testdir::Dir::new("codex-access");
+        let none = read_login_with_access(dir.path()).expect("no file");
+        assert!(none.identity.is_none() && none.access.is_none());
+        std::fs::write(
+            dir.path().join(LOGIN_FILE),
+            login_file(r#"{"email": "ann@example.com"}"#, "fixture-access"),
+        )
+        .expect("write");
+        let login = read_login_with_access(dir.path()).expect("read");
+        assert_eq!(
+            login.identity.map(|i| i.email).as_deref(),
+            Some("ann@example.com")
+        );
+        let (token, account) = login.access.expect("signed in");
+        assert_eq!(token.expose(), "fixture-access");
+        assert_eq!(account, "ws-1");
+        // The token never shows in a debug print.
+        assert!(!format!("{token:?}").contains("fixture-access"));
+        // An API-key login has no tokens: nothing to ask with.
+        std::fs::write(
+            dir.path().join(LOGIN_FILE),
+            r#"{"OPENAI_API_KEY": "sk-fixture", "tokens": null}"#,
+        )
+        .expect("write");
+        let api_key = read_login_with_access(dir.path()).expect("read");
+        assert!(api_key.identity.is_none() && api_key.access.is_none());
+        // A login file of another shape is an error, with no access either.
+        std::fs::write(dir.path().join(LOGIN_FILE), "[]").expect("write");
+        assert!(read_login_with_access(dir.path()).is_err());
     }
 
     #[test]

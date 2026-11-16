@@ -25,6 +25,7 @@ const WEEKDAY_TIME = new Intl.DateTimeFormat('en', {
   hourCycle: 'h23',
 });
 const DAY_MONTH = new Intl.DateTimeFormat('en', { day: 'numeric', month: 'short' });
+const DAY_MONTH_YEAR = new Intl.DateTimeFormat('en', { day: 'numeric', month: 'short', year: 'numeric' });
 
 /** "12:10" when it is today, "Fri 05:00" within the week, "14 Nov" further away. Local time, 24-hour. */
 export function resetTime(at: number, now: number): string {
@@ -36,6 +37,33 @@ export function resetTime(at: number, now: number): string {
   const parts = DAY_MONTH.formatToParts(t);
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '';
   return `${part('day')} ${part('month')}`;
+}
+
+/** "Expires 10 Dec, 23:00", with the year when it is not this year's. Local time, 24-hour. */
+export function expiryText(at: number | null, now: number): string {
+  if (at === null) return 'Does not expire';
+  const t = new Date(at);
+  const parts = DAY_MONTH_YEAR.formatToParts(t);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '';
+  const year = t.getFullYear() === new Date(now).getFullYear() ? '' : ` ${part('year')}`;
+  return `Expires ${part('day')} ${part('month')}${year}, ${HOUR_MINUTE.format(t)}`;
+}
+
+export interface ResetRow {
+  key: string;
+  account: Account;
+  title: string;
+  expiresAt: number | null;
+}
+
+/** Every reset the accounts can use, soonest to expire first (those that never expire last); one past its expiry is gone. */
+export function resetRows(accounts: Account[], now: number): ResetRow[] {
+  return accounts
+    .flatMap((a) =>
+      a.resets.map((r, i) => ({ key: `${a.id}:${i}`, account: a, title: r.title ?? 'Reset', expiresAt: r.expiresAt })),
+    )
+    .filter((r) => r.expiresAt === null || r.expiresAt > now)
+    .sort((x, y) => (x.expiresAt ?? Infinity) - (y.expiresAt ?? Infinity));
 }
 
 export type Level = 'low' | 'mid' | 'high';

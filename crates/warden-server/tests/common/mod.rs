@@ -102,11 +102,49 @@ impl warden_core::mainlogin::SignInServer for FakeSignInServer {
     }
 }
 
+/// Stands in for ChatGPT's backend: records what each resets request was sent and answers the backend's own body.
+#[derive(Default)]
+pub struct FakeResetsEndpoint {
+    pub seen: Mutex<Vec<(String, String)>>,
+    pub answer: Mutex<Option<(u16, String)>>,
+    /// Runs once while the next request is in flight.
+    #[allow(clippy::type_complexity)]
+    pub during: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+/// The backend's answer for one available reset.
+pub const RESETS_ANSWER: &str = r#"{"credits": [{"id": "credit-1", "reset_type": "codex_rate_limits", "status": "available", "granted_at": "2026-11-01T00:00:00Z", "expires_at": "2026-12-10T22:00:00Z", "title": "Full reset (Weekly + 5 hr)", "description": "Ready to redeem"}], "available_count": 1}"#;
+
+impl warden_core::codex_resets::ResetsEndpoint for FakeResetsEndpoint {
+    fn fetch(
+        &self,
+        token: &Secret,
+        account_id: &str,
+    ) -> Result<Vec<warden_core::codex_resets::Reset>, String> {
+        self.seen
+            .lock()
+            .expect("lock")
+            .push((token.expose().to_owned(), account_id.to_owned()));
+        let during = self.during.lock().expect("lock").take();
+        if let Some(during) = during {
+            during();
+        }
+        let (status, body) = self
+            .answer
+            .lock()
+            .expect("lock")
+            .clone()
+            .unwrap_or((200, r#"{"credits": [], "available_count": 0}"#.to_owned()));
+        warden_core::codex_resets::read_response(status, body.as_bytes())
+    }
+}
+
 pub struct Fixture {
     pub home: Dir,
     pub data: Dir,
     pub endpoint: Arc<FakeEndpoint>,
     pub sign_in_server: Arc<FakeSignInServer>,
+    pub resets: Arc<FakeResetsEndpoint>,
     pub log: Arc<Mutex<String>>,
     pub sign_ins: Arc<Mutex<Vec<(Provider, PathBuf, PathBuf)>>>,
     /// The `warden` binary the routing hook is written to run; it need not exist unless a test runs the hook.
@@ -133,6 +171,7 @@ impl Fixture {
             home,
             data,
             endpoint: Arc::new(FakeEndpoint::default()),
+            resets: Arc::new(FakeResetsEndpoint::default()),
             sign_in_server,
             log: Arc::new(Mutex::new(String::new())),
             sign_ins: Arc::new(Mutex::new(Vec::new())),
@@ -170,6 +209,7 @@ impl Fixture {
                 env: self.env(),
                 endpoint: self.endpoint.clone(),
                 sign_in_server: self.sign_in_server.clone(),
+                resets: self.resets.clone(),
                 route_exe: Some(self.route_exe.clone()),
                 sign_in: Arc::new(move |p, cli, folder, _done| {
                     sign_ins

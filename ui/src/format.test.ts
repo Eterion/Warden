@@ -15,6 +15,8 @@ import {
   limitView,
   newFolderPreview,
   readingNote,
+  expiryText,
+  resetRows,
   resetTime,
   signedInAs,
   usageProblem,
@@ -344,5 +346,40 @@ describe('readingNote', () => {
       problem: null,
       age: 'No Codex sessions yet',
     });
+  });
+});
+
+describe('limit resets', () => {
+  const DAY = 24 * 3_600_000;
+
+  it('says when a reset expires, with the year only when it is not this one', () => {
+    expect(expiryText(new Date(2026, 11, 10, 23, 0).getTime(), NOW)).toBe('Expires 10 Dec, 23:00');
+    expect(expiryText(new Date(2027, 2, 9, 7, 5).getTime(), NOW)).toBe('Expires 9 Mar 2027, 07:05');
+    expect(expiryText(null, NOW)).toBe('Does not expire');
+  });
+
+  it("lists every account's resets soonest first, never-expiring last, leaving out expired ones", () => {
+    const codex = account({
+      id: 'c',
+      label: 'Codex',
+      provider: 'codex',
+      resets: [
+        { title: 'Full reset (Weekly + 5 hr)', expiresAt: NOW + 9 * DAY },
+        { title: null, expiresAt: null },
+        { title: 'Gone', expiresAt: NOW - 1 },
+      ],
+    });
+    const other = account({
+      id: 'o',
+      label: 'Other',
+      provider: 'codex',
+      resets: [{ title: 'Soon', expiresAt: NOW + DAY }],
+    });
+    expect(resetRows([codex, other], NOW).map((r) => [r.account.label, r.title, r.expiresAt])).toEqual([
+      ['Other', 'Soon', NOW + DAY],
+      ['Codex', 'Full reset (Weekly + 5 hr)', NOW + 9 * DAY],
+      ['Codex', 'Reset', null],
+    ]);
+    expect(resetRows([account({ id: 'm', label: 'Main' })], NOW)).toEqual([]);
   });
 });

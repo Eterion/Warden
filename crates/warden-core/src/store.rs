@@ -270,6 +270,9 @@ pub struct AccountReading {
     /// When the folder's current identity was accepted (ms since the epoch). Readings from before it belong to the
     /// previous identity, such as Codex's older session logs read again after a restart, and are never used.
     pub identity_since: Option<i64>,
+    /// A Codex account's banked resets as last read, soonest to expire first; only their titles and expiries.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub resets: Vec<crate::codex_resets::Reset>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

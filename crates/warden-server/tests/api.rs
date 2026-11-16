@@ -1248,3 +1248,63 @@ fn both_default_claude_sign_in_files_are_watched_in_priority_order() {
     );
     server.stop();
 }
+
+#[test]
+fn codex_resets_are_read_kept_through_failures_and_hidden_for_someone_else() {
+    let f = Fixture::new();
+    let folder = f.codex_folder(".codex-work", "me@acme.example", "codex-token");
+    *f.resets.answer.lock().expect("lock") = Some((200, common::RESETS_ANSWER.into()));
+    let server = f.start();
+    let addr = server.addr;
+    add(addr, "codex", &folder, "Codex");
+    let s = call(addr, "POST", "/api/usage/refresh", None).json();
+    assert_eq!(
+        s["accounts"][0]["resets"],
+        json!([{
+            "title": "Full reset (Weekly + 5 hr)",
+            "expiresAt": warden_core::time::parse_rfc3339_ms("2026-12-10T22:00:00Z"),
+        }])
+    );
+    let saved = std::fs::read_to_string(f.data.path().join("readings.json")).expect("readings");
+    assert!(saved.contains("Full reset (Weekly + 5 hr)"));
+    assert!(!saved.contains("credit-1") && !saved.contains("Ready to redeem"));
+
+    // A failed read keeps the last list and is logged once.
+    *f.resets.answer.lock().expect("lock") = Some((503, "busy".into()));
+    call(addr, "POST", "/api/usage/refresh", None);
+    let s = call(addr, "POST", "/api/usage/refresh", None).json();
+    assert_eq!(
+        s["accounts"][0]["resets"][0]["title"],
+        "Full reset (Weekly + 5 hr)"
+    );
+    assert_eq!(
+        f.log_text()
+            .matches("Codex: no banked resets reading (HTTP 503: server error)")
+            .count(),
+        1,
+        "{}",
+        f.log_text()
+    );
+
+    // Signed out: nothing is asked.
+    *f.resets.answer.lock().expect("lock") = Some((200, common::RESETS_ANSWER.into()));
+    std::fs::remove_file(folder.join("auth.json")).expect("sign out");
+    let asked = f.resets.seen.lock().expect("lock").len();
+    call(addr, "POST", "/api/usage/refresh", None);
+    assert_eq!(f.resets.seen.lock().expect("lock").len(), asked);
+
+    // Signed in as someone else: the old list is not shown and the other login is never sent.
+    set_codex_identity(&folder, "other@acme.example", "other-token");
+    let s = call(addr, "POST", "/api/usage/refresh", None).json();
+    assert!(s["accounts"][0]["identityChange"].is_object());
+    assert_eq!(s["accounts"][0]["resets"], json!([]));
+    assert!(
+        f.resets
+            .seen
+            .lock()
+            .expect("lock")
+            .iter()
+            .all(|(token, _)| token == "codex-token")
+    );
+    server.stop();
+}

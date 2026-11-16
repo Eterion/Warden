@@ -40,6 +40,12 @@ export interface IdentityChange {
   knownAccountId: string | null;
 }
 
+/** A Codex account's banked reset: the backend's short name for it, and when it expires (`null`: never). */
+export interface Reset {
+  title: string | null;
+  expiresAt: number | null;
+}
+
 export interface Account {
   id: string;
   label: string;
@@ -51,6 +57,8 @@ export interface Account {
   identityChange: IdentityChange | null;
   usage: Usage | null;
   usageError: UsageError | null;
+  /** Soonest to expire first; empty while signed in as someone else. */
+  resets: Reset[];
   hooks: HookSetup;
 }
 

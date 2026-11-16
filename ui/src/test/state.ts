@@ -11,6 +11,7 @@ export function account(a: Partial<Account> & Pick<Account, 'id' | 'label'>): Ac
     identityChange: null,
     usage: null,
     usageError: null,
+    resets: [],
     hooks: 'installed',
     ...a,
   };

@@ -46,7 +46,11 @@ fn setup_switches_remove_and_repairs_write_no_hooks_or_backups() {
     let app = App::new(
         f.data.path().to_owned(),
         env,
-        (f.endpoint.clone(), f.sign_in_server.clone()),
+        (
+            f.endpoint.clone(),
+            f.sign_in_server.clone(),
+            f.resets.clone(),
+        ),
         Arc::new(|_, _, _, _| panic!("no sign-in")),
         Arc::new(|_| {}),
         Some(f.route_exe.clone()),

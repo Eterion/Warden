@@ -15,6 +15,7 @@ function account(a: Partial<Account> & Pick<Account, 'id' | 'label' | 'provider'
     identityChange: null,
     usage: null,
     usageError: null,
+    resets: [],
     hooks: 'installed',
     ...a,
   };
@@ -347,6 +348,27 @@ export function treeState(now: number): State {
   byId.get('s5')!.parentId = 's1';
   byId.get('s4')!.parentId = 'a-session-that-has-ended';
   s.sessions = s.sessions.filter((x) => x.id !== 's6');
+  return s;
+}
+
+/** The Overview with limit resets: Codex has two, one of them next year; a switched-off account's are not shown. */
+export function resetsState(now: number): State {
+  const s = healthyState(now);
+  const day = 24 * HOUR;
+  const nextYear = new Date(new Date(now).getFullYear() + 1, 2, 9, 23, 0).getTime();
+  s.accounts = s.accounts.map((a) =>
+    a.id === 'a3'
+      ? {
+          ...a,
+          resets: [
+            { title: 'Full reset (Weekly + 5 hr)', expiresAt: now + 9 * day },
+            { title: null, expiresAt: nextYear },
+          ],
+        }
+      : a.id === 'a4'
+        ? { ...a, resets: [{ title: 'Full reset (Weekly + 5 hr)', expiresAt: now + 2 * day }] }
+        : a,
+  );
   return s;
 }
 

@@ -122,6 +122,14 @@ describe('personal-paths', () => {
     );
     assert.deepEqual(caught(personalPaths, 'crates/x/src/lib.rs', '"https://api.anthropic.com/api/oauth/usage"'), []);
     assert.deepEqual(caught(personalPaths, 'crates/x/src/lib.rs', '"https://platform.claude.com/v1/oauth/token"'), []);
+    assert.deepEqual(
+      caught(personalPaths, 'crates/x/src/lib.rs', '"https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"'),
+      [],
+    );
+    assert.ok(
+      caught(personalPaths, 'crates/x/src/lib.rs', '"https://api.openai.com/v1"').length > 0,
+      'other OpenAI host allowed',
+    );
     assert.deepEqual(caught(personalPaths, 'ui/public/licenses/x.txt', 'http://scripts.sil.org/OFL'), []);
     assert.deepEqual(caught(personalPaths, 'icons/a.svg', '<svg xmlns="http://www.w3.org/2000/svg">'), []);
     assert.ok(

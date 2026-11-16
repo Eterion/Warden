@@ -5,6 +5,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod codex_resets;
 pub mod detect;
 pub mod fallback;
 pub mod hooks;

@@ -15,6 +15,8 @@ import { isGenerated, isRuleFixture, matches, type Rule, type Violation } from '
 export const ALLOWED_HOSTS = [
   'api.anthropic.com',
   'platform.claude.com',
+  // ChatGPT's backend, where Codex accounts' banked resets are read.
+  'chatgpt.com',
   // GitHub's release asset hosts, where the update download is sent on to; github.com itself only through ALLOWED_LINKS.
   'objects.githubusercontent.com',
   'release-assets.githubusercontent.com',

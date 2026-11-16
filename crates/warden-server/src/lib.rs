@@ -34,6 +34,8 @@ pub struct Config {
     pub env: Env,
     pub endpoint: Arc<dyn UsageEndpoint>,
     pub sign_in_server: Arc<dyn warden_core::mainlogin::SignInServer>,
+    /// ChatGPT's backend, for Codex accounts' banked resets.
+    pub resets: Arc<dyn warden_core::codex_resets::ResetsEndpoint>,
     pub sign_in: SignIn,
     pub log: Log,
     /// The `warden` binary the routing hook runs (`None`: not found).
@@ -82,7 +84,7 @@ pub fn start_core(config: Config) -> io::Result<Core> {
     let app = App::new(
         config.data_dir,
         config.env,
-        (config.endpoint, config.sign_in_server),
+        (config.endpoint, config.sign_in_server, config.resets),
         config.sign_in,
         config.log,
         config.route_exe,

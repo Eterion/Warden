@@ -222,6 +222,21 @@ function makeFolder(a: DemoAccount): void {
       }),
     );
     mkdirSync(join(folder, 'sessions'), { recursive: true });
+    // The banked resets the stand-in for ChatGPT's backend answers with.
+    if (a.enabled) {
+      const reset = (title: string, days: number) => ({
+        id: `demo-${days}`,
+        reset_type: 'codex_rate_limits',
+        status: 'available',
+        granted_at: new Date(started).toISOString(),
+        expires_at: new Date(started + days * 24 * HOUR).toISOString(),
+        title,
+      });
+      write(
+        join(usageDir, `${token(a)}.resets.json`),
+        JSON.stringify({ credits: [reset('Full reset (Weekly + 5 hr)', 9), reset('Full reset (Weekly + 5 hr)', 30)] }),
+      );
+    }
   }
 }
 

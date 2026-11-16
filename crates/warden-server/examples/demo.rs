@@ -7,7 +7,8 @@
 //! ```
 //!
 //! The stand-in endpoint answers a token's request with `<usage-dir>/<token>.json` (as Anthropic's body), or 401 when
-//! there is no such file. Nothing leaves this computer, and no program is started: the CLIs on the demo's PATH (the
+//! there is no such file; the stand-in for ChatGPT's backend answers a Codex account's banked resets with
+//! `<usage-dir>/<token>.resets.json` (as the backend's body), or none. Nothing leaves this computer, and no program is started: the CLIs on the demo's PATH (the
 //! home's `bin`) are stand-ins the driver writes, and the sign-in only prints.
 
 use std::path::PathBuf;
@@ -22,6 +23,28 @@ use warden_server::{Config, start};
 /// Stands in for Anthropic's usage endpoint: the answer for each token is a file the demo driver writes.
 struct DemoUsageEndpoint {
     dir: PathBuf,
+}
+
+/// Stands in for ChatGPT's backend: a Codex account's banked resets are a file the demo driver writes.
+struct DemoResetsEndpoint {
+    dir: PathBuf,
+}
+
+impl warden_core::codex_resets::ResetsEndpoint for DemoResetsEndpoint {
+    fn fetch(
+        &self,
+        token: &Secret,
+        _account_id: &str,
+    ) -> Result<Vec<warden_core::codex_resets::Reset>, String> {
+        let name: String = token
+            .expose()
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        let body = std::fs::read_to_string(self.dir.join(format!("{name}.resets.json")))
+            .unwrap_or_else(|_| r#"{"credits": []}"#.to_owned());
+        warden_core::codex_resets::read_response(200, body.as_bytes())
+    }
 }
 
 struct DemoSignInServer;
@@ -121,6 +144,9 @@ fn main() -> ExitCode {
             claude_git_bash: None,
             program_files: Vec::new(),
         },
+        resets: Arc::new(DemoResetsEndpoint {
+            dir: args.usage_dir.clone(),
+        }),
         endpoint: Arc::new(DemoUsageEndpoint {
             dir: args.usage_dir,
         }),

@@ -14,7 +14,11 @@ fn app(f: &Fixture) -> Arc<App> {
         App::new(
             f.data.path().into(),
             f.env(),
-            (f.endpoint.clone(), f.sign_in_server.clone()),
+            (
+                f.endpoint.clone(),
+                f.sign_in_server.clone(),
+                f.resets.clone(),
+            ),
             Arc::new(|_, _, _, _| Ok(())),
             Arc::new(|_| {}),
             Some(f.route_exe.clone()),
@@ -171,4 +175,50 @@ fn concurrent_switches_repair_and_removal_keep_hooks_in_the_current_state() {
         serde_json::to_value(a.state()).expect("state")["accounts"],
         json!([])
     );
+}
+
+#[test]
+fn a_resets_answer_that_lands_after_a_new_identity_is_accepted_is_dropped() {
+    let f = Fixture::new();
+    let folder = f.codex_folder(".codex-work", "me@acme.example", "codex-token");
+    *f.resets.answer.lock().expect("lock") = Some((200, common::RESETS_ANSWER.into()));
+    let a = app(&f);
+    let id = a
+        .add_existing(Provider::Codex, folder.to_str().expect("path"), "Codex")
+        .expect("add");
+    // While the request is in flight, the folder is signed in as someone else and the change accepted.
+    {
+        let (a, id, folder) = (Arc::clone(&a), id.clone(), folder.clone());
+        *f.resets.during.lock().expect("lock") = Some(Box::new(move || {
+            common::set_codex_identity(&folder, "other@acme.example", "other-token");
+            a.apply_identity(
+                &id,
+                warden_core::codex::read_identity_from_login_file(&folder),
+            );
+            a.accept_identity(&id).expect("accept");
+        }));
+    }
+    a.read_claude_usage();
+    let resets =
+        |a: &App| serde_json::to_value(a.state()).expect("state")["accounts"][0]["resets"].clone();
+    assert_eq!(
+        resets(&a),
+        json!([]),
+        "the old identity's resets are not kept"
+    );
+    let saved = std::fs::read_to_string(f.data.path().join("readings.json")).expect("readings");
+    assert!(!saved.contains("Full reset"));
+
+    // The next read asks with the new identity's own login.
+    a.read_claude_usage();
+    assert_eq!(resets(&a)[0]["title"], "Full reset (Weekly + 5 hr)");
+    let tokens: Vec<String> = f
+        .resets
+        .seen
+        .lock()
+        .expect("lock")
+        .iter()
+        .map(|(t, _)| t.clone())
+        .collect();
+    assert_eq!(tokens, ["codex-token", "other-token"]);
 }

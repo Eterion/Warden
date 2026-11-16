@@ -8,6 +8,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 use warden_core::claude::{self, UsageEndpoint};
 use warden_core::codex::{self, LogTail};
+use warden_core::codex_resets::{Reset, ResetsEndpoint};
 use warden_core::detect::{self, Env, Tool};
 use warden_core::fallback;
 use warden_core::hooks::{self, HookTool, Setup, Setups, Want};
@@ -16,6 +17,7 @@ use warden_core::mainlogin::{self, SignInServer};
 use warden_core::model::{Identity, IdentityChange, Provider, Usage, UsageError};
 use warden_core::pipe::Message;
 use warden_core::routing;
+use warden_core::secret::Secret;
 use warden_core::sessions::{self, Activity, Event, EventKind, Session, Sessions};
 use warden_core::store::{
     self, AccountConfig, AccountReading, IdentityUpdate, READINGS_FILE, Readings, SETTINGS_FILE,
@@ -141,6 +143,8 @@ struct Inner {
     usage_wanted: bool,
     /// The usage loop is reading, between two waits.
     usage_busy: bool,
+    /// Why each Codex account's banked resets could not be read last time, so a failure is logged once.
+    resets_failed: HashMap<String, String>,
     stop: bool,
 }
 
@@ -160,6 +164,7 @@ pub struct App {
     pub env: Env,
     endpoint: Arc<dyn UsageEndpoint>,
     sign_in_server: Arc<dyn SignInServer>,
+    resets: Arc<dyn ResetsEndpoint>,
     sign_in: SignIn,
     pub log: Log,
     /// The `warden` binary the hooks run; `None` when it was not found.
@@ -229,6 +234,8 @@ pub struct AccountView {
     identity_change: Option<IdentityChangeView>,
     usage: Option<Usage>,
     usage_error: Option<UsageError>,
+    /// A Codex account's banked resets, soonest to expire first.
+    resets: Vec<Reset>,
     hooks: Setup,
     same_as_main: bool,
 }
@@ -368,7 +375,11 @@ impl App {
     pub fn new(
         data_dir: PathBuf,
         env: Env,
-        (endpoint, sign_in_server): (Arc<dyn UsageEndpoint>, Arc<dyn SignInServer>),
+        (endpoint, sign_in_server, resets): (
+            Arc<dyn UsageEndpoint>,
+            Arc<dyn SignInServer>,
+            Arc<dyn ResetsEndpoint>,
+        ),
         sign_in: SignIn,
         log: Log,
         route_exe: Option<PathBuf>,
@@ -426,6 +437,7 @@ impl App {
                 usage_wanted: false,
                 // The loop starts with a reading.
                 usage_busy: true,
+                resets_failed: HashMap::new(),
                 revision: 0,
                 stop: false,
             }),
@@ -438,6 +450,7 @@ impl App {
             env,
             endpoint,
             sign_in_server,
+            resets,
             sign_in,
             log,
             route_exe,
@@ -626,6 +639,11 @@ impl App {
             }),
             usage: r.and_then(|r| r.usage.clone()),
             usage_error: r.and_then(|r| r.error.clone()),
+            // Resets read while signed in as the account: not shown while the folder is someone else's.
+            resets: r
+                .filter(|r| r.identity_change.is_none())
+                .map(|r| r.resets.clone())
+                .unwrap_or_default(),
             same_as_main: !main && routing::same_as_main(&inner.settings, a),
             hooks: if main && setup.routing != Setup::Installed {
                 setup.routing
@@ -779,8 +797,21 @@ impl App {
                 };
                 self.apply_usage(&account.id, result);
             } else {
-                let now = codex::read_identity_from_login_file(&account.folder);
+                // One reading of the login file for who it is signed in as and the resets request's access, so the
+                // token sent is the one of the identity checked here.
+                let (now, access) = match codex::read_login_with_access(&account.folder) {
+                    Ok(login) => (Ok(login.identity), login.access),
+                    Err(e) => (Err(e), None),
+                };
+                let signed_in = matches!(now, Ok(Some(_)));
                 self.apply_identity(&account.id, now);
+                // Only while the folder is signed in as the account itself; a switched-off account is not shown.
+                if account.enabled
+                    && signed_in
+                    && let Some(access) = access
+                {
+                    self.read_codex_resets(&account.id, access);
+                }
             }
         }
         let mut inner = self.lock();
@@ -789,6 +820,63 @@ impl App {
         // Tells `warden route` the readings are current, so it does not refresh them itself.
         inner.readings.checked_at = Some(now);
         self.save_readings(&mut inner);
+    }
+
+    /// Reads a Codex account's banked resets with the access read from its login file with its identity: the access
+    /// token and account id go to ChatGPT's backend in this one request and are dropped with it. Asked only while the
+    /// folder is signed in as the account; an answer that comes back after its identity changed is dropped.
+    fn read_codex_resets(&self, id: &str, (token, account_id): (Secret, String)) {
+        let since = {
+            let inner = self.lock();
+            if inner.readings.identity_changed(id) {
+                return;
+            }
+            inner
+                .readings
+                .accounts
+                .get(id)
+                .and_then(|r| r.identity_since)
+        };
+        let result = self.resets.fetch(&token, &account_id);
+        drop(token);
+        self.apply_resets(id, since, result);
+    }
+
+    /// Records a resets read: a list replaces the last one; a failure keeps it and is logged once. Dropped when the
+    /// folder's identity changed (or a new one was accepted) since the request was sent: it would be someone else's.
+    fn apply_resets(&self, id: &str, since: Option<i64>, result: Result<Vec<Reset>, String>) {
+        let mut inner = self.lock();
+        let Some(label) = inner
+            .settings
+            .account_in(&self.env, id)
+            .map(|a| a.label.clone())
+        else {
+            return;
+        };
+        let now_since = inner
+            .readings
+            .accounts
+            .get(id)
+            .and_then(|r| r.identity_since);
+        if inner.readings.identity_changed(id) || now_since != since {
+            return;
+        }
+        match result {
+            Ok(resets) => {
+                inner.resets_failed.remove(id);
+                let reading = inner.readings.accounts.entry(id.to_owned()).or_default();
+                if reading.resets != resets {
+                    reading.resets = resets;
+                    self.save_readings(&mut inner);
+                }
+            }
+            Err(why) => {
+                if inner.resets_failed.get(id) != Some(&why) {
+                    (self.log)(&format!("{label}: no banked resets reading ({why})"));
+                    inner.resets_failed.insert(id.to_owned(), why);
+                }
+            }
+        }
     }
 
     /// Records the identity read from an account's folder. Returns whether the folder is signed in as someone else.

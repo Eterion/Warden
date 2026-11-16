@@ -22,6 +22,7 @@ import {
   hooksState,
   normalState,
   problemsState,
+  resetsState,
   setupState,
   treeState,
 } from './fixtures/ui-state.ts';
@@ -47,6 +48,7 @@ type Fixture =
   | 'problems'
   | 'tree'
   | 'healthy'
+  | 'resets'
   | 'hooks'
   | 'workHours'
   | 'delegated'
@@ -177,6 +179,20 @@ export const PAGES: {
     fixture: 'tree',
     ready: '[aria-labelledby=sessions-heading] >> text=Started by',
     steps: [{ click: 'button[role=checkbox][aria-label$="of Second"]' }, { waitFor: 'text=Show all' }],
+  },
+  {
+    name: 'overview-resets',
+    path: '/',
+    fixture: 'resets',
+    ready: '[aria-labelledby=resets-heading] li',
+    // Wide enough for the resets to stand beside the accounts and sessions.
+    viewport: { width: 1600, height: 900 },
+  },
+  {
+    name: 'overview-resets-narrow',
+    path: '/',
+    fixture: 'resets',
+    ready: '[aria-labelledby=resets-heading] li',
   },
   {
     name: 'overview-hooks-off',
@@ -586,7 +602,9 @@ function fakeApi(current: () => Fixture): Plugin {
                 ? treeState(now)
                 : fixture === 'healthy'
                   ? healthyState(now)
-                  : normalState(now);
+                  : fixture === 'resets'
+                    ? resetsState(now)
+                    : normalState(now);
         if (fixture === 'hooksOff') state.hooksOff = true;
         if (fixture === 'desktopDownloading') state.update = { version: '0.2.0', downloaded: 45, ready: false };
         if (fixture === 'desktopUpdate') state.update = { version: '0.2.0', downloaded: 100, ready: true };

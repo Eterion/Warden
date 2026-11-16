@@ -10,6 +10,7 @@ import WListItem from '../components/WListItem.vue';
 import WIconButton from '../components/WIconButton.vue';
 import WTextField from '../components/WTextField.vue';
 import { closeModal, go, route, type Section } from '../route';
+import { keptWhileClosing } from '../components/kept';
 import { store } from '../store';
 import AccountsSection from './AccountsSection.vue';
 import AddAccountModal from './AddAccountModal.vue';
@@ -27,9 +28,15 @@ const addOpen = computed({
 });
 
 const query = ref('');
+// Cleared when Settings opens again, not as it closes, so the closing modal keeps what it showed.
 watch(open, (o) => {
-  if (!o) query.value = '';
+  if (o) query.value = '';
 });
+/** The section drawn: closing clears the address, which would otherwise show General while the modal closes. */
+const section = keptWhileClosing(
+  () => open.value,
+  () => route.section.value,
+);
 const searching = computed(() => query.value.trim().length > 0);
 
 const sections: { id: Section; label: string; icon: typeof Settings; title: string; subtitle: string }[] = [
@@ -135,7 +142,7 @@ const results = computed(() => {
   return INDEX.filter((i) => (inApp || !i.desktop) && `${i.label} ${i.help} ${i.keys}`.toLowerCase().includes(q));
 });
 
-const current = computed(() => sections.find((s) => s.id === route.section.value) ?? sections[0]!);
+const current = computed(() => sections.find((s) => s.id === section.value) ?? sections[0]!);
 const title = computed(() => (searching.value ? 'Search' : current.value.title));
 const subtitle = computed(() => {
   if (!searching.value) return current.value.subtitle;
@@ -169,7 +176,7 @@ function goTo(r: (typeof INDEX)[number]): void {
           v-for="s in sections"
           :key="s.id"
           :icon="s.icon"
-          :current="!searching && s.id === route.section.value"
+          :current="!searching && s.id === section"
           @click="pick(s.id)"
         >
           {{ s.label }}
@@ -188,7 +195,7 @@ function goTo(r: (typeof INDEX)[number]): void {
           </div>
           <div class="flex shrink-0 items-center gap-2">
             <WButton
-              v-if="!searching && route.section.value === 'accounts'"
+              v-if="!searching && section === 'accounts'"
               variant="primary"
               :icon="Plus"
               @click="addOpen = true"
@@ -217,8 +224,8 @@ function goTo(r: (typeof INDEX)[number]): void {
             </WList>
             <span v-else class="text-14 text-tertiary">Nothing matches that search.</span>
           </div>
-          <GeneralSection v-else-if="route.section.value === 'general'" />
-          <AccountsSection v-else-if="route.section.value === 'accounts'" />
+          <GeneralSection v-else-if="section === 'general'" />
+          <AccountsSection v-else-if="section === 'accounts'" />
         </div>
       </div>
     </div>

@@ -3,6 +3,7 @@
 import { ref, watch } from 'vue';
 import { api, type Account } from '../api';
 import AppModal from '../components/AppModal.vue';
+import { keptWhileClosing } from '../components/kept';
 import WButton from '../components/WButton.vue';
 import WTextField from '../components/WTextField.vue';
 import { act } from '../store';
@@ -10,6 +11,11 @@ import { act } from '../store';
 const open = defineModel<boolean>('open', { required: true });
 const props = defineProps<{ account: Account | null; mode: 'rename' | 'remove' }>();
 const name = ref('');
+/** What the modal draws: closing clears the account, but the closing animation still shows it. */
+const shown = keptWhileClosing(
+  () => open.value,
+  () => ({ account: props.account, mode: props.mode }),
+);
 const error = ref<string | null>(null);
 
 watch(open, (o) => {
@@ -36,20 +42,20 @@ async function confirm(): Promise<void> {
 <template>
   <AppModal
     v-model:open="open"
-    :title="props.mode === 'rename' ? `Rename ${props.account?.label ?? ''}` : `Remove ${props.account?.label ?? ''}`"
+    :title="shown.mode === 'rename' ? `Rename ${shown.account?.label ?? ''}` : `Remove ${shown.account?.label ?? ''}`"
     stacked
   >
     <form class="flex w-full max-w-120 flex-col gap-5 rounded-2xl bg-modal p-7 shadow-modal" @submit.prevent="confirm">
       <div class="flex flex-col gap-1">
         <h2 class="text-18 font-semibold">
-          {{ props.mode === 'rename' ? 'Rename account' : `Remove ${props.account?.label}?` }}
+          {{ shown.mode === 'rename' ? 'Rename account' : `Remove ${shown.account?.label}?` }}
         </h2>
-        <span v-if="props.mode === 'remove'" class="text-14 text-tertiary">
+        <span v-if="shown.mode === 'remove'" class="text-14 text-tertiary">
           Warden forgets the account and its readings. The folder and its login stay as they are; add it again any time.
         </span>
       </div>
       <div class="flex flex-col gap-3">
-        <div v-if="props.mode === 'rename'" class="flex items-center gap-3">
+        <div v-if="shown.mode === 'rename'" class="flex items-center gap-3">
           <label for="rename-name" class="w-16 shrink-0 text-14 text-tertiary">Name</label>
           <WTextField id="rename-name" v-model="name" maxlength="60" class="min-w-0 flex-auto" />
         </div>
@@ -57,13 +63,13 @@ async function confirm(): Promise<void> {
         <div class="flex items-center gap-3">
           <span class="w-16 shrink-0 text-14 text-tertiary">Folder</span>
           <span class="min-w-0 flex-auto font-mono text-12 wrap-anywhere text-secondary">{{
-            props.account?.folder
+            shown.account?.folder
           }}</span>
         </div>
       </div>
       <p v-if="error" role="alert" class="text-13 font-medium text-attn">{{ error }}</p>
       <div class="flex justify-end gap-2">
-        <WButton variant="primary" type="submit">{{ props.mode === 'rename' ? 'Save' : 'Remove' }}</WButton>
+        <WButton variant="primary" type="submit">{{ shown.mode === 'rename' ? 'Save' : 'Remove' }}</WButton>
         <WButton @click="open = false">Cancel</WButton>
       </div>
     </form>

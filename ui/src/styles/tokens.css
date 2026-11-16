@@ -54,6 +54,7 @@
   --color-secondary: light-dark(#52525b, #a1a1aa);
   --color-tertiary: light-dark(#71717a, #a1a1aa);
   --color-icon: light-dark(#71717a, #a1a1aa);
+  --color-icon-faded: light-dark(#8a8a93, #71717a); /* icons of a faded sessions row */
 
   /* Controls */
   --color-primary: light-dark(#18181b, #fafafa);
@@ -269,12 +270,23 @@
 }
 
 @utility grid-cols-sessions {
-  /* State, session, doing now, project, account, subagents, running for. */
-  grid-template-columns: 28px minmax(0, 1.9fr) minmax(0, 1fr) 96px 100px 76px 76px;
+  /* State, session, doing now, project, account, subagents, id (8 mono characters), running for. Each row is one
+     line: session, doing now, project and account truncate; project and account grow from their minimums, so a wide
+     table shows them whole. */
+  grid-template-columns:
+    28px minmax(0, 1.6fr) minmax(0, 1.2fr) minmax(112px, 0.7fr) minmax(120px, 0.7fr) 76px 68px
+    76px;
 }
 
 @utility min-w-sessions {
-  min-width: 820px;
+  min-width: 900px;
+}
+
+@utility icons-faded {
+  /* A sessions row shown only for the sessions under it: its icons (state, subagents) a step dimmer. */
+  & svg {
+    color: var(--color-icon-faded);
+  }
 }
 
 @utility grid-cols-account-list {

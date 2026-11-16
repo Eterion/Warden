@@ -61,15 +61,63 @@ describe('the sessions tree', () => {
     ).toEqual(['m3', 'm1', 'm2', '  c2', '  c1']);
   });
 
-  it('keeps a session whose parent is unknown, gone or filtered out at the top level', () => {
+  it('keeps a session whose parent is unknown or gone at the top level', () => {
     const rows = sessionTree([s('m1', 'idle', { startedAt: T - 1 }), s('orphan', 'working', { parentId: 'gone' })]);
-    expect(rows.map((r) => [r.session.id, r.depth, r.parent])).toEqual([
-      ['orphan', 0, null],
-      ['m1', 0, null],
+    expect(rows.map((r) => [r.session.id, r.depth, r.parent, r.faded])).toEqual([
+      ['orphan', 0, null, false],
+      ['m1', 0, null, false],
     ]);
-    // Filtering comes before the tree: a child whose parent was filtered out stands on its own.
+    // Without `from`, a parent left out of the list is gone too.
     const all = [s('m1', 'idle'), s('c1', 'working', { parentId: 'm1', accountId: 'b' })];
     expect(shape(all.filter((x) => x.accountId === 'b'))).toEqual(['c1']);
+  });
+
+  it("puts a filter's sessions under their ancestors from `from`, faded, and leaves the rest out", () => {
+    const all = [
+      s('root', 'done', { accountId: 'a', startedAt: T - 9, endedAt: T }),
+      s('mid', 'waiting', { accountId: 'a', parentId: 'root', startedAt: T - 8 }),
+      s('b1', 'working', { accountId: 'b', parentId: 'mid', startedAt: T - 7 }),
+      s('b2', 'idle', { accountId: 'b', parentId: 'root', startedAt: T - 6 }),
+      s('other', 'working', { accountId: 'a', startedAt: T - 5 }),
+      s('sibling', 'working', { accountId: 'a', parentId: 'mid', startedAt: T - 4 }),
+      s('b3', 'done', { accountId: 'b', parentId: 'gone', endedAt: T }),
+    ];
+    const rows = sessionTree(
+      all.filter((x) => x.accountId === 'b'),
+      all,
+    );
+    expect(rows.map((r) => [`${'  '.repeat(r.depth)}${r.session.id}`, r.faded, r.parent?.id ?? null])).toEqual([
+      ['root', true, null],
+      ['  mid', true, 'root'],
+      ['    b1', false, 'mid'],
+      ['  b2', false, 'root'],
+      ['b3', false, null],
+    ]);
+    // The connectors follow the tree with its faded rows in it.
+    expect(rows.map((r) => [r.last, r.rails])).toEqual([
+      [false, []],
+      [false, []],
+      [true, [true]],
+      [true, []],
+      [true, []],
+    ]);
+    // A session that matches is never faded, even as another's ancestor; a loop of ancestors (cut at the top level, as
+    // without `from`) ends where it closes.
+    expect(sessionTree([all[1]!, all[2]!], all).map((r) => [r.session.id, r.faded])).toEqual([
+      ['root', true],
+      ['mid', false],
+      ['b1', false],
+    ]);
+    const loop = [
+      s('x', 'idle', { parentId: 'y' }),
+      s('y', 'idle', { parentId: 'x' }),
+      s('c', 'idle', { parentId: 'x' }),
+    ];
+    expect(sessionTree([loop[2]!], loop).map((r) => [r.session.id, r.depth, r.faded])).toEqual([
+      ['c', 0, false],
+      ['x', 0, true],
+      ['y', 0, true],
+    ]);
   });
 
   it('cuts a loop of parents, which a real link never makes, at the top level', () => {

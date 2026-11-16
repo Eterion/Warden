@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // The Overview: the title, the accounts in use with their limits (main's hand-off point marked on its weekly bar), the last 2 hours of sessions and the
 // "now" chip, then every account's sessions in one table, each delegated session under the main session that started
-// it. Checking accounts shows only their sessions. Beside them (under them in a narrow window), the limit resets the
+// it. Checking accounts shows only their sessions, under their faded ancestors. Beside them (under them in a narrow window), the limit resets the
 // accounts can use, while there are any.
 import { Check } from 'lucide-vue-next';
 import { computed, ref } from 'vue';
@@ -79,17 +79,22 @@ const allSessions = computed(() => {
 
 const DONE_SHOWN_MS = 10 * 60_000;
 
-/** The sessions shown, after the filter, as a tree: a child whose parent is filtered out stands at the top level. */
+/** Sessions still shown: an ended one for its last 10 minutes, as long as the core keeps it (and its children's links). */
+const liveSessions = computed(() =>
+  allSessions.value.filter((s) => s.endedAt === null || store.now - s.endedAt < DONE_SHOWN_MS),
+);
+
+/**
+ * The sessions shown, after the filter, as a tree. While accounts are checked, their sessions' ancestors on any account
+ * in use stand in their places, faded.
+ */
 const rows = computed(() =>
   sessionTree(
-    allSessions.value.filter(
-      (s) =>
-        (filter.value.length === 0 || filter.value.includes(s.accountId)) &&
-        (s.endedAt === null || store.now - s.endedAt < DONE_SHOWN_MS),
-    ),
+    liveSessions.value.filter((s) => filter.value.length === 0 || filter.value.includes(s.accountId)),
+    filter.value.length ? liveSessions.value : undefined,
   ),
 );
-const shownTally = computed(() => tally(rows.value.map((r) => r.session)));
+const shownTally = computed(() => tally(rows.value.filter((r) => !r.faded).map((r) => r.session)));
 
 const points = computed(() => {
   const map = new Map<string, Point[]>();
@@ -319,12 +324,18 @@ function sessionAccount(s: Session): Account | undefined {
               <span role="columnheader">Project</span>
               <span role="columnheader">Account</span>
               <span role="columnheader">Subagents</span>
+              <span role="columnheader">ID</span>
               <span role="columnheader" class="text-right">Running for</span>
             </template>
+            <!-- A faded row is shown only for the sessions under it (while accounts are checked): its text in the
+               tertiary colour, its icons dimmed, no amber. -->
             <WTableRow
-              v-for="{ session: s, depth, parent, rails, last } in rows"
+              v-for="{ session: s, depth, parent, rails, last, faded } in rows"
               :key="`${s.provider}:${s.id}`"
-              :class="['py-2.25 text-13', s.state === 'waiting' && s.source === 'hook' && 'bg-attn-bg']"
+              :class="[
+                'py-2.25 text-13',
+                faded ? 'icons-faded text-tertiary' : s.state === 'waiting' && s.source === 'hook' && 'bg-attn-bg',
+              ]"
             >
               <span
                 role="cell"
@@ -335,47 +346,71 @@ function sessionAccount(s: Session): Account | undefined {
                 <StateIcon :state="shownState(s)" />
               </span>
               <!-- A delegated session sits under the main session that started it: one step in per level, with a thin
-                 connector through the row padding to the rows above and below. The lines are decoration; screen
-                 readers hear who started it. -->
+                 connector through the row's top border and padding to the rows above and below. Each part is drawn
+                 once (the colour is translucent): a line through the row where a later sibling still needs it, and
+                 this row's own branch off it, a straight stub, or the rounded elbow that ends the line at the last
+                 sibling. The lines are decoration; screen readers hear who started it. -->
               <span role="cell" class="flex min-w-0 items-center self-stretch">
                 <span v-for="level in depth" :key="level" aria-hidden="true" class="relative w-6 shrink-0 self-stretch">
                   <span
                     v-if="level < depth ? rails[level - 1] : !last"
-                    class="absolute -top-2.5 -bottom-2.5 left-2 border-l border-divider-strong"
+                    data-line="rail"
+                    class="absolute -top-2.5 -bottom-2.25 left-2 border-l border-divider-strong"
                   ></span>
                   <span
-                    v-if="level === depth"
+                    v-if="level === depth && !last"
+                    data-line="stub"
+                    class="absolute bottom-1/2 left-2.25 w-2.75 border-b border-divider-strong"
+                  ></span>
+                  <span
+                    v-else-if="level === depth"
+                    data-line="elbow"
                     class="absolute -top-2.5 bottom-1/2 left-2 w-3 rounded-bl-sm border-b border-l border-divider-strong"
                   ></span>
                 </span>
-                <span class="min-w-0 font-medium break-words"
-                  >{{ sessionName(s)
-                  }}<span v-if="parent" class="sr-only">. Started by {{ sessionName(parent) }}</span></span
+                <span class="min-w-0 truncate font-medium" :title="sessionName(s)"
+                  >{{ sessionName(s) }}<span v-if="parent" class="sr-only">. Started by {{ sessionName(parent) }}</span
+                  ><span v-if="faded" class="sr-only">. Shown only for the sessions under it</span></span
                 >
               </span>
               <span
                 role="cell"
                 :class="[
-                  'min-w-0 break-words',
-                  s.state === 'waiting'
-                    ? 'font-medium text-attn'
-                    : s.state === 'working'
-                      ? 'text-secondary'
-                      : 'text-tertiary',
+                  'min-w-0 truncate',
+                  faded
+                    ? 'text-tertiary'
+                    : s.state === 'waiting'
+                      ? 'font-medium text-attn'
+                      : s.state === 'working'
+                        ? 'text-secondary'
+                        : 'text-tertiary',
                 ]"
+                :title="s.doing"
                 >{{ s.doing }}</span
               >
-              <span role="cell" class="min-w-0 break-words text-secondary">{{ s.project ?? '' }}</span>
+              <span
+                role="cell"
+                :class="['min-w-0 truncate', faded ? 'text-tertiary' : 'text-secondary']"
+                :title="s.project ?? undefined"
+                >{{ s.project ?? '' }}</span
+              >
               <span role="cell" class="flex min-w-0 items-center gap-1.5">
+                <!-- The provider mark keeps its colour on a faded row: dimmed, Claude's spark would fall below 3:1. -->
                 <ProviderMark :provider="s.provider" size="xs" />
-                <span v-if="s.signedInAs" class="min-w-0 font-medium break-words text-attn"
+                <span
+                  v-if="s.signedInAs"
+                  :class="['min-w-0 truncate font-medium', faded ? 'text-tertiary' : 'text-attn']"
+                  :title="`Signed in as ${s.signedInAs}`"
                   >Signed in as {{ s.signedInAs }}</span
                 >
-                <span v-else class="truncate">{{ sessionAccount(s)?.label }}</span>
+                <span v-else class="min-w-0 truncate" :title="sessionAccount(s)?.label">{{
+                  sessionAccount(s)?.label
+                }}</span>
               </span>
               <span role="cell" class="inline-flex items-center gap-1.5 text-tertiary">
                 <SubagentsBadge v-if="s.subagents.length" :label="subagentsLabel(s)" :count="s.subagents.length" />
               </span>
+              <span role="cell" class="font-mono text-tertiary">{{ s.id.slice(0, 8) }}</span>
               <span role="cell" class="text-right text-tertiary tabular-nums">{{ runningFor(s, store.now) }}</span>
             </WTableRow>
             <div v-if="rows.length === 0" role="row">

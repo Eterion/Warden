@@ -44,19 +44,30 @@ export interface TreeRow {
   rails: boolean[];
   /** Whether this row is the last of its siblings, so its connector ends here. */
   last: boolean;
+  /** Shown only for the sessions under it, as their ancestor: drawn faded and not counted. */
+  faded: boolean;
 }
 
 /**
- * The sessions as a tree, flattened in display order: each session whose `parentId` names a session in the list sits
- * under it; one whose parent is unknown, gone or filtered out stays at the top level. Siblings sort as `sortSessions`
- * does at every level (waiting first), and a parent never moves for its children.
+ * The sessions as a tree, flattened in display order: each session whose `parentId` names a session in the tree sits
+ * under it; one whose parent is unknown or gone stays at the top level. With `from`, the ancestors of the listed
+ * sessions found there join the tree in their places, faded (a filter's matches under their parents). Siblings sort as
+ * `sortSessions` does at every level (waiting first), and a parent never moves for its children.
  */
-export function sessionTree(list: Session[]): TreeRow[] {
-  const byId = new Map(list.map((s) => [s.id, s]));
-  const parentOf = (s: Session): Session | null => {
-    const p = s.parentId !== null ? byId.get(s.parentId) : undefined;
+export function sessionTree(list: Session[], from: Session[] = list): TreeRow[] {
+  const shown = new Set(list);
+  const parentIn = (ids: Map<string, Session>, s: Session): Session | null => {
+    const p = s.parentId !== null ? ids.get(s.parentId) : undefined;
     return p && p !== s ? p : null;
   };
+  // The listed sessions and their ancestors, up to where a loop of parents closes.
+  const known = new Map([...from, ...list].map((s) => [s.id, s]));
+  const inTree = new Set(list);
+  for (const s of list) {
+    for (let p = parentIn(known, s); p && !inTree.has(p); p = parentIn(known, p)) inTree.add(p);
+  }
+  const byId = new Map([...inTree].map((s) => [s.id, s]));
+  const parentOf = (s: Session): Session | null => parentIn(byId, s);
   // A loop of parents (which a real link never makes) is cut where it closes: those sessions go to the top level.
   const inLoop = (s: Session): boolean => {
     const seen = new Set<Session>([s]);
@@ -67,7 +78,7 @@ export function sessionTree(list: Session[]): TreeRow[] {
     return false;
   };
   const children = new Map<Session | null, Session[]>();
-  for (const s of list) {
+  for (const s of inTree) {
     const p = inLoop(s) ? null : parentOf(s);
     children.set(p, [...(children.get(p) ?? []), s]);
   }
@@ -76,7 +87,7 @@ export function sessionTree(list: Session[]): TreeRow[] {
     const kids = sortSessions(children.get(parent) ?? []);
     kids.forEach((s, k) => {
       const last = k === kids.length - 1;
-      out.push({ session: s, depth, parent, rails, last });
+      out.push({ session: s, depth, parent, rails, last, faded: !shown.has(s) });
       walk(s, depth + 1, depth === 0 ? [] : [...rails, !last]);
     });
   };

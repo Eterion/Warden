@@ -181,6 +181,14 @@ export const PAGES: {
     steps: [{ click: 'button[role=checkbox][aria-label$="of Second"]' }, { waitFor: 'text=Show all' }],
   },
   {
+    // Codex checked: its waiting session sits under the main session that started it, which shows faded.
+    name: 'overview-sessions-tree-faded',
+    path: '/',
+    fixture: 'tree',
+    ready: '[aria-labelledby=sessions-heading] >> text=Started by',
+    steps: [{ click: 'button[role=checkbox][aria-label$="of Codex"]' }, { waitFor: 'text=Show all' }],
+  },
+  {
     name: 'overview-resets',
     path: '/',
     fixture: 'resets',

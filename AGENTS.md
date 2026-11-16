@@ -170,7 +170,7 @@ The app itself is the design. `ui/src/styles/tokens.css` and the shared componen
 - Account icon badges: a crown on main; no other badge.
 - Work sent to the other accounts is "delegated work" everywhere.
 - A session's name is plain text: its own title, else its branch in words, else its folder. No work-item tags or numbers taken out of it.
-- The sessions table is a tree: each delegated session sits under the main session that started it, indented with a thin connector, always expanded; waiting rows come first among siblings; a session whose parent is unknown, gone or filtered out stays at the top level.
+- The sessions table is a tree: each delegated session sits under the main session that started it, indented with a thin connector, always expanded; waiting rows come first among siblings; a session whose parent is unknown or gone stays at the top level; while accounts are checked, the ancestors of their sessions show faded in their places.
 
 **States and icons**
 

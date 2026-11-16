@@ -248,10 +248,134 @@ describe('OverviewPage', () => {
     expect(names()[0]!.findAll('[aria-hidden=true]')).toHaveLength(0);
     for (const k of [1, 2]) expect(names()[k]!.findAll('[aria-hidden=true]')).toHaveLength(1);
     expect(page.get('[aria-label="Sessions shown by state"]').text()).toContain('1 waiting for you');
-    // Filtered to Second: its child stands at the top level, with no one named as its parent.
+    // Filtered to Second: its child stays under its parent, which shows faded, only for it.
     await page.get('button[role=checkbox][aria-label$="of Second"]').trigger('click');
-    expect(names().map((c) => c.text())).toEqual(['Admin', 'Orphan']);
-    expect(names()[0]!.findAll('[aria-hidden=true]')).toHaveLength(0);
+    expect(names().map((c) => c.text())).toEqual([
+      'Overview design. Shown only for the sessions under it',
+      'Admin. Started by Overview design',
+      'Orphan',
+    ]);
+    expect(sessionRows(page).map((r) => r.classes().includes('icons-faded'))).toEqual([true, false, false]);
+    expect(page.get('[aria-label="Sessions shown by state"]').text().replace(/\s+/g, ' ')).toBe(
+      '1 working 0 waiting for you 1 idle',
+    );
+  });
+
+  it('shows the faded parent of a checked account that only has child sessions, and does not count it', async () => {
+    store.now = NOW;
+    const st = state([account({ id: 'main', label: 'Main' }), account({ id: 'c', label: 'Codex', provider: 'codex' })]);
+    st.sessions = [
+      session({
+        id: 'm1',
+        accountId: 'main',
+        state: 'waiting',
+        doing: 'Asks to run a command',
+        project: 'warden',
+        name: 'Overview design',
+        subagents: [{ type: 'Explore' }],
+      }),
+      session({
+        id: 'm0',
+        accountId: 'main',
+        state: 'done',
+        doing: 'Ended',
+        name: 'Long gone',
+        endedAt: NOW - 60 * 60_000,
+      }),
+      session({ id: 'k1', accountId: 'c', provider: 'codex', state: 'working', name: 'Review', parentId: 'm1' }),
+      session({ id: 'k2', accountId: 'c', provider: 'codex', state: 'idle', name: 'Old work', parentId: 'm0' }),
+      session({ id: 'm2', accountId: 'main', state: 'idle', name: 'Status skill' }),
+    ];
+    store.state = st;
+    const page = mount(OverviewPage);
+    const names = () => sessionRows(page).map((r) => r.findAll('[role=cell]')[1]!.text());
+    // The ended parent is past its 10 minutes (the core no longer keeps it): its child stands at the top level,
+    // filtered or not.
+    expect(names()).not.toContain('Long gone');
+    expect(names()).toContain('Old work');
+
+    await page.get('button[role=checkbox][aria-label$="of Codex"]').trigger('click');
+    expect(names()).toEqual([
+      'Overview design. Shown only for the sessions under it',
+      'Review. Started by Overview design',
+      'Old work',
+    ]);
+    const [parent, child] = sessionRows(page);
+    // Faded: no amber, its text tertiary, its icons dimmed; the provider mark keeps its colour (3:1).
+    expect(parent!.classes()).toEqual(expect.arrayContaining(['icons-faded', 'text-tertiary']));
+    expect(parent!.classes()).not.toContain('bg-attn-bg');
+    const cells = parent!.findAll('[role=cell]');
+    expect(cells[2]!.classes()).toContain('text-tertiary');
+    expect(cells[2]!.classes()).not.toContain('text-attn');
+    expect(cells[3]!.classes()).toContain('text-tertiary');
+    expect(cells[4]!.find('img').classes()).not.toContain('opacity-55');
+    expect(child!.classes()).not.toContain('icons-faded');
+    expect(child!.find('[role=cell]').attributes('aria-label')).toBe('Working');
+    // Only the Codex sessions count.
+    expect(page.get('[aria-label="Sessions shown by state"]').text().replace(/\s+/g, ' ')).toBe(
+      '1 working 0 waiting for you 1 idle',
+    );
+    expect(page.text()).not.toContain('No sessions for the checked accounts');
+  });
+
+  it('shows the start of each session id in its own column', () => {
+    store.now = NOW;
+    const st = state([account({ id: 'main', label: 'Main' })]);
+    st.sessions = [
+      session({ id: '0a1b2c3d-4e5f-6789', accountId: 'main', state: 'working', name: 'Same task' }),
+      session({ id: '9f8e7d6c-5b4a-3210', accountId: 'main', state: 'working', name: 'Same task' }),
+    ];
+    store.state = st;
+    const page = mount(OverviewPage);
+    const heads = page.findAll('[aria-labelledby=sessions-heading] [role=columnheader]').map((h) => h.text());
+    expect(heads.slice(5)).toEqual(['Subagents', 'ID', 'Running for']);
+    const ids = sessionRows(page).map((r) => r.findAll('[role=cell]')[6]!);
+    expect(ids.map((c) => c.text())).toEqual(['0a1b2c3d', '9f8e7d6c']);
+    expect(ids[0]!.classes()).toEqual(expect.arrayContaining(['font-mono', 'text-tertiary']));
+  });
+
+  it('draws each part of the connectors once, through the row border and padding without overlap', () => {
+    store.now = NOW;
+    const st = state([account({ id: 'main', label: 'Main' })]);
+    const at = (k: number) => NOW - (20 - k) * 60_000;
+    st.sessions = [
+      session({ id: 'm', accountId: 'main', state: 'working', startedAt: at(0) }),
+      session({ id: 'a', accountId: 'main', state: 'working', parentId: 'm', startedAt: at(1) }),
+      session({ id: 'a1', accountId: 'main', state: 'working', parentId: 'a', startedAt: at(2) }),
+      session({ id: 'a2', accountId: 'main', state: 'working', parentId: 'a', startedAt: at(3) }),
+      session({ id: 'b', accountId: 'main', state: 'working', parentId: 'm', startedAt: at(4) }),
+      session({ id: 'b1', accountId: 'main', state: 'working', parentId: 'b', startedAt: at(5) }),
+    ];
+    store.state = st;
+    const page = mount(OverviewPage);
+    // Per row, per level: the parts drawn there.
+    const parts = sessionRows(page).map((r) =>
+      r
+        .findAll('[role=cell]')[1]!
+        .findAll(':scope > [aria-hidden=true]')
+        .map((level) =>
+          level
+            .findAll('[data-line]')
+            .map((l) => l.attributes('data-line'))
+            .join('+'),
+        ),
+    );
+    expect(parts).toEqual([[], ['rail+stub'], ['rail', 'rail+stub'], ['rail', 'elbow'], ['elbow'], ['', 'elbow']]);
+    for (const level of page.findAll('[aria-labelledby=sessions-heading] [role=cell] > [aria-hidden=true]')) {
+      const lines = level.findAll('[data-line]');
+      // One vertical and one horizontal line at most in a level, each from one element.
+      expect(lines.filter((l) => l.classes().includes('border-l'))).toHaveLength(Math.min(1, lines.length));
+      expect(lines.filter((l) => l.classes().includes('border-b')).length).toBeLessThanOrEqual(1);
+      for (const l of lines) {
+        const c = l.classes();
+        // From the top of the row's border to the bottom of its padding: the border and py-2.25 above, py-2.25 below.
+        if (c.includes('border-l')) expect(c).toContain('-top-2.5');
+        if (l.attributes('data-line') === 'rail') expect(c).toContain('-bottom-2.25');
+        // The stub starts right of the rail, which has the pixel they share.
+        if (l.attributes('data-line') === 'stub') expect(c).toContain('left-2.25');
+      }
+    }
+    expect(sessionRows(page)[0]!.classes()).toContain('py-2.25');
   });
 
   it('lists sessions with waiting rows first and counts them in the legend', () => {
@@ -309,6 +433,46 @@ describe('OverviewPage', () => {
     const rows = sessionRows(page);
     expect(rows[0]!.findAll('[role=cell]')[4]!.text()).toBe('Signed in as me@home.example');
     expect(rows[1]!.findAll('[role=cell]')[4]!.text()).toBe('Main');
+  });
+
+  it('keeps every sessions row on one line: name, doing now, project and account truncate, the full text in title', () => {
+    store.now = NOW;
+    const st = state([account({ id: 'main', label: 'Main' }), account({ id: 'x', label: 'Second account' })]);
+    st.sessions = [
+      session({ id: 'm1', accountId: 'main', state: 'waiting', name: 'Overview design', project: 'warden' }),
+      session({
+        id: 'k1',
+        accountId: 'x',
+        state: 'idle',
+        doing: 'Waiting for your next message',
+        project: 'a-rather-long-project-name',
+        name: 'A long session name that would wrap in a narrow table',
+        parentId: 'm1',
+      }),
+      session({ id: 'w', accountId: 'main', state: 'working', signedInAs: 'someone-else@example.com' }),
+    ];
+    store.state = st;
+    const page = mount(OverviewPage);
+    const rows = sessionRows(page);
+    const [, child, signedIn] = rows;
+    const cells = child!.findAll('[role=cell]');
+    const name = cells[1]!.get('.truncate');
+    expect(name.attributes('title')).toBe('A long session name that would wrap in a narrow table');
+    // Screen readers still hear who started it.
+    expect(name.text()).toBe('A long session name that would wrap in a narrow table. Started by Overview design');
+    expect(cells[2]!.attributes('title')).toBe('Waiting for your next message');
+    expect(cells[3]!.attributes('title')).toBe('a-rather-long-project-name');
+    const label = cells[4]!.get('.truncate');
+    expect(label.text()).toBe('Second account');
+    expect(label.attributes('title')).toBe('Second account');
+    for (const el of [name, cells[2]!, cells[3]!, label]) {
+      expect(el.classes()).toEqual(expect.arrayContaining(['truncate', 'min-w-0']));
+      expect(el.classes()).not.toContain('break-words');
+    }
+    const other = signedIn!.findAll('[role=cell]')[4]!.get('.truncate');
+    expect(other.classes()).toContain('text-attn');
+    expect(other.attributes('title')).toBe('Signed in as someone-else@example.com');
+    expect(page.html()).not.toContain('break-words');
   });
 
   it('filters the sessions by the checked accounts, with chips and Show all', async () => {

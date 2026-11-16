@@ -168,6 +168,12 @@
     "use": "icons in the content panel"
   },
   {
+    "fg": "icon-faded",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "icons of a faded sessions row (an ancestor of the checked accounts' sessions)"
+  },
+  {
     "fg": "icon",
     "bg": ["modal"],
     "min": 3,

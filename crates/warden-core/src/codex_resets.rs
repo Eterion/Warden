@@ -1,6 +1,7 @@
 //! Codex's banked resets: one-time resets of a Codex account's usage limits, saved to the account until used or
 //! expired. Read the way Codex's own client reads them, from ChatGPT's backend with the account's own login: one
-//! small request per Codex account on the usage interval. Only each available reset's title and expiry are kept.
+//! small request per Codex account, with a usage reading every few hours ([`RESETS_EVERY_MS`]) and on a usage
+//! refresh by hand. Only each available reset's title and expiry are kept.
 
 use crate::claude::{describe_transport_error, tls_config};
 use crate::policy::ALLOWED_OUTBOUND_HOSTS;
@@ -24,6 +25,17 @@ pub struct Reset {
     pub title: Option<String>,
     /// When it expires (ms since the epoch); `None` when it does not.
     pub expires_at: Option<i64>,
+}
+
+/// How often a usage reading on its interval also reads an account's limit resets (a Claude account's in its usage
+/// answer, a Codex account's banked resets): they change rarely. A usage refresh by hand reads them every time.
+pub const RESETS_EVERY_MS: i64 = 3 * 60 * 60 * 1000;
+
+/// Whether a usage reading on its interval asks for an account's resets: never read since Warden started, last read
+/// [`RESETS_EVERY_MS`] ago or more, or a clock set back since. `last_read` is the last read that gave the resets; a
+/// failed one is not counted, so the next reading asks again.
+pub fn resets_due(last_read: Option<i64>, now: i64) -> bool {
+    last_read.is_none_or(|at| now < at || now - at >= RESETS_EVERY_MS)
 }
 
 /// Sends the one request the resets need. A trait so tests can stand in for ChatGPT's backend.
@@ -251,6 +263,23 @@ mod tests {
             read_response(200, ANSWER.as_bytes()).map(|r| r.len()),
             Ok(3)
         );
+    }
+
+    #[test]
+    fn resets_are_due_when_never_read_or_three_hours_after_the_last_read() {
+        const HOUR: i64 = 60 * 60 * 1000;
+        assert_eq!(RESETS_EVERY_MS, 3 * HOUR);
+        let read = 10 * HOUR;
+        // Never read since Warden started.
+        assert!(resets_due(None, read));
+        // Under 3 hours since the last read.
+        assert!(!resets_due(Some(read), read));
+        assert!(!resets_due(Some(read), read + 3 * HOUR - 1));
+        // 3 hours or more.
+        assert!(resets_due(Some(read), read + 3 * HOUR));
+        assert!(resets_due(Some(read), read + 30 * HOUR));
+        // A clock set back since the last read does not hold them off for hours.
+        assert!(resets_due(Some(read), read - 1));
     }
 
     #[test]

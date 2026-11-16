@@ -96,11 +96,12 @@ fn main() -> ExitCode {
         eprintln!("warden-server: no data folder; pass --data-dir");
         return ExitCode::from(2);
     };
+    let cli_version = warden_core::claude::installed_cli_version(&env);
     let config = Config {
         data_dir,
         ui_dir: args.ui_dir,
         env,
-        endpoint: Arc::new(AnthropicUsageEndpoint::new()),
+        endpoint: Arc::new(AnthropicUsageEndpoint::new(cli_version.as_deref())),
         resets: Arc::new(warden_core::codex_resets::ChatGptResetsEndpoint::new()),
         sign_in_server: Arc::new(warden_core::mainlogin::AnthropicSignInServer::default()),
         sign_in: Arc::new(fallback::start_sign_in),

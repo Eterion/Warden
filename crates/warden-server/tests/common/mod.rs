@@ -45,29 +45,53 @@ pub const CLAUDE_ANSWER: &str = r#"{
     "extra_usage": {"is_enabled": false, "monthly_limit": null, "used_credits": null, "utilization": null}
 }"#;
 
-/// Stands in for Anthropic's usage endpoint and remembers the tokens it was sent.
+/// Stands in for Anthropic's usage endpoint and remembers the tokens it was sent and whether each request asked for the
+/// limit resets. As the endpoint, it answers the `cedar_ember` block only when asked.
 #[derive(Default)]
 pub struct FakeEndpoint {
     pub tokens_seen: Mutex<Vec<String>>,
+    pub resets_asked: Mutex<Vec<bool>>,
     pub answer: Mutex<Option<(u16, String)>>,
+    /// Runs once while the next request is in flight.
+    #[allow(clippy::type_complexity)]
+    pub during: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl UsageEndpoint for FakeEndpoint {
     fn fetch(
         &self,
         token: &Secret,
+        resets: bool,
     ) -> Result<warden_core::model::Usage, warden_core::model::UsageError> {
         self.tokens_seen
             .lock()
             .expect("lock")
             .push(token.expose().to_owned());
+        self.resets_asked.lock().expect("lock").push(resets);
+        let during = self.during.lock().expect("lock").take();
+        if let Some(during) = during {
+            during();
+        }
         let (status, body) = self
             .answer
             .lock()
             .expect("lock")
             .clone()
             .unwrap_or((200, CLAUDE_ANSWER.to_owned()));
+        let body = if resets { body } else { without_resets(&body) };
         warden_core::claude::read_response(status, body.as_bytes())
+    }
+}
+
+/// The usage answer as it comes without `?cedar_ember=1`: the same, without the limit resets block. A body that is not
+/// a JSON object stays as it is.
+pub fn without_resets(body: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(body) {
+        Ok(serde_json::Value::Object(mut answer)) => {
+            answer.remove("cedar_ember");
+            serde_json::Value::Object(answer).to_string()
+        }
+        _ => body.to_owned(),
     }
 }
 

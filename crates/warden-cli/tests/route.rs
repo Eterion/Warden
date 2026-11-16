@@ -102,6 +102,7 @@ fn route_uses_the_same_normalised_reserve_as_the_server() {
         }),
         per_model_weekly: Vec::new(),
         extra: None,
+        resets: None,
     });
     store::save(&data, READINGS_FILE, &readings).expect("readings");
     let (out, _) = route(&data, "main", r#"{"session_id":"normalised-reserve"}"#);
@@ -244,6 +245,7 @@ fn used_up_delegated_weeks_tell_main_to_keep_work_once_until_the_decision_change
         }),
         per_model_weekly: Vec::new(),
         extra: None,
+        resets: None,
     });
     store::save(&data, READINGS_FILE, &readings).expect("readings");
     let input = r#"{"session_id":"used-up-weeks"}"#;
@@ -355,6 +357,7 @@ fn known_main_usage_changes_its_advice_at_the_reserve_line() {
         }),
         per_model_weekly: vec![],
         extra: None,
+        resets: None,
     });
     store::save(&data, READINGS_FILE, &readings).expect("save");
     let input = r#"{"session_id":"main-session"}"#;

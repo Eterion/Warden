@@ -138,8 +138,9 @@ pub fn start_core(config: Config) -> io::Result<Core> {
     {
         let app = Arc::clone(&app);
         threads.push(std::thread::spawn(move || {
-            // Usage on its interval: one small request per Claude account, then wait. After the first reading
-            // (identity checked), sessions from the CLIs' own lists once, for accounts no hook reports yet.
+            // Usage on its interval: one small request per Claude account (limit resets only when due), then wait.
+            // After the first reading (identity checked), sessions from the CLIs' own lists once, for accounts no hook
+            // reports yet.
             let mut first = true;
             loop {
                 app.read_claude_usage();

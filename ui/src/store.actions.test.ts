@@ -32,7 +32,14 @@ describe('apply', () => {
     store.connected = false;
     const next = {
       ...state([]),
-      settings: { reserve: 25, usageIntervalMin: 5, theme: 'dark' as const, keepInTray: false, workHours: null },
+      settings: {
+        reserve: 25,
+        usageIntervalMin: 5,
+        theme: 'dark' as const,
+        keepInTray: false,
+        workHours: null,
+        resetWarningDays: 3,
+      },
     };
     apply(next);
     expect(store.state).toStrictEqual(next);

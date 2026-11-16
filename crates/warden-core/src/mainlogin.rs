@@ -124,13 +124,14 @@ pub fn begin_sign_in(lock: &ServerLock) -> Result<(PathBuf, MainLogin), UsageErr
     ))
 }
 
-/// Identity is checked before opening the login. Only the lock holder may renew this one sign-in.
+/// Identity is checked before opening the login. Only the lock holder may renew this one sign-in. The endpoint comes
+/// with whether the usage request also asks for main's limit resets.
 pub fn read_for_main(
     lock: &ServerLock,
     expected: Option<&Identity>,
     main_changed: bool,
     login: &mut MainLogin,
-    endpoint: &dyn UsageEndpoint,
+    (endpoint, resets): (&dyn UsageEndpoint, bool),
     server: &dyn SignInServer,
     now: i64,
 ) -> Result<Usage, UsageError> {
@@ -173,6 +174,7 @@ pub fn read_for_main(
         endpoint,
         server,
         now,
+        resets,
     );
     login.renewed_until = renewed;
     login.newly_refused = !was_expired && login.expired;
@@ -323,8 +325,9 @@ pub fn read_usage(
     endpoint: &dyn UsageEndpoint,
     server: &dyn SignInServer,
     now: i64,
+    resets: bool,
 ) -> Result<Usage, UsageError> {
-    read_usage_noting(lock, expired, &mut None, endpoint, server, now)
+    read_usage_noting(lock, expired, &mut None, endpoint, server, now, resets)
 }
 
 /// [`read_usage`], noting in `renewed` until when a renewed sign-in holds, for the log line.
@@ -335,6 +338,7 @@ fn read_usage_noting(
     endpoint: &dyn UsageEndpoint,
     server: &dyn SignInServer,
     now: i64,
+    resets: bool,
 ) -> Result<Usage, UsageError> {
     if *expired {
         return Err(UsageError::LoginExpired { status: None });
@@ -403,7 +407,7 @@ fn read_usage_noting(
                                 .as_ref()
                                 .filter(|t| !t.is_empty())
                                 .ok_or(UsageError::SignedOut)?;
-                            return endpoint.fetch(access);
+                            return endpoint.fetch(access, resets);
                         }
                         return Err(failed(
                             "Warden's sign-in changed during renewal; it will be read again",
@@ -465,7 +469,7 @@ fn read_usage_noting(
         .access_token
         .filter(|t| !t.is_empty())
         .ok_or(UsageError::SignedOut)?;
-    endpoint.fetch(&token).map(|mut usage| {
+    endpoint.fetch(&token, resets).map(|mut usage| {
         usage.read_at = now;
         usage
     })
@@ -498,9 +502,9 @@ mod tests {
             expected: "fixture-new".into(),
         };
         let mut expired = false;
-        assert!(read_usage(&lock, &mut expired, &endpoint, &server, 100).is_ok());
+        assert!(read_usage(&lock, &mut expired, &endpoint, &server, 100, false).is_ok());
         assert!(!expired);
-        assert!(read_usage(&lock, &mut expired, &endpoint, &server, 200).is_ok());
+        assert!(read_usage(&lock, &mut expired, &endpoint, &server, 200, false).is_ok());
     }
 
     #[test]
@@ -518,7 +522,15 @@ mod tests {
         };
         let mut login = MainLogin::default();
         assert_eq!(
-            read_for_main(&lock, None, false, &mut login, &endpoint, &server, 0),
+            read_for_main(
+                &lock,
+                None,
+                false,
+                &mut login,
+                (&endpoint, true),
+                &server,
+                0
+            ),
             Err(UsageError::SignedOut)
         );
         assert_eq!(login.sign_in.state, SignInState::SignedOut);
@@ -564,7 +576,7 @@ mod tests {
         expected: String,
     }
     impl UsageEndpoint for FakeUsage {
-        fn fetch(&self, token: &Secret) -> Result<Usage, UsageError> {
+        fn fetch(&self, token: &Secret, _resets: bool) -> Result<Usage, UsageError> {
             assert_eq!(token.expose(), self.expected);
             let saved: serde_json::Value =
                 serde_json::from_slice(&fs::read(&self.path).expect("saved before use"))
@@ -612,7 +624,8 @@ mod tests {
                 expected: new.clone(),
             };
             let mut expired = false;
-            let result = read_usage(&lock, &mut expired, &usage, &fake, 100).expect("renewed");
+            let result =
+                read_usage(&lock, &mut expired, &usage, &fake, 100, false).expect("renewed");
             assert_eq!(result.read_at, 100);
             assert!(!expired);
             assert_eq!(
@@ -657,6 +670,7 @@ mod tests {
             },
             &fake,
             100,
+            false,
         )
         .expect("due");
         assert_eq!(fake.seen.lock().expect("lock").len(), 1);
@@ -676,6 +690,7 @@ mod tests {
             },
             &fake,
             100,
+            false,
         )
         .expect("current");
         assert!(fake.seen.lock().expect("lock").is_empty());
@@ -706,6 +721,7 @@ mod tests {
             },
             &fake,
             100,
+            false,
         );
         fs::set_permissions(&path, original_permissions).expect("restore");
         assert_eq!(
@@ -728,13 +744,13 @@ mod tests {
             };
             let mut expired = false;
             assert_eq!(
-                read_usage(&lock, &mut expired, &usage, &fake, 100),
+                read_usage(&lock, &mut expired, &usage, &fake, 100, false),
                 Err(UsageError::LoginExpired {
                     status: Some(status)
                 })
             );
             assert!(expired);
-            assert!(read_usage(&lock, &mut expired, &usage, &fake, 200).is_err());
+            assert!(read_usage(&lock, &mut expired, &usage, &fake, 200, false).is_err());
             assert_eq!(fake.seen.lock().expect("lock").len(), 1);
             assert_eq!(fs::read(path).expect("read"), before);
         }
@@ -756,7 +772,8 @@ mod tests {
                     expected: "never sent".into()
                 },
                 &fake,
-                100
+                100,
+                false
             ),
             Err(failed("Warden's sign-in could not be renewed"))
         );

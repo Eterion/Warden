@@ -34,6 +34,7 @@ fn usage(r: &mut Readings, id: &str, five: Option<f64>, week: Option<f64>, reset
         }),
         per_model_weekly: vec![],
         extra: None,
+        resets: None,
     });
 }
 fn setup() -> (Settings, Readings) {

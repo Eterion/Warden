@@ -1308,3 +1308,272 @@ fn codex_resets_are_read_kept_through_failures_and_hidden_for_someone_else() {
     );
     server.stop();
 }
+
+/// A usage answer with the account's limit resets: two full resets in one grant and a 5-hour one.
+const CLAUDE_RESETS_ANSWER: &str = r#"{
+    "five_hour": {"utilization": 20.0, "resets_at": null},
+    "seven_day": {"utilization": 30.0, "resets_at": null},
+    "cedar_ember": {"eligible": true, "ineligible_reason": null, "grants": [
+        {"id": "grant-1", "label": "One full limit reset (November 2026)", "resets_total": 2, "resets_left": 2,
+         "ends_at": "2026-12-10T22:00:00Z", "clears": ["five_hour", "seven_day"], "gives_back_weekly": false},
+        {"id": "grant-2", "label": "A session reset", "resets_total": 1, "resets_left": 1,
+         "ends_at": "2026-12-01T08:00:00Z", "clears": ["five_hour"], "type": "session"}
+    ], "event_props": {"campaign": "fixture-campaign"}}
+}"#;
+
+#[test]
+fn claude_limit_resets_come_with_usage_for_main_and_warden_accounts() {
+    let f = Fixture::new();
+    f.main_sign_in(
+        "fixture-main@example.com",
+        "own-access",
+        "own-refresh",
+        9_999_999_999_999,
+    );
+    let folder = f.claude_folder(".claude-work", "work@example.com", "work-token");
+    *f.endpoint.answer.lock().expect("lock") = Some((200, CLAUDE_RESETS_ANSWER.into()));
+    let server = f.start();
+    let addr = server.addr;
+    add(addr, "claude", &folder, "Work");
+    let at = |s: &str| warden_core::time::parse_rfc3339_ms(s);
+    let expected = json!([
+        {"title": "5-hour reset", "expiresAt": at("2026-12-01T08:00:00Z")},
+        {"title": "Full reset", "expiresAt": at("2026-12-10T22:00:00Z")},
+        {"title": "Full reset", "expiresAt": at("2026-12-10T22:00:00Z")},
+    ]);
+    let s = call(addr, "POST", "/api/usage/refresh", None).json();
+    assert_eq!(s["main"]["usage"]["weekly"]["usedPercent"], 30.0);
+    assert_eq!(s["main"]["resets"], expected);
+    assert_eq!(s["accounts"][0]["resets"], expected);
+    // Only the short names and expiries are kept, and never inside the usage reading.
+    let saved = std::fs::read_to_string(f.data.path().join("readings.json")).expect("readings");
+    for gone in ["grant-1", "November", "fixture-campaign", "A session reset"] {
+        assert!(!saved.contains(gone), "{gone} in {saved}");
+    }
+    assert!(s["main"]["usage"].get("resets").is_none());
+
+    // An answer without the block, or a failed read: the last list stays.
+    *f.endpoint.answer.lock().expect("lock") = Some((200, common::CLAUDE_ANSWER.into()));
+    let s = call(addr, "POST", "/api/usage/refresh", None).json();
+    assert_eq!(s["accounts"][0]["resets"], expected);
+    *f.endpoint.answer.lock().expect("lock") = Some((503, "busy".into()));
+    let s = call(addr, "POST", "/api/usage/refresh", None).json();
+    assert_eq!(s["main"]["resets"], expected);
+    assert_eq!(s["accounts"][0]["resets"], expected);
+
+    // Signed in as someone else: not shown, and kept for when the change is undone.
+    set_claude_identity(&folder, "other@example.com");
+    *f.endpoint.answer.lock().expect("lock") = Some((200, CLAUDE_RESETS_ANSWER.into()));
+    let s = call(addr, "POST", "/api/usage/refresh", None).json();
+    assert!(s["accounts"][0]["identityChange"].is_object());
+    assert_eq!(s["accounts"][0]["resets"], json!([]));
+    assert_eq!(s["main"]["resets"], expected);
+    set_claude_identity(&folder, "work@example.com");
+    let s = call(addr, "POST", "/api/usage/refresh", None).json();
+    assert_eq!(s["accounts"][0]["resets"], expected);
+
+    // Not eligible: none.
+    *f.endpoint.answer.lock().expect("lock") = Some((
+        200,
+        r#"{"seven_day": {"utilization": 1}, "cedar_ember": {"eligible": false, "ineligible_reason": "surface", "grants": []}}"#.into(),
+    ));
+    let s = call(addr, "POST", "/api/usage/refresh", None).json();
+    assert_eq!(s["main"]["resets"], json!([]));
+    assert_eq!(s["accounts"][0]["resets"], json!([]));
+    server.stop();
+}
+
+#[test]
+fn the_reset_warning_is_checked_and_saved() {
+    let f = Fixture::new();
+    let server = f.start();
+    let addr = server.addr;
+    assert_eq!(state(addr)["settings"]["resetWarningDays"], 3);
+    for bad in [json!(0), json!(15), json!(2.5), json!("5"), json!(-1)] {
+        let reply = call(
+            addr,
+            "PUT",
+            "/api/settings",
+            Some(&json!({"resetWarningDays": bad, "theme": "dark"}).to_string()),
+        );
+        assert_eq!(reply.status, 400, "{bad}");
+        assert_eq!(state(addr)["settings"]["resetWarningDays"], 3);
+        assert_eq!(state(addr)["settings"]["theme"], "system");
+    }
+    for days in [1, 14, 7] {
+        let set = call(
+            addr,
+            "PUT",
+            "/api/settings",
+            Some(&json!({ "resetWarningDays": days }).to_string()),
+        );
+        assert_eq!(set.status, 200, "{}", set.body);
+        assert_eq!(set.json()["settings"]["resetWarningDays"], days);
+    }
+    server.stop();
+    let server = f.start();
+    assert_eq!(state(server.addr)["settings"]["resetWarningDays"], 7);
+    server.stop();
+}
+
+/// What the stand-in endpoints were asked since `from`: per Claude token whether the request asked for the limit
+/// resets, and how many Codex resets requests were sent.
+fn asked_since(f: &Fixture, from: (usize, usize)) -> (Vec<(String, bool)>, usize) {
+    let tokens = f.endpoint.tokens_seen.lock().expect("lock").clone();
+    let asked = f.endpoint.resets_asked.lock().expect("lock").clone();
+    assert_eq!(tokens.len(), asked.len());
+    let claude = tokens.into_iter().zip(asked).skip(from.0).collect();
+    let codex = f.resets.seen.lock().expect("lock").len() - from.1;
+    (claude, codex)
+}
+
+fn asked_so_far(f: &Fixture) -> (usize, usize) {
+    (
+        f.endpoint.tokens_seen.lock().expect("lock").len(),
+        f.resets.seen.lock().expect("lock").len(),
+    )
+}
+
+#[test]
+fn limit_resets_are_read_every_few_hours_on_the_interval_and_always_on_refresh() {
+    let f = Fixture::new();
+    f.main_sign_in(
+        "fixture-main@example.com",
+        "own-access",
+        "own-refresh",
+        9_999_999_999_999,
+    );
+    let claude = f.claude_folder(".claude-work", "work@example.com", "work-token");
+    let codex = f.codex_folder(".codex-work", "me@acme.example", "codex-token");
+    *f.endpoint.answer.lock().expect("lock") = Some((200, CLAUDE_RESETS_ANSWER.into()));
+    *f.resets.answer.lock().expect("lock") = Some((200, common::RESETS_ANSWER.into()));
+    let server = f.start();
+    let addr = server.addr;
+    add(addr, "claude", &claude, "Work");
+    add(addr, "codex", &codex, "Codex");
+    f.endpoint.settled_calls(&server);
+
+    // The first interval readings (at start, and on adding each account) asked every account for its resets.
+    let (first, codex_requests) = asked_since(&f, (0, 0));
+    for token in ["own-access", "work-token"] {
+        assert!(
+            first.iter().any(|(t, asked)| t == token && *asked),
+            "{token}: {first:?}"
+        );
+    }
+    assert_eq!(codex_requests, 1);
+    let s = state(addr);
+    assert_eq!(s["main"]["resets"].as_array().map(Vec::len), Some(3));
+    assert_eq!(s["accounts"][0]["resets"].as_array().map(Vec::len), Some(3));
+    assert_eq!(s["accounts"][1]["resets"].as_array().map(Vec::len), Some(1));
+
+    // The next interval reading, right after: the plain usage request, no Codex resets request, and the lists stay.
+    let from = asked_so_far(&f);
+    server.app.read_claude_usage();
+    assert_eq!(
+        asked_since(&f, from),
+        (
+            vec![("own-access".into(), false), ("work-token".into(), false)],
+            0
+        )
+    );
+    let s = state(addr);
+    assert_eq!(s["main"]["resets"].as_array().map(Vec::len), Some(3));
+    assert_eq!(s["accounts"][0]["resets"].as_array().map(Vec::len), Some(3));
+    assert_eq!(s["accounts"][1]["resets"].as_array().map(Vec::len), Some(1));
+
+    // Refreshed by hand: every account is asked again, main included.
+    let from = asked_so_far(&f);
+    call(addr, "POST", "/api/usage/refresh", None);
+    assert_eq!(
+        asked_since(&f, from),
+        (
+            vec![("own-access".into(), true), ("work-token".into(), true)],
+            1
+        )
+    );
+    let from = asked_so_far(&f);
+    server.app.read_claude_usage();
+    assert_eq!(
+        asked_since(&f, from),
+        (
+            vec![("own-access".into(), false), ("work-token".into(), false)],
+            0
+        )
+    );
+    server.stop();
+}
+
+#[test]
+fn a_failed_resets_read_is_asked_again_on_the_next_interval_reading() {
+    let f = Fixture::new();
+    f.main_sign_in(
+        "fixture-main@example.com",
+        "own-access",
+        "own-refresh",
+        9_999_999_999_999,
+    );
+    let claude = f.claude_folder(".claude-work", "work@example.com", "work-token");
+    let codex = f.codex_folder(".codex-work", "me@acme.example", "codex-token");
+    // Claude answers without a readable block (the usage alone), Codex's backend fails.
+    *f.endpoint.answer.lock().expect("lock") = Some((200, common::CLAUDE_ANSWER.into()));
+    *f.resets.answer.lock().expect("lock") = Some((503, "busy".into()));
+    let server = f.start();
+    let addr = server.addr;
+    add(addr, "claude", &claude, "Work");
+    add(addr, "codex", &codex, "Codex");
+    f.endpoint.settled_calls(&server);
+
+    let every = |codex| {
+        (
+            vec![("own-access".into(), true), ("work-token".into(), true)],
+            codex,
+        )
+    };
+    for _ in 0..2 {
+        let from = asked_so_far(&f);
+        server.app.read_claude_usage();
+        assert_eq!(asked_since(&f, from), every(1));
+    }
+    // A failed Claude request does not count either.
+    *f.endpoint.answer.lock().expect("lock") = Some((503, "busy".into()));
+    let from = asked_so_far(&f);
+    server.app.read_claude_usage();
+    assert_eq!(asked_since(&f, from), every(1));
+    // The failure was logged once, as before.
+    assert_eq!(
+        f.log_text()
+            .matches("Codex: no banked resets reading (HTTP 503: server error)")
+            .count(),
+        1,
+        "{}",
+        f.log_text()
+    );
+
+    // Read at last: counted, so the next interval reading does not ask. An ineligible answer counts too.
+    *f.endpoint.answer.lock().expect("lock") = Some((
+        200,
+        r#"{"seven_day": {"utilization": 1}, "cedar_ember": {"eligible": false, "grants": []}}"#
+            .into(),
+    ));
+    *f.resets.answer.lock().expect("lock") = Some((200, common::RESETS_ANSWER.into()));
+    let from = asked_so_far(&f);
+    server.app.read_claude_usage();
+    assert_eq!(asked_since(&f, from), every(1));
+    let from = asked_so_far(&f);
+    server.app.read_claude_usage();
+    assert_eq!(
+        asked_since(&f, from),
+        (
+            vec![("own-access".into(), false), ("work-token".into(), false)],
+            0
+        )
+    );
+    assert_eq!(
+        state(addr)["accounts"][1]["resets"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    server.stop();
+}

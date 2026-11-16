@@ -5,6 +5,7 @@ import { store } from '../store';
 import type { State } from '../api';
 import { fakeServer } from '../test/api';
 import { state } from '../test/state';
+import WSlider from '../components/WSlider.vue';
 import GeneralSection from './GeneralSection.vue';
 
 enableAutoUnmount(afterEach);
@@ -77,5 +78,31 @@ describe('GeneralSection', () => {
     await flushPromises();
     expect(refused.page.get('[role=alert]').text()).toBe('Setup is already running.');
     expect(route.settingsOpen.value).toBe(true);
+  });
+
+  it('saves how soon before a reset expires it warns, once per drag, and puts it back when refused', async () => {
+    const { page, calls } = setup();
+    const slider = page.getComponent(WSlider);
+    expect(slider.props()).toMatchObject({ min: 1, max: 14, step: 1, labelledby: 'reset-warning-label' });
+    expect(page.get('#reset-warning-label').text()).toBe('Warn before a reset expires');
+    expect(page.get('[role=slider]').attributes('aria-labelledby')).toBe('reset-warning-label');
+    expect(page.get('[data-reset-warning]').text()).toBe('3 days');
+    slider.vm.$emit('update:modelValue', 2);
+    slider.vm.$emit('update:modelValue', 1);
+    await flushPromises();
+    expect(calls).toEqual([]);
+    expect(page.get('[data-reset-warning]').text()).toBe('1 day');
+    expect(slider.props('valueText')).toBe('1 day');
+    slider.vm.$emit('commit', 1);
+    await flushPromises();
+    expect(calls).toEqual([{ method: 'PUT', path: '/api/settings', body: { resetWarningDays: 1 } }]);
+
+    const refused = setup({}, () => ({ status: 400, error: 'Warn from 1 to 14 days before a reset expires.' }));
+    const other = refused.page.getComponent(WSlider);
+    other.vm.$emit('update:modelValue', 9);
+    other.vm.$emit('commit', 9);
+    await flushPromises();
+    expect(refused.page.get('[role=alert]').text()).toBe('Warn from 1 to 14 days before a reset expires.');
+    expect(refused.page.get('[data-reset-warning]').text()).toBe('3 days');
   });
 });

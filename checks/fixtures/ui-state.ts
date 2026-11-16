@@ -85,7 +85,14 @@ export function normalState(now: number): State {
     setupDone: true,
     dataDir: `${HOME}\\AppData\\Roaming\\Warden`,
     logDir: `${HOME}\\AppData\\Roaming\\Warden\\logs`,
-    settings: { reserve: 25, usageIntervalMin: 5, theme: 'system', keepInTray: false, workHours: null },
+    settings: {
+      reserve: 25,
+      usageIntervalMin: 5,
+      theme: 'system',
+      keepInTray: false,
+      workHours: null,
+      resetWarningDays: 3,
+    },
     accounts: accounts.slice(1),
     main: { ...accounts[0]!, signIn: { state: 'signedIn', email: accounts[0]!.identity?.email ?? null } },
     problems: [],
@@ -351,11 +358,24 @@ export function treeState(now: number): State {
   return s;
 }
 
-/** The Overview with limit resets: Codex has two, one of them next year; a switched-off account's are not shown. */
+/**
+ * The Overview with limit resets: main's Claude resets (two full resets, one of them inside the warning days, and a
+ * 5-hour reset), Codex has two, one of them next year; a switched-off account's are not shown.
+ */
 export function resetsState(now: number): State {
   const s = healthyState(now);
   const day = 24 * HOUR;
   const nextYear = new Date(new Date(now).getFullYear() + 1, 2, 9, 23, 0).getTime();
+  if (s.main) {
+    s.main = {
+      ...s.main,
+      resets: [
+        { title: 'Full reset', expiresAt: now + 2 * day },
+        { title: '5-hour reset', expiresAt: now + 6 * day },
+        { title: 'Full reset', expiresAt: now + 12 * day },
+      ],
+    };
+  }
   s.accounts = s.accounts.map((a) =>
     a.id === 'a3'
       ? {

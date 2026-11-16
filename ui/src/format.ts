@@ -39,14 +39,40 @@ export function resetTime(at: number, now: number): string {
   return `${part('day')} ${part('month')}`;
 }
 
-/** "Expires 10 Dec, 23:00", with the year when it is not this year's. Local time, 24-hour. */
-export function expiryText(at: number | null, now: number): string {
+/** Whether a reset expires within the warning window: at most `warnDays` days (of 24 hours) from now. */
+export function expiresSoon(at: number | null, now: number, warnDays: number): boolean {
+  return at !== null && at > now && at - now <= warnDays * DAY;
+}
+
+/** Calendar days from `now`'s local date to `at`'s: 0 today, 1 tomorrow. */
+function calendarDays(at: number, now: number): number {
+  const day = (ms: number) => {
+    const d = new Date(ms);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  };
+  // Rounded: a day across a change of summer time is 23 or 25 hours.
+  return Math.round((day(at) - day(now)) / DAY);
+}
+
+/**
+ * "Expires 10 Dec, 23:00", with the year when it is not this year's. Within the warning window (`warnDays`), how soon
+ * too: "Expires in 2 days, 10 Dec, 23:00", "Expires tomorrow, 23:00", "Expires today, 23:00". Local time, 24-hour.
+ */
+export function expiryText(at: number | null, now: number, warnDays = 0): string {
   if (at === null) return 'Does not expire';
   const t = new Date(at);
+  const clock = HOUR_MINUTE.format(t);
   const parts = DAY_MONTH_YEAR.formatToParts(t);
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '';
   const year = t.getFullYear() === new Date(now).getFullYear() ? '' : ` ${part('year')}`;
-  return `Expires ${part('day')} ${part('month')}${year}, ${HOUR_MINUTE.format(t)}`;
+  const date = `${part('day')} ${part('month')}${year}`;
+  if (expiresSoon(at, now, warnDays)) {
+    const days = calendarDays(at, now);
+    if (days <= 0) return `Expires today, ${clock}`;
+    if (days === 1) return `Expires tomorrow, ${clock}`;
+    return `Expires in ${days} days, ${date}, ${clock}`;
+  }
+  return `Expires ${date}, ${clock}`;
 }
 
 export interface ResetRow {
@@ -54,13 +80,24 @@ export interface ResetRow {
   account: Account;
   title: string;
   expiresAt: number | null;
+  /** Expires within the warning window. */
+  soon: boolean;
 }
 
-/** Every reset the accounts can use, soonest to expire first (those that never expire last); one past its expiry is gone. */
-export function resetRows(accounts: Account[], now: number): ResetRow[] {
+/**
+ * Every reset the accounts can use, one row each, soonest to expire first (those that never expire last); one past its
+ * expiry is gone. `soon`: it expires within `warnDays` days.
+ */
+export function resetRows(accounts: Account[], now: number, warnDays: number): ResetRow[] {
   return accounts
     .flatMap((a) =>
-      a.resets.map((r, i) => ({ key: `${a.id}:${i}`, account: a, title: r.title ?? 'Reset', expiresAt: r.expiresAt })),
+      a.resets.map((r, i) => ({
+        key: `${a.id}:${i}`,
+        account: a,
+        title: r.title ?? 'Reset',
+        expiresAt: r.expiresAt,
+        soon: expiresSoon(r.expiresAt, now, warnDays),
+      })),
     )
     .filter((r) => r.expiresAt === null || r.expiresAt > now)
     .sort((x, y) => (x.expiresAt ?? Infinity) - (y.expiresAt ?? Infinity));

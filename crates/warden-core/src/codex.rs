@@ -304,6 +304,7 @@ pub fn parse_log_line(line: &[u8]) -> Option<Usage> {
         weekly,
         per_model_weekly: Vec::new(),
         extra: None,
+        resets: None,
     })
 }
 

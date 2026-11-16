@@ -2,8 +2,8 @@
 // The Overview: the title, the accounts in use with their limits (main's hand-off point marked on its weekly bar), the last 2 hours of sessions and the
 // "now" chip, then every account's sessions in one table, each delegated session under the main session that started
 // it. Checking accounts shows only their sessions, under their faded ancestors. Beside them (under them in a narrow window), the limit resets the
-// accounts can use, while there are any.
-import { Check } from 'lucide-vue-next';
+// accounts can use, while there are any; one expiring within the warning days set in Settings › General in amber.
+import { Check, Hourglass } from 'lucide-vue-next';
 import { computed, ref } from 'vue';
 import type { Account, Session } from '../api';
 import AccountIcon from '../components/AccountIcon.vue';
@@ -47,7 +47,9 @@ import { store, usedAccounts } from '../store';
 
 const accounts = computed(() => usedAccounts(store.state));
 
-const resets = computed(() => resetRows(accounts.value, store.now));
+// How many days before a reset expires its row warns: Settings › General.
+const warnDays = computed(() => store.state?.settings.resetWarningDays ?? 3);
+const resets = computed(() => resetRows(accounts.value, store.now, warnDays.value));
 
 /** The Extra usage column shows only while some account has spent some. */
 const showExtra = computed(() => accounts.value.some((a) => extraText(a.provider, a.usage) !== null));
@@ -430,7 +432,11 @@ function sessionAccount(s: Session): Account | undefined {
             <span class="flex min-w-0 flex-1 flex-col">
               <span class="truncate font-semibold">{{ r.account.label }}</span>
               <span class="text-12 text-secondary">{{ r.title }}</span>
-              <span class="text-12 text-tertiary">{{ expiryText(r.expiresAt, store.now) }}</span>
+              <span v-if="r.soon" class="flex items-center gap-1 text-12 font-medium text-attn" data-expires-soon>
+                <Hourglass aria-hidden="true" class="size-3.5 shrink-0 text-attn-icon" />
+                {{ expiryText(r.expiresAt, store.now, warnDays) }}
+              </span>
+              <span v-else class="text-12 text-tertiary">{{ expiryText(r.expiresAt, store.now, warnDays) }}</span>
             </span>
           </WListItem>
         </WList>

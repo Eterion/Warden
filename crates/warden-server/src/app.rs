@@ -8,7 +8,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 use warden_core::claude::{self, UsageEndpoint};
 use warden_core::codex::{self, LogTail};
-use warden_core::codex_resets::{Reset, ResetsEndpoint};
+use warden_core::codex_resets::{self, Reset, ResetsEndpoint};
 use warden_core::detect::{self, Env, Tool};
 use warden_core::fallback;
 use warden_core::hooks::{self, HookTool, Setup, Setups, Want};
@@ -86,6 +86,8 @@ pub struct SettingsPatch {
     /// The work hours: an object sets them, `null` clears them (every hour counts), absent leaves them.
     #[serde(default, deserialize_with = "present")]
     pub work_hours: Option<serde_json::Value>,
+    /// How many days before a limit reset expires the Overview warns of it.
+    pub reset_warning_days: Option<u8>,
 }
 
 /// A field that is there, even as `null`, is `Some`: so `null` can clear a setting while absent leaves it.
@@ -145,6 +147,10 @@ struct Inner {
     usage_busy: bool,
     /// Why each Codex account's banked resets could not be read last time, so a failure is logged once.
     resets_failed: HashMap<String, String>,
+    /// When each account's limit resets (Claude's, or Codex's banked resets) were last read with success, since Warden
+    /// started: a reading on the usage interval asks for them again only once they are due
+    /// ([`codex_resets::resets_due`]).
+    resets_read: HashMap<String, i64>,
     stop: bool,
 }
 
@@ -234,7 +240,7 @@ pub struct AccountView {
     identity_change: Option<IdentityChangeView>,
     usage: Option<Usage>,
     usage_error: Option<UsageError>,
-    /// A Codex account's banked resets, soonest to expire first.
+    /// The account's limit resets (Claude's, or Codex's banked resets), soonest to expire first.
     resets: Vec<Reset>,
     hooks: Setup,
     same_as_main: bool,
@@ -248,6 +254,7 @@ pub struct SettingsView {
     theme: Theme,
     keep_in_tray: bool,
     work_hours: Option<WorkHours>,
+    reset_warning_days: u8,
 }
 
 /// Present only in the desktop app.
@@ -438,6 +445,7 @@ impl App {
                 // The loop starts with a reading.
                 usage_busy: true,
                 resets_failed: HashMap::new(),
+                resets_read: HashMap::new(),
                 revision: 0,
                 stop: false,
             }),
@@ -545,6 +553,7 @@ impl App {
                 theme: s.theme,
                 keep_in_tray: s.keep_in_tray,
                 work_hours: s.work_hours.clone(),
+                reset_warning_days: s.reset_warning_days,
             },
             main: s.main_account(&self.env).as_ref().map(|a| MainView {
                 account: self.account_view(&inner, a),
@@ -749,8 +758,25 @@ impl App {
 
     // ---- Usage and identity -------------------------------------------------------------------------------
 
-    /// Reads every Claude account's usage now, checking identity first. Network calls happen without the lock.
+    /// The usage reading on its interval: every Claude account's usage now, checking identity first, and each account's
+    /// limit resets (Claude's with the usage, Codex's banked resets) only where they are due
+    /// ([`codex_resets::resets_due`]). Network calls happen without the lock.
     pub fn read_claude_usage(&self) {
+        self.read_usage_and_resets(false);
+    }
+
+    /// The usage refreshed by hand (`POST /api/usage/refresh`): as [`App::read_claude_usage`], asking every account for
+    /// its limit resets.
+    pub fn refresh_usage(&self) {
+        self.read_usage_and_resets(true);
+    }
+
+    /// Whether this reading asks the account for its limit resets: always when refreshed by hand, otherwise when due.
+    fn resets_wanted(&self, id: &str, by_hand: bool) -> bool {
+        by_hand || codex_resets::resets_due(self.lock().resets_read.get(id).copied(), now_ms())
+    }
+
+    fn read_usage_and_resets(&self, by_hand: bool) {
         let _one = self
             .reading
             .lock()
@@ -769,7 +795,10 @@ impl App {
             expected.as_ref(),
             main_changed,
             &mut login,
-            self.endpoint.as_ref(),
+            (
+                self.endpoint.as_ref(),
+                self.resets_wanted(store::MAIN_ID, by_hand),
+            ),
             self.sign_in_server.as_ref(),
             now_ms(),
         );
@@ -793,7 +822,12 @@ impl App {
                         message: "could not check who the folder is signed in as".into(),
                     })
                 } else {
-                    claude::read_usage(&account.folder, self.endpoint.as_ref(), now_ms())
+                    claude::read_usage(
+                        &account.folder,
+                        self.endpoint.as_ref(),
+                        now_ms(),
+                        self.resets_wanted(&account.id, by_hand),
+                    )
                 };
                 self.apply_usage(&account.id, result);
             } else {
@@ -805,9 +839,11 @@ impl App {
                 };
                 let signed_in = matches!(now, Ok(Some(_)));
                 self.apply_identity(&account.id, now);
-                // Only while the folder is signed in as the account itself; a switched-off account is not shown.
+                // Only while the folder is signed in as the account itself (a switched-off account is not shown), and
+                // only when they are due or the usage is refreshed by hand.
                 if account.enabled
                     && signed_in
+                    && self.resets_wanted(&account.id, by_hand)
                     && let Some(access) = access
                 {
                     self.read_codex_resets(&account.id, access);
@@ -842,8 +878,9 @@ impl App {
         self.apply_resets(id, since, result);
     }
 
-    /// Records a resets read: a list replaces the last one; a failure keeps it and is logged once. Dropped when the
-    /// folder's identity changed (or a new one was accepted) since the request was sent: it would be someone else's.
+    /// Records a resets read: a list replaces the last one and counts as their last read; a failure keeps it, is logged
+    /// once and is not counted, so the next reading asks again. Dropped when the folder's identity changed (or a new
+    /// one was accepted) since the request was sent: it would be someone else's.
     fn apply_resets(&self, id: &str, since: Option<i64>, result: Result<Vec<Reset>, String>) {
         let mut inner = self.lock();
         let Some(label) = inner
@@ -864,6 +901,7 @@ impl App {
         match result {
             Ok(resets) => {
                 inner.resets_failed.remove(id);
+                inner.resets_read.insert(id.to_owned(), now_ms());
                 let reading = inner.readings.accounts.entry(id.to_owned()).or_default();
                 if reading.resets != resets {
                     reading.resets = resets;
@@ -981,9 +1019,17 @@ impl App {
             return;
         };
         let message = result.as_ref().err().map(describe);
+        // A Claude answer with a readable list of limit resets (eligible or not) is their last read, once kept: an
+        // answer for an identity no longer the account's is ignored and does not hold off the new one's resets.
+        let gave_resets = result.as_ref().is_ok_and(|u| u.resets.is_some());
         match inner.readings.apply_usage(id, result) {
             UsageUpdate::Ignored => return,
-            UsageUpdate::Read => (self.log)(&format!("{label}: usage read")),
+            UsageUpdate::Read => {
+                if gave_resets {
+                    inner.resets_read.insert(id.to_owned(), now_ms());
+                }
+                (self.log)(&format!("{label}: usage read"))
+            }
             UsageUpdate::Failed { new: true } => (self.log)(&format!(
                 "{label}: no usage reading ({})",
                 message.unwrap_or_default()
@@ -1439,6 +1485,14 @@ impl App {
             ));
         }
         if patch
+            .reset_warning_days
+            .is_some_and(|d| !store::RESET_WARNING_DAYS.contains(&d))
+        {
+            return Err(ApiError::bad(
+                "Warn from 1 to 14 days before a reset expires.",
+            ));
+        }
+        if patch
             .usage_interval_min
             .is_some_and(|i| !store::USAGE_INTERVALS.contains(&i))
         {
@@ -1498,6 +1552,9 @@ impl App {
         }
         if let Some(w) = work_hours {
             inner.settings.work_hours = w;
+        }
+        if let Some(d) = patch.reset_warning_days {
+            inner.settings.reset_warning_days = d;
         }
         self.save_settings(&mut inner)?;
         drop(inner);
@@ -1844,6 +1901,8 @@ impl App {
                 ..AccountReading::default()
             },
         );
+        // The new identity's resets are read with the reading this starts, not hours later.
+        inner.resets_read.remove(id);
         // Its sessions signed in as the new identity are the account's own now.
         inner.sessions.settle_account(id, now_ms());
         self.save_settings(&mut inner)?;
@@ -1878,6 +1937,7 @@ impl App {
         let removed = inner.settings.accounts.remove(i);
         (self.log)(&format!("{}: removed", removed.label));
         inner.readings.accounts.remove(id);
+        inner.resets_read.remove(id);
         inner.sessions.forget_account(id);
         inner.hooked.remove(id);
         inner.hook_setups.remove(id);

@@ -605,5 +605,37 @@ describe('OverviewPage', () => {
     expect(items[0]!.text()).toContain('Codex');
     expect(items[0]!.text()).toContain('Full reset (Weekly + 5 hr)');
     expect(items[0]!.text()).toContain('Expires 18 Nov, 10:00');
+    expect(items[0]!.find('[data-expires-soon]').exists()).toBe(false);
+  });
+
+  it("lists main's Claude resets one per row, soonest first, the one inside the warning days in amber", () => {
+    store.now = NOW;
+    const DAY = 24 * HOUR;
+    const st = state([
+      account({
+        id: 'main',
+        label: 'Main',
+        resets: [
+          { title: 'Full reset', expiresAt: NOW + 2 * DAY },
+          { title: 'Full reset', expiresAt: NOW + 2 * DAY },
+          { title: '5-hour reset', expiresAt: NOW + 9 * DAY },
+        ],
+      }),
+    ]);
+    store.state = st;
+    const list = () => mount(OverviewPage).get('[aria-labelledby=resets-heading]');
+    let items = list().findAll('li');
+    expect(items.map((i) => i.text().includes('Full reset'))).toEqual([true, true, false]);
+    const soon = items[0]!.get('[data-expires-soon]');
+    expect(soon.classes()).toContain('text-attn');
+    expect(soon.text()).toMatch(/^Expires in 2 days, \d+ \w+, \d\d:\d\d$/);
+    expect(soon.find('svg').attributes('aria-hidden')).toBe('true');
+    expect(soon.find('svg').classes()).toContain('text-attn-icon');
+    expect(items[2]!.find('[data-expires-soon]').exists()).toBe(false);
+
+    // A shorter warning set in Settings: none is amber.
+    store.state = { ...st, settings: { ...st.settings, resetWarningDays: 1 } };
+    items = list().findAll('li');
+    expect(items.some((i) => i.find('[data-expires-soon]').exists())).toBe(false);
   });
 });

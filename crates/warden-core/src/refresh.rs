@@ -42,9 +42,9 @@ pub fn release(data_dir: &Path) {
 }
 
 /// Reads every account's identity and usage once and saves the readings: Claude from the usage endpoint (one
-/// request per account), Codex from the end of its newest session logs. Identity first: a folder signed in as
-/// someone else gets no reading. A first-seen identity is left for the server to remember; this never writes the
-/// settings.
+/// request per account, never asking for the limit resets: routing does not use them, and the last list stays),
+/// Codex from the end of its newest session logs. Identity first: a folder signed in as someone else gets no
+/// reading. A first-seen identity is left for the server to remember; this never writes the settings.
 pub fn refresh(
     data_dir: &Path,
     endpoint: &dyn UsageEndpoint,
@@ -77,7 +77,8 @@ pub fn refresh(
         expected.as_ref(),
         readings.identity_changed(crate::store::MAIN_ID),
         &mut readings.main_login,
-        endpoint,
+        // Routing does not use the limit resets: the plain usage request.
+        (endpoint, false),
         sign_in_server,
         now(),
     );
@@ -111,7 +112,7 @@ pub fn refresh(
             Provider::Claude if unchecked => Err(UsageError::Failed {
                 message: "could not check who the folder is signed in as".into(),
             }),
-            Provider::Claude => claude::read_usage(&account.folder, endpoint, now()),
+            Provider::Claude => claude::read_usage(&account.folder, endpoint, now(), false),
             Provider::Codex if !codex::has_login(&account.folder) => Err(UsageError::SignedOut),
             Provider::Codex => match LogTail::new().start(&account.folder) {
                 Some(u) => Ok(u),
@@ -146,10 +147,12 @@ mod tests {
         }
     }
 
-    /// Counts calls; never reaches the network.
+    /// Counts calls; never reaches the network. `warden refresh` never asks for the limit resets: routing does not use
+    /// them.
     struct Fake(Mutex<u32>);
     impl UsageEndpoint for Fake {
-        fn fetch(&self, _token: &Secret) -> Result<crate::model::Usage, UsageError> {
+        fn fetch(&self, _token: &Secret, resets: bool) -> Result<crate::model::Usage, UsageError> {
+            assert!(!resets, "warden refresh sends the plain usage request");
             *self.0.lock().expect("lock") += 1;
             claude::read_response(
                 200,
@@ -254,7 +257,8 @@ mod tests {
     /// Checks, while the request is out, that the server's lock is held.
     struct LockHeld(std::path::PathBuf);
     impl UsageEndpoint for LockHeld {
-        fn fetch(&self, _token: &Secret) -> Result<crate::model::Usage, UsageError> {
+        fn fetch(&self, _token: &Secret, resets: bool) -> Result<crate::model::Usage, UsageError> {
+            assert!(!resets);
             assert!(
                 store::server_running(&self.0),
                 "the refresh holds the server's lock"

@@ -192,7 +192,8 @@ export const PAGES: {
     name: 'overview-resets',
     path: '/',
     fixture: 'resets',
-    ready: '[aria-labelledby=resets-heading] li',
+    // Main's Claude resets and Codex's banked resets, one of main's expiring inside the warning days (amber).
+    ready: '[aria-labelledby=resets-heading] [data-expires-soon]',
     // Wide enough for the resets to stand beside the accounts and sessions.
     viewport: { width: 1600, height: 900 },
   },
@@ -200,7 +201,7 @@ export const PAGES: {
     name: 'overview-resets-narrow',
     path: '/',
     fixture: 'resets',
-    ready: '[aria-labelledby=resets-heading] li',
+    ready: '[aria-labelledby=resets-heading] [data-expires-soon]',
   },
   {
     name: 'overview-hooks-off',
@@ -246,7 +247,7 @@ export const PAGES: {
     name: 'settings-general',
     path: '/#/settings/general',
     fixture: 'normal',
-    ready: 'text=Read usage every',
+    ready: 'text=Warn before a reset expires',
   },
   {
     name: 'settings-accounts-signed-in-as-expected',
@@ -442,7 +443,7 @@ export const PAGES: {
     name: 'desktop-settings-general',
     path: '/?desktop#/settings/general',
     fixture: 'desktop',
-    ready: 'text=Read usage every',
+    ready: 'text=Warn before a reset expires',
   },
   {
     name: 'desktop-update-downloading',

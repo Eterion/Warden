@@ -497,11 +497,13 @@ fn start_app(
     let saved: Readings = store::load(&data_dir, READINGS_FILE).unwrap_or_default();
     let alerts = Alerts::from_saved(&saved);
     window_csp(handle).ok_or("the app has no Content-Security-Policy")?;
+    let env = args.environment();
+    let cli_version = warden_core::claude::installed_cli_version(&env);
     let core = start_core(Config {
         data_dir,
         ui_dir,
-        env: args.environment(),
-        endpoint: Arc::new(AnthropicUsageEndpoint::new()),
+        env,
+        endpoint: Arc::new(AnthropicUsageEndpoint::new(cli_version.as_deref())),
         resets: Arc::new(warden_core::codex_resets::ChatGptResetsEndpoint::new()),
         sign_in_server: Arc::new(warden_core::mainlogin::AnthropicSignInServer::default()),
         sign_in: Arc::new(fallback::start_sign_in),

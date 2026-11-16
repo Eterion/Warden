@@ -288,7 +288,10 @@ fn refresh_now(data_dir: &Path, if_stale: bool, home: Option<&Path>) -> ExitCode
     }
     let result = refresh::refresh(
         data_dir,
-        &AnthropicUsageEndpoint::new(),
+        &AnthropicUsageEndpoint::new(
+            warden_core::claude::installed_cli_version(&warden_core::detect::Env::from_process())
+                .as_deref(),
+        ),
         &warden_core::mainlogin::AnthropicSignInServer::default(),
         now_ms,
         home.or(warden_core::detect::Env::from_process().home.as_deref()),

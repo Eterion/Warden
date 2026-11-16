@@ -6,10 +6,11 @@
 //! demo --port <port> --data-dir <folder> --home <folder> --usage-dir <folder> --ui-dir <folder> [--route-exe <file>]
 //! ```
 //!
-//! The stand-in endpoint answers a token's request with `<usage-dir>/<token>.json` (as Anthropic's body), or 401 when
-//! there is no such file; the stand-in for ChatGPT's backend answers a Codex account's banked resets with
-//! `<usage-dir>/<token>.resets.json` (as the backend's body), or none. Nothing leaves this computer, and no program is started: the CLIs on the demo's PATH (the
-//! home's `bin`) are stand-ins the driver writes, and the sign-in only prints.
+//! The stand-in endpoint answers a token's request with `<usage-dir>/<token>.json` (as Anthropic's body, its limit
+//! resets block only when the request asks for it), or 401 when there is no such file; the stand-in for ChatGPT's
+//! backend answers a Codex account's banked resets with `<usage-dir>/<token>.resets.json` (as the backend's body), or
+//! none. Nothing leaves this computer, and no program is started: the CLIs on the demo's PATH (the home's `bin`) are
+//! stand-ins the driver writes, and the sign-in only prints.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -69,6 +70,7 @@ impl UsageEndpoint for DemoUsageEndpoint {
     fn fetch(
         &self,
         token: &Secret,
+        resets: bool,
     ) -> Result<warden_core::model::Usage, warden_core::model::UsageError> {
         let name: String = token
             .expose()
@@ -76,7 +78,17 @@ impl UsageEndpoint for DemoUsageEndpoint {
             .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
             .collect();
         match std::fs::read_to_string(self.dir.join(format!("{name}.json"))) {
-            Ok(body) => warden_core::claude::read_response(200, body.as_bytes()),
+            Ok(body) => {
+                // As the endpoint: the limit resets block only when the request asks for it.
+                let body = match serde_json::from_str::<serde_json::Value>(&body) {
+                    Ok(serde_json::Value::Object(mut answer)) if !resets => {
+                        answer.remove("cedar_ember");
+                        serde_json::Value::Object(answer).to_string()
+                    }
+                    _ => body,
+                };
+                warden_core::claude::read_response(200, body.as_bytes())
+            }
             Err(_) => warden_core::claude::read_response(401, std::io::empty()),
         }
     }

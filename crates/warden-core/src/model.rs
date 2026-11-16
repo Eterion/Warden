@@ -98,6 +98,11 @@ pub struct Usage {
     #[serde(default)]
     pub per_model_weekly: Vec<ModelLimit>,
     pub extra: Option<Extra>,
+    /// A Claude account's limit resets, read in the same answer; `None` when the answer had no readable list. Moved
+    /// into the account's reading (`AccountReading::resets`) when the reading is recorded: never saved or shown with
+    /// the usage.
+    #[serde(skip)]
+    pub resets: Option<Vec<crate::codex_resets::Reset>>,
 }
 
 /// Why the latest attempt to read usage gave no reading. The last good reading is kept and shown with its age.

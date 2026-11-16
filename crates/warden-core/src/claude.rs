@@ -17,7 +17,14 @@ use zeroize::Zeroizing;
 
 /// The usage endpoint `/usage` uses. Undocumented; its answer is parsed leniently.
 pub const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
+/// Added to the request: the answer then also lists the account's limit resets (`cedar_ember`).
+const RESETS_QUERY: &str = "cedar_ember=1";
 const USAGE_BETA: &str = "oauth-2025-04-20";
+/// The Claude CLI version the request names when no installed `claude` CLI is found. The endpoint lists an account's
+/// limit resets only to the Claude CLI.
+pub const FALLBACK_CLI_VERSION: &str = "2.1.323";
+/// At most this many limit resets are kept for an account, however many the answer counts.
+const MAX_RESETS: usize = 50;
 const CREDENTIALS_FILE: &str = ".credentials.json";
 const SETTINGS_FILE: &str = ".claude.json";
 
@@ -103,8 +110,9 @@ pub fn read_identity_from_files(files: &[PathBuf]) -> io::Result<Option<Identity
 
 /// Sends the one request the usage endpoint needs. A trait so tests can stand in for Anthropic.
 pub trait UsageEndpoint: Send + Sync {
-    /// Calls the endpoint and returns parsed usage or a safe error, never a raw response body.
-    fn fetch(&self, token: &Secret) -> Result<Usage, UsageError>;
+    /// Calls the endpoint and returns parsed usage or a safe error, never a raw response body. `resets`: whether to ask
+    /// for the account's limit resets as well ([`crate::codex_resets::resets_due`]); without, the answer has none.
+    fn fetch(&self, token: &Secret, resets: bool) -> Result<Usage, UsageError>;
 }
 
 /// Windows' own TLS with Windows' own trusted roots, as any Windows program. ureq's default roots (a bundled copy of
@@ -116,13 +124,37 @@ pub(crate) fn tls_config() -> ureq::tls::TlsConfig {
         .build()
 }
 
-/// The real endpoint, over HTTPS with Windows' own TLS.
+/// The real endpoint, over HTTPS with Windows' own TLS. The request identifies as the installed Claude CLI.
 pub struct AnthropicUsageEndpoint {
     agent: ureq::Agent,
+    user_agent: String,
+}
+
+/// The installed `claude` CLI's version, read from the files beside it (nothing is started).
+pub fn installed_cli_version(env: &crate::detect::Env) -> Option<String> {
+    crate::detect::cli_path(env, crate::model::Provider::Claude)
+        .and_then(|cli| crate::detect::cli_version(crate::model::Provider::Claude, &cli))
+}
+
+/// The request's `User-Agent`, as the Claude CLI sends it: the given version when it is a plain version (digits and
+/// dots, at most 32 characters), otherwise [`FALLBACK_CLI_VERSION`].
+pub fn cli_user_agent(version: Option<&str>) -> String {
+    let plain = |v: &&str| {
+        v.len() <= 32
+            && v.split('.').count() >= 2
+            && v.split('.')
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let version = version
+        .map(str::trim)
+        .filter(plain)
+        .unwrap_or(FALLBACK_CLI_VERSION);
+    format!("claude-cli/{version} (external, cli)")
 }
 
 impl AnthropicUsageEndpoint {
-    pub fn new() -> Self {
+    /// `cli_version`: the installed Claude CLI's ([`installed_cli_version`]); `None` uses [`FALLBACK_CLI_VERSION`].
+    pub fn new(cli_version: Option<&str>) -> Self {
         let config = ureq::Agent::config_builder()
             .tls_config(tls_config())
             .timeout_global(Some(Duration::from_secs(10)))
@@ -133,21 +165,34 @@ impl AnthropicUsageEndpoint {
             .build();
         AnthropicUsageEndpoint {
             agent: config.into(),
+            user_agent: cli_user_agent(cli_version),
         }
     }
 
-    fn request(&self, bearer: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+    /// The usage request, with [`RESETS_QUERY`] only when `resets` asks for the limit resets. The CLI headers are on
+    /// every request.
+    fn request(
+        &self,
+        bearer: &str,
+        resets: bool,
+    ) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+        let url = if resets {
+            format!("{USAGE_URL}?{RESETS_QUERY}")
+        } else {
+            USAGE_URL.to_owned()
+        };
         self.agent
-            .get(USAGE_URL)
+            .get(url)
             .header("Authorization", bearer)
             .header("anthropic-beta", USAGE_BETA)
-            .header("User-Agent", "claude-code/2.1.0")
+            .header("User-Agent", self.user_agent.as_str())
+            .header("x-app", "cli")
     }
 }
 
 impl Default for AnthropicUsageEndpoint {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
@@ -160,13 +205,13 @@ pub fn usage_url_is_allowed() -> bool {
 }
 
 impl UsageEndpoint for AnthropicUsageEndpoint {
-    fn fetch(&self, token: &Secret) -> Result<Usage, UsageError> {
+    fn fetch(&self, token: &Secret, resets: bool) -> Result<Usage, UsageError> {
         if !usage_url_is_allowed() {
             return Err(failed("the usage endpoint is not an allowed host"));
         }
         let bearer = Zeroizing::new(format!("Bearer {}", token.expose()));
         let mut response = self
-            .request(bearer.as_str())
+            .request(bearer.as_str(), resets)
             .call()
             .map_err(|e| failed(&describe_transport_error(&e)))?;
         let status = response.status().as_u16();
@@ -238,11 +283,13 @@ struct OauthLogin {
     expires_at: Option<i64>,
 }
 
-/// Reads the account's usage: the login token is read, sent to the usage endpoint once, and dropped.
+/// Reads the account's usage: the login token is read, sent to the usage endpoint once, and dropped. `resets`: whether
+/// the request also asks for the account's limit resets.
 pub fn read_usage(
     folder: &Path,
     endpoint: &dyn UsageEndpoint,
     now_ms: i64,
+    resets: bool,
 ) -> Result<Usage, UsageError> {
     let path = folder.join(CREDENTIALS_FILE);
     let bytes = match fs::read(&path) {
@@ -262,7 +309,7 @@ pub fn read_usage(
     if login.expires_at.is_some_and(|exp| exp <= now_ms) {
         return Err(UsageError::LoginExpired { status: None });
     }
-    let result = endpoint.fetch(&token);
+    let result = endpoint.fetch(&token, resets);
     drop(token);
     result.map(|mut usage| {
         usage.read_at = now_ms;
@@ -326,7 +373,78 @@ pub fn parse_usage(body: &str, now_ms: i64) -> Result<Usage, String> {
         weekly: obj.get("seven_day").and_then(limit),
         per_model_weekly,
         extra,
+        resets: obj.get("cedar_ember").and_then(parse_resets),
     })
+}
+
+#[derive(Deserialize)]
+struct ResetsBlock {
+    eligible: Option<bool>,
+    #[serde(default)]
+    grants: Option<Vec<Grant>>,
+}
+
+#[derive(Deserialize)]
+struct Grant {
+    resets_left: u64,
+    ends_at: Option<String>,
+    #[serde(default)]
+    gives_back_weekly: bool,
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    #[serde(default)]
+    clears: Vec<String>,
+}
+
+/// A grant's short name, as the Claude CLI names its kind: a Fable reset if it gives the weekly limit back; else its
+/// `type`; else from the limits it clears (only the 5-hour one: session; no 5-hour one: weekly; both: full). A
+/// `type` the CLI does not know is named from the limits it clears.
+fn grant_name(g: &Grant) -> &'static str {
+    if g.gives_back_weekly {
+        return "Fable reset";
+    }
+    match g.kind.as_deref() {
+        Some("session") => return "5-hour reset",
+        Some("weekly") => return "Weekly reset",
+        Some("full") => return "Full reset",
+        _ => {}
+    }
+    let five_hour = g.clears.iter().any(|c| c == "five_hour");
+    let other = g.clears.iter().any(|c| c != "five_hour");
+    match (five_hour, other) {
+        (true, false) => "5-hour reset",
+        (false, _) => "Weekly reset",
+        (true, true) => "Full reset",
+    }
+}
+
+/// The account's limit resets in the answer's `cedar_ember` block: one per reset left, named by its kind, soonest to
+/// expire first (those that never expire last). An account the endpoint calls not eligible has none. `None` for a
+/// block of another shape or an expiry that is not a date, so the last list stays. Nothing else is kept.
+fn parse_resets(block: &serde_json::Value) -> Option<Vec<crate::codex_resets::Reset>> {
+    let block: ResetsBlock = serde_json::from_value(block.clone()).ok()?;
+    if block.eligible == Some(false) {
+        return Some(Vec::new());
+    }
+    let mut resets = Vec::new();
+    for g in block.grants.unwrap_or_default() {
+        if g.resets_left == 0 {
+            continue;
+        }
+        let expires_at = match g.ends_at.as_deref() {
+            Some(at) => Some(parse_rfc3339_ms(at)?),
+            None => None,
+        };
+        let left = usize::try_from(g.resets_left).unwrap_or(MAX_RESETS);
+        let reset = crate::codex_resets::Reset {
+            title: Some(grant_name(&g).to_owned()),
+            expires_at,
+        };
+        resets.extend(std::iter::repeat_n(reset, left.min(MAX_RESETS)));
+    }
+    resets.sort_by_key(|r| r.expires_at.unwrap_or(i64::MAX));
+    resets.truncate(MAX_RESETS);
+    Some(resets)
 }
 
 #[cfg(test)]
@@ -341,11 +459,14 @@ mod tests {
         status: u16,
         body: String,
         seen: Mutex<Option<String>>,
+        /// Whether each request asked for the limit resets.
+        resets_asked: Mutex<Vec<bool>>,
     }
 
     impl UsageEndpoint for Fake {
-        fn fetch(&self, token: &Secret) -> Result<Usage, UsageError> {
+        fn fetch(&self, token: &Secret, resets: bool) -> Result<Usage, UsageError> {
             *self.seen.lock().expect("lock") = Some(token.expose().to_owned());
+            self.resets_asked.lock().expect("lock").push(resets);
             read_response(self.status, self.body.as_bytes())
         }
     }
@@ -355,6 +476,7 @@ mod tests {
             status,
             body: body.into(),
             seen: Mutex::new(None),
+            resets_asked: Mutex::new(Vec::new()),
         }
     }
 
@@ -425,7 +547,13 @@ mod tests {
             r#"{{"claudeAiOauth": {{"accessToken": "{token}", "refreshToken": "{token}-r", "expiresAt": 9999999999999, "scopes": ["user:inference"]}}}}"#
         ));
         let endpoint = fake(200, ANSWER);
-        let usage = read_usage(dir.path(), &endpoint, 1000).expect("reads");
+        let usage = read_usage(dir.path(), &endpoint, 1000, true).expect("reads");
+        assert_eq!(*endpoint.resets_asked.lock().expect("lock"), vec![true]);
+        read_usage(dir.path(), &endpoint, 1000, false).expect("reads");
+        assert_eq!(
+            *endpoint.resets_asked.lock().expect("lock"),
+            vec![true, false]
+        );
         assert_eq!(
             endpoint.seen.lock().expect("lock").as_deref(),
             Some(token.as_str())
@@ -441,7 +569,7 @@ mod tests {
         );
         let endpoint = fake(200, ANSWER);
         assert_eq!(
-            read_usage(dir.path(), &endpoint, 1000),
+            read_usage(dir.path(), &endpoint, 1000, true),
             Err(UsageError::LoginExpired { status: None })
         );
         assert!(endpoint.seen.lock().expect("lock").is_none());
@@ -461,7 +589,8 @@ mod tests {
             (404, failed("HTTP 404: unexpected answer")),
             (200, failed("HTTP 200: unexpected answer")),
         ] {
-            let error = read_usage(dir.path(), &fake(status, &token), 0).expect_err("failed read");
+            let error =
+                read_usage(dir.path(), &fake(status, &token), 0, true).expect_err("failed read");
             assert_eq!(error, expected);
             assert_no_token(
                 "usage error",
@@ -549,15 +678,165 @@ mod tests {
     }
 
     #[test]
-    fn request_matches_the_claude_oauth_client() {
-        let endpoint = AnthropicUsageEndpoint::new();
-        let request = endpoint.request("Bearer fixture-only");
-        assert_eq!(request.uri_ref().expect("URI").to_string(), USAGE_URL);
+    fn request_identifies_as_the_installed_claude_cli_and_asks_for_the_resets_only_when_told() {
+        let endpoint = AnthropicUsageEndpoint::new(Some("2.1.400"));
+        let request = endpoint.request("Bearer fixture-only", true);
+        assert_eq!(
+            request.uri_ref().expect("URI").to_string(),
+            format!("{USAGE_URL}?cedar_ember=1")
+        );
         assert_eq!(request.method_ref(), Some(&ureq::http::Method::GET));
         let headers = request.headers_ref().expect("headers");
         assert_eq!(headers["Authorization"], "Bearer fixture-only");
         assert_eq!(headers["anthropic-beta"], "oauth-2025-04-20");
-        assert_eq!(headers["User-Agent"], "claude-code/2.1.0");
+        assert_eq!(headers["User-Agent"], "claude-cli/2.1.400 (external, cli)");
+        assert_eq!(headers["x-app"], "cli");
+        // Without the resets: the plain usage request, with the same headers.
+        let plain = endpoint.request("Bearer fixture-only", false);
+        assert_eq!(plain.uri_ref().expect("URI").to_string(), USAGE_URL);
+        let plain_headers = plain.headers_ref().expect("headers");
+        for name in ["Authorization", "anthropic-beta", "User-Agent", "x-app"] {
+            assert_eq!(plain_headers[name], headers[name], "{name}");
+        }
+        // No CLI found, or a version that is not plain digits and dots: the fixed fallback.
+        for version in [
+            None,
+            Some(""),
+            Some("2"),
+            Some("2.1.x"),
+            Some("2.1.0\r\nx: y"),
+            Some("2.1.0 (Claude Code)"),
+        ] {
+            let request =
+                AnthropicUsageEndpoint::new(version).request("Bearer fixture-only", false);
+            assert_eq!(
+                request.headers_ref().expect("headers")["User-Agent"],
+                "claude-cli/2.1.323 (external, cli)",
+                "{version:?}"
+            );
+        }
+        assert_eq!(
+            AnthropicUsageEndpoint::default().user_agent,
+            "claude-cli/2.1.323 (external, cli)"
+        );
+    }
+
+    #[test]
+    fn the_cli_version_comes_from_the_files_beside_the_installed_cli() {
+        let dir = tempdir::Dir::new("cli");
+        let bin = dir.path().join("npm");
+        let package = bin.join("node_modules/@anthropic-ai/claude-code");
+        fs::create_dir_all(&package).expect("mkdir");
+        fs::write(bin.join("claude.cmd"), "").expect("cli");
+        fs::write(package.join("package.json"), r#"{"version": "2.1.401"}"#).expect("package");
+        let mut env = crate::detect::Env::from_process();
+        env.path = vec![bin];
+        assert_eq!(installed_cli_version(&env).as_deref(), Some("2.1.401"));
+        env.path = vec![dir.path().join("nowhere")];
+        assert_eq!(installed_cli_version(&env), None);
+    }
+
+    /// The `cedar_ember` block as the probe found it, with grants of every kind.
+    const RESETS_ANSWER: &str = r#"{
+        "five_hour": {"utilization": 10, "resets_at": null},
+        "seven_day": {"utilization": 20, "resets_at": null},
+        "cedar_ember": {
+            "eligible": true, "ineligible_reason": null, "at_limit": false, "exhausted": [],
+            "grants": [
+                {"id": "grant-full", "label": "One full limit reset (November 2026)", "resets_total": 2,
+                 "resets_left": 2, "starts_at": "2026-11-01T00:00:00Z", "ends_at": "2026-11-30T23:00:00Z",
+                 "clears": ["five_hour", "seven_day"], "paused": false, "usable_now": true,
+                 "use_requires_limit": false, "gives_back_weekly": false, "unavailable_reason": null},
+                {"id": "grant-fable", "label": "New model launch: one Fable reset", "resets_total": 1,
+                 "resets_left": 1, "starts_at": null, "ends_at": "2026-11-20T10:00:00Z",
+                 "clears": ["seven_day"], "type": "weekly", "gives_back_weekly": true},
+                {"id": "grant-session", "label": "Session", "resets_total": 1, "resets_left": 1,
+                 "ends_at": null, "clears": ["five_hour"], "gives_back_weekly": false},
+                {"id": "grant-typed", "label": "Typed", "resets_total": 1, "resets_left": 1,
+                 "ends_at": "2026-12-05T00:00:00Z", "clears": ["five_hour"], "type": "full"},
+                {"id": "grant-weekly", "label": "Weekly", "resets_total": 1, "resets_left": 1,
+                 "ends_at": "2026-12-01T00:00:00Z", "clears": ["seven_day", "seven_day_overage_included"]},
+                {"id": "grant-used", "label": "Used up", "resets_total": 1, "resets_left": 0,
+                 "ends_at": "2026-11-17T00:00:00Z", "clears": ["five_hour"]}
+            ],
+            "next_grant_id": "grant-x", "weekly_resets_at": null, "cooldown_until": null,
+            "event_props": {"campaign": "fixture-campaign"}
+        }
+    }"#;
+
+    fn reset(title: &str, at: Option<&str>) -> crate::codex_resets::Reset {
+        crate::codex_resets::Reset {
+            title: Some(title.into()),
+            expires_at: at.map(|a| parse_rfc3339_ms(a).expect("date")),
+        }
+    }
+
+    #[test]
+    fn limit_resets_one_per_reset_left_with_short_names_soonest_first() {
+        let resets = parse_usage(RESETS_ANSWER, 0)
+            .expect("parses")
+            .resets
+            .expect("resets");
+        assert_eq!(
+            resets,
+            vec![
+                reset("Fable reset", Some("2026-11-20T10:00:00Z")),
+                reset("Full reset", Some("2026-11-30T23:00:00Z")),
+                reset("Full reset", Some("2026-11-30T23:00:00Z")),
+                reset("Weekly reset", Some("2026-12-01T00:00:00Z")),
+                reset("Full reset", Some("2026-12-05T00:00:00Z")),
+                reset("5-hour reset", None),
+            ]
+        );
+        // Nothing else from the block is kept: no ids, labels or event props.
+        let saved = serde_json::to_string(&resets).expect("json");
+        for gone in ["grant-", "November", "Fable reset for", "fixture-campaign"] {
+            assert!(!saved.contains(gone), "{gone} in {saved}");
+        }
+        // The usage reading itself never carries them.
+        let usage =
+            serde_json::to_string(&parse_usage(RESETS_ANSWER, 0).expect("parses")).expect("json");
+        assert!(!usage.contains("\"resets\""), "{usage}");
+        assert!(!usage.contains("Fable"), "{usage}");
+    }
+
+    #[test]
+    fn an_ineligible_account_has_no_resets_and_a_missing_or_malformed_block_none_read() {
+        let with = |block: &str| {
+            parse_usage(
+                &format!(r#"{{"seven_day": {{"utilization": 1}}, "cedar_ember": {block}}}"#),
+                0,
+            )
+            .expect("usage still parses")
+            .resets
+        };
+        let ineligible = r#"{"eligible": false, "ineligible_reason": "surface", "grants": [
+            {"resets_left": 1, "ends_at": null, "clears": ["five_hour"]}]}"#;
+        assert_eq!(with(ineligible), Some(vec![]));
+        assert_eq!(with(r#"{"eligible": true, "grants": []}"#), Some(vec![]));
+        assert_eq!(with(r#"{"eligible": true}"#), Some(vec![]));
+        // Not read: the last list stays.
+        assert_eq!(parse_usage(ANSWER, 0).expect("parses").resets, None);
+        for malformed in [
+            "null",
+            "[]",
+            r#""yes""#,
+            r#"{"eligible": "yes"}"#,
+            r#"{"grants": [{"ends_at": null}]}"#,
+            r#"{"grants": [{"resets_left": -1, "ends_at": null}]}"#,
+            r#"{"grants": [{"resets_left": 1, "ends_at": "next week"}]}"#,
+            r#"{"grants": {"resets_left": 1}}"#,
+        ] {
+            assert_eq!(with(malformed), None, "{malformed}");
+        }
+        // However many the answer counts, at most this many are kept, soonest first.
+        let many = with(
+            r#"{"grants": [{"resets_left": 4000000000, "ends_at": null, "clears": ["five_hour"]},
+                {"resets_left": 1, "ends_at": "2026-12-01T00:00:00Z", "clears": ["seven_day"]}]}"#,
+        )
+        .expect("resets");
+        assert_eq!(many.len(), MAX_RESETS);
+        assert_eq!(many[0].title.as_deref(), Some("Weekly reset"));
     }
 
     #[test]
@@ -621,7 +900,7 @@ mod tests {
 
     #[test]
     fn the_usage_client_follows_no_redirects() {
-        let endpoint = AnthropicUsageEndpoint::new();
+        let endpoint = AnthropicUsageEndpoint::new(None);
         assert_eq!(endpoint.agent.config().max_redirects(), 0);
         assert_eq!(
             endpoint.agent.config().timeouts().global,
@@ -633,12 +912,12 @@ mod tests {
     fn no_login_is_signed_out() {
         let dir = tempdir::Dir::new("claude");
         assert_eq!(
-            read_usage(dir.path(), &fake(200, ANSWER), 0),
+            read_usage(dir.path(), &fake(200, ANSWER), 0, true),
             Err(UsageError::SignedOut)
         );
         let dir = folder_with(r#"{"other": {}}"#);
         assert_eq!(
-            read_usage(dir.path(), &fake(200, ANSWER), 0),
+            read_usage(dir.path(), &fake(200, ANSWER), 0, true),
             Err(UsageError::SignedOut)
         );
     }
@@ -762,7 +1041,7 @@ mod tests {
             fs::create_dir(&folder).expect("mkdir");
             assert!(!has_login(&folder));
             assert_eq!(
-                read_usage(&folder, &fake(200, ANSWER), 0),
+                read_usage(&folder, &fake(200, ANSWER), 0, true),
                 Err(UsageError::SignedOut)
             );
             fs::write(
@@ -771,7 +1050,7 @@ mod tests {
             )
             .expect("write");
             assert!(has_login(&folder));
-            assert!(read_usage(&folder, &fake(200, ANSWER), 0).is_ok());
+            assert!(read_usage(&folder, &fake(200, ANSWER), 0, true).is_ok());
         }
     }
 

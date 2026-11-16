@@ -139,8 +139,9 @@ pub fn answer(app: &App, ui_dir: Option<&Path>, method: &str, url: &str, body: &
         match (method, segments.as_slice()) {
             ("GET", ["state"]) => {}
             ("POST", ["usage", "refresh"]) => {
-                // Identity first, so listed sessions count for the account signed in now.
-                app.read_claude_usage();
+                // Identity first, so listed sessions count for the account signed in now. By hand: every account's
+                // limit resets too.
+                app.refresh_usage();
                 app.list_sessions();
             }
             ("PUT", ["settings"]) => {

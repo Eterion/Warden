@@ -265,6 +265,47 @@ function writeClaudeUsage(a: DemoAccount, minutes: number): void {
     seven_day: { utilization: week, resets_at: new Date(resetAt(a.weeklyResetH)).toISOString() },
     seven_day_opus: { utilization: Math.round(week * 0.6), resets_at: new Date(resetAt(a.weeklyResetH)).toISOString() },
     extra_usage: { is_enabled: false, monthly_limit: null, used_credits: null, utilization: null },
+    // Main's limit resets, as the endpoint lists them to the Claude CLI: two full resets in one grant, and a 5-hour
+    // reset that expires inside the default warning days.
+    ...(a.key === 'claude-main' && {
+      cedar_ember: {
+        eligible: true,
+        ineligible_reason: null,
+        at_limit: false,
+        exhausted: [],
+        grants: [
+          {
+            id: 'demo-full',
+            label: 'One full limit reset (demo)',
+            resets_total: 2,
+            resets_left: 2,
+            starts_at: new Date(started).toISOString(),
+            ends_at: new Date(started + 12 * 24 * HOUR).toISOString(),
+            clears: ['five_hour', 'seven_day'],
+            paused: false,
+            usable_now: true,
+            use_requires_limit: false,
+            gives_back_weekly: false,
+            unavailable_reason: null,
+          },
+          {
+            id: 'demo-session',
+            label: 'One session reset (demo)',
+            resets_total: 1,
+            resets_left: 1,
+            starts_at: null,
+            ends_at: new Date(started + 2 * 24 * HOUR).toISOString(),
+            clears: ['five_hour'],
+            paused: false,
+            usable_now: true,
+            use_requires_limit: false,
+            type: 'session',
+            gives_back_weekly: false,
+            unavailable_reason: null,
+          },
+        ],
+      },
+    }),
   };
   write(join(usageDir, `${token(a)}.json`), JSON.stringify(body));
 }

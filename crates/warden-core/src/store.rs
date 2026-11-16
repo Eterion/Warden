@@ -111,6 +111,23 @@ pub struct Settings {
     /// before its weekly reset (`routing`). A value of the wrong shape loads as `None`, never failing the file.
     #[serde(deserialize_with = "lenient_work_hours")]
     pub work_hours: Option<WorkHours>,
+    /// How many days before a limit reset expires the Overview warns of it: whole days, [`RESET_WARNING_DAYS`]. A value
+    /// of the wrong type or out of range loads as [`DEFAULT_RESET_WARNING_DAYS`], never failing the file.
+    #[serde(deserialize_with = "lenient_reset_warning_days")]
+    pub reset_warning_days: u8,
+}
+
+/// The days before a limit reset expires that Settings offers for its warning.
+pub const RESET_WARNING_DAYS: std::ops::RangeInclusive<u8> = 1..=14;
+pub const DEFAULT_RESET_WARNING_DAYS: u8 = 3;
+
+fn lenient_reset_warning_days<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u8, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(value
+        .and_then(|v| v.as_u64())
+        .and_then(|v| u8::try_from(v).ok())
+        .filter(|v| RESET_WARNING_DAYS.contains(v))
+        .unwrap_or(DEFAULT_RESET_WARNING_DAYS))
 }
 
 fn lenient_work_hours<'de, D: serde::Deserializer<'de>>(
@@ -182,6 +199,7 @@ impl Default for Settings {
             main: MainConfig::default(),
             reserve: 25,
             work_hours: None,
+            reset_warning_days: DEFAULT_RESET_WARNING_DAYS,
         }
     }
 }
@@ -252,6 +270,9 @@ impl Settings {
         if self.work_hours.as_ref().is_some_and(|w| !w.valid()) {
             self.work_hours = None;
         }
+        if !RESET_WARNING_DAYS.contains(&self.reset_warning_days) {
+            self.reset_warning_days = DEFAULT_RESET_WARNING_DAYS;
+        }
         self.version = 2;
         self.accounts.retain(|a| a.id != MAIN_ID);
     }
@@ -270,7 +291,8 @@ pub struct AccountReading {
     /// When the folder's current identity was accepted (ms since the epoch). Readings from before it belong to the
     /// previous identity, such as Codex's older session logs read again after a restart, and are never used.
     pub identity_since: Option<i64>,
-    /// A Codex account's banked resets as last read, soonest to expire first; only their titles and expiries.
+    /// The account's limit resets as last read (a Claude account's from its usage answer, a Codex account's banked
+    /// resets), soonest to expire first; only their short names and expiries.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub resets: Vec<crate::codex_resets::Reset>,
 }
@@ -341,7 +363,8 @@ impl Readings {
     pub fn apply_usage(&mut self, id: &str, result: Result<Usage, UsageError>) -> UsageUpdate {
         let reading = self.accounts.entry(id.to_owned()).or_default();
         match result {
-            Ok(u) => {
+            Ok(mut u) => {
+                let resets = u.resets.take();
                 if reading.identity_since.is_some_and(|t| u.read_at < t) {
                     // From before the current identity: someone else's usage.
                     if reading.usage.is_none() && reading.error.is_none() {
@@ -359,6 +382,10 @@ impl Readings {
                 }
                 reading.usage = Some(u);
                 reading.error = None;
+                // A Claude answer without a readable list of limit resets keeps the last one.
+                if let Some(resets) = resets {
+                    reading.resets = resets;
+                }
                 UsageUpdate::Read
             }
             Err(e) => {
@@ -824,5 +851,78 @@ mod tests {
         });
         s.normalise();
         assert!(s.work_hours.is_some());
+    }
+
+    #[test]
+    fn the_reset_warning_defaults_to_three_days_and_never_breaks_the_file() {
+        assert_eq!(Settings::default().reset_warning_days, 3);
+        let s = Settings {
+            reset_warning_days: 14,
+            ..Settings::default()
+        };
+        let json = serde_json::to_value(&s).expect("json");
+        assert_eq!(json["resetWarningDays"], 14);
+        let back: Settings = serde_json::from_value(json).expect("back");
+        assert_eq!(back.reset_warning_days, 14);
+        // Missing, of the wrong type, fractional or out of range: the default, and the rest of the file loads.
+        for raw in [
+            r#"{"version":2,"reserve":30}"#,
+            r#"{"version":2,"reserve":30,"resetWarningDays":null}"#,
+            r#"{"version":2,"reserve":30,"resetWarningDays":"5"}"#,
+            r#"{"version":2,"reserve":30,"resetWarningDays":2.5}"#,
+            r#"{"version":2,"reserve":30,"resetWarningDays":0}"#,
+            r#"{"version":2,"reserve":30,"resetWarningDays":15}"#,
+            r#"{"version":2,"reserve":30,"resetWarningDays":-1}"#,
+            r#"{"version":2,"reserve":30,"resetWarningDays":300}"#,
+        ] {
+            let s: Settings = serde_json::from_str(raw).expect(raw);
+            assert_eq!((s.reset_warning_days, s.reserve), (3, 30), "{raw}");
+        }
+        for days in 1..=14 {
+            let s: Settings =
+                serde_json::from_str(&format!(r#"{{"version":2,"resetWarningDays":{days}}}"#))
+                    .expect("loads");
+            assert_eq!(s.reset_warning_days, days);
+        }
+        let mut s = Settings {
+            reset_warning_days: 40,
+            ..Settings::default()
+        };
+        s.normalise();
+        assert_eq!(s.reset_warning_days, 3);
+    }
+
+    #[test]
+    fn a_usage_reading_brings_its_limit_resets_and_one_without_keeps_the_last() {
+        use crate::codex_resets::Reset;
+        let usage = |read_at: i64, resets: Option<Vec<Reset>>| Usage {
+            read_at,
+            five_hour: None,
+            weekly: None,
+            per_model_weekly: Vec::new(),
+            extra: None,
+            resets,
+        };
+        let one = vec![Reset {
+            title: Some("Full reset".into()),
+            expires_at: Some(5),
+        }];
+        let mut r = Readings::default();
+        assert_eq!(
+            r.apply_usage("a", Ok(usage(1, Some(one.clone())))),
+            UsageUpdate::Read
+        );
+        assert_eq!(r.accounts["a"].resets, one);
+        // The reading kept carries none of them.
+        assert_eq!(r.accounts["a"].usage.as_ref().expect("usage").resets, None);
+        // No readable list, a failed read, an older reading: the last list stays.
+        r.apply_usage("a", Ok(usage(2, None)));
+        r.apply_usage("a", Err(UsageError::LoginExpired { status: Some(401) }));
+        r.apply_usage("a", Err(UsageError::IdentityChanged));
+        r.apply_usage("a", Ok(usage(0, Some(Vec::new()))));
+        assert_eq!(r.accounts["a"].resets, one);
+        // An empty list (none left, or not eligible) replaces it.
+        r.apply_usage("a", Ok(usage(3, Some(Vec::new()))));
+        assert!(r.accounts["a"].resets.is_empty());
     }
 }

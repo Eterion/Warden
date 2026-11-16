@@ -92,6 +92,8 @@ export interface Settings {
   keepInTray: boolean;
   /** The user's usual work hours, or null: every hour counts. */
   workHours: WorkHours | null;
+  /** How many days before a limit reset expires it shows as a warning: 1 to 14. */
+  resetWarningDays: number;
 }
 
 /** One window on each work day, in local time: ISO weekdays (1 = Monday), minutes after midnight in steps of 30. */

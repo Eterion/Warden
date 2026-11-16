@@ -15,6 +15,7 @@ import {
   limitView,
   newFolderPreview,
   readingNote,
+  expiresSoon,
   expiryText,
   resetRows,
   resetTime,
@@ -375,11 +376,59 @@ describe('limit resets', () => {
       provider: 'codex',
       resets: [{ title: 'Soon', expiresAt: NOW + DAY }],
     });
-    expect(resetRows([codex, other], NOW).map((r) => [r.account.label, r.title, r.expiresAt])).toEqual([
+    expect(resetRows([codex, other], NOW, 3).map((r) => [r.account.label, r.title, r.expiresAt])).toEqual([
       ['Other', 'Soon', NOW + DAY],
       ['Codex', 'Full reset (Weekly + 5 hr)', NOW + 9 * DAY],
       ['Codex', 'Reset', null],
     ]);
-    expect(resetRows([account({ id: 'm', label: 'Main' })], NOW)).toEqual([]);
+    expect(resetRows([account({ id: 'm', label: 'Main' })], NOW, 3)).toEqual([]);
+  });
+
+  it('says how soon a reset expires within the warning days: today, tomorrow, in N days', () => {
+    const now = new Date(2026, 11, 8, 9, 30).getTime();
+    const at = (day: number, h: number, m = 0) => new Date(2026, 11, day, h, m).getTime();
+    expect(expiryText(at(8, 23), now, 3)).toBe('Expires today, 23:00');
+    expect(expiryText(at(9, 8), now, 3)).toBe('Expires tomorrow, 08:00');
+    expect(expiryText(at(10, 23), now, 3)).toBe('Expires in 2 days, 10 Dec, 23:00');
+    // The window is measured in days of 24 hours: three days from now is in, a minute later is out.
+    expect(expiryText(at(11, 9, 30), now, 3)).toBe('Expires in 3 days, 11 Dec, 09:30');
+    expect(expiryText(at(11, 9, 31), now, 3)).toBe('Expires 11 Dec, 09:31');
+    expect(expiryText(at(10, 23), now, 1)).toBe('Expires 10 Dec, 23:00');
+    // Without warning days (and for one that never expires) the plain line.
+    expect(expiryText(at(8, 23), now)).toBe('Expires 8 Dec, 23:00');
+    expect(expiryText(null, now, 14)).toBe('Does not expire');
+    // Across the new year, the date keeps its year.
+    const late = new Date(2026, 11, 30, 12, 0).getTime();
+    expect(expiryText(new Date(2027, 0, 2, 7, 0).getTime(), late, 3)).toBe('Expires in 3 days, 2 Jan 2027, 07:00');
+
+    expect(expiresSoon(at(11, 9, 30), now, 3)).toBe(true);
+    expect(expiresSoon(at(11, 9, 31), now, 3)).toBe(false);
+    expect(expiresSoon(null, now, 14)).toBe(false);
+    expect(expiresSoon(now - 1, now, 3)).toBe(false);
+  });
+
+  it('marks the rows that expire within the warning days', () => {
+    const DAY = 24 * 3_600_000;
+    const claude = account({
+      id: 'main',
+      label: 'Main',
+      resets: [
+        { title: 'Full reset', expiresAt: NOW + 5 * DAY },
+        { title: 'Full reset', expiresAt: NOW + 2 * DAY },
+        { title: '5-hour reset', expiresAt: null },
+      ],
+    });
+    const rows = (days: number) => resetRows([claude], NOW, days).map((r) => [r.title, r.soon]);
+    expect(rows(3)).toEqual([
+      ['Full reset', true],
+      ['Full reset', false],
+      ['5-hour reset', false],
+    ]);
+    expect(rows(1)).toEqual([
+      ['Full reset', false],
+      ['Full reset', false],
+      ['5-hour reset', false],
+    ]);
+    expect(rows(14).map((r) => r[1])).toEqual([true, true, false]);
   });
 });

@@ -222,3 +222,75 @@ fn a_resets_answer_that_lands_after_a_new_identity_is_accepted_is_dropped() {
         .collect();
     assert_eq!(tokens, ["codex-token", "other-token"]);
 }
+
+#[test]
+fn a_newly_accepted_identity_has_its_resets_read_at_once() {
+    let f = Fixture::new();
+    let folder = f.codex_folder(".codex-work", "me@acme.example", "codex-token");
+    *f.resets.answer.lock().expect("lock") = Some((200, common::RESETS_ANSWER.into()));
+    let a = app(&f);
+    let id = a
+        .add_existing(Provider::Codex, folder.to_str().expect("path"), "Codex")
+        .expect("add");
+    a.read_claude_usage();
+    // Within the 3 hours, an interval reading does not ask again.
+    a.read_claude_usage();
+    assert_eq!(f.resets.seen.lock().expect("lock").len(), 1);
+    common::set_codex_identity(&folder, "other@acme.example", "other-token");
+    a.apply_identity(
+        &id,
+        warden_core::codex::read_identity_from_login_file(&folder),
+    );
+    a.accept_identity(&id).expect("accept");
+    a.read_claude_usage();
+    let tokens: Vec<String> = f
+        .resets
+        .seen
+        .lock()
+        .expect("lock")
+        .iter()
+        .map(|(t, _)| t.clone())
+        .collect();
+    assert_eq!(tokens, ["codex-token", "other-token"]);
+}
+
+#[test]
+fn a_claude_answer_that_lands_after_a_new_identity_is_accepted_leaves_its_resets_due() {
+    let f = Fixture::new();
+    let folder = f.claude_folder(".claude-work", "me@acme.example", "claude-token");
+    *f.endpoint.answer.lock().expect("lock") = Some((
+        200,
+        r#"{"seven_day": {"utilization": 1}, "cedar_ember": {"eligible": false, "ineligible_reason": "surface", "grants": []}}"#.into(),
+    ));
+    let a = app(&f);
+    let id = a
+        .add_existing(Provider::Claude, folder.to_str().expect("path"), "Work")
+        .expect("add");
+    // While the request is in flight, the folder is signed in as someone else and the change accepted.
+    {
+        let (a, id, folder, home) = (
+            Arc::clone(&a),
+            id.clone(),
+            folder.clone(),
+            f.home.path().to_owned(),
+        );
+        *f.endpoint.during.lock().expect("lock") = Some(Box::new(move || {
+            common::set_claude_identity(&folder, "other@acme.example");
+            a.apply_identity(
+                &id,
+                warden_core::claude::read_identity(&folder, Some(home.as_path())),
+            );
+            a.accept_identity(&id).expect("accept");
+        }));
+    }
+    a.read_claude_usage();
+    // The old identity's answer was ignored, so the next interval reading asks the new one for its resets.
+    a.read_claude_usage();
+    assert_eq!(*f.endpoint.resets_asked.lock().expect("lock"), [true, true]);
+    // Once read for the new identity, they are not asked for again within the 3 hours.
+    a.read_claude_usage();
+    assert_eq!(
+        *f.endpoint.resets_asked.lock().expect("lock"),
+        [true, true, false]
+    );
+}

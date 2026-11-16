@@ -1,12 +1,13 @@
 <script setup lang="ts">
-// Settings, General: how often usage is read, the theme,
+// Settings, General: how often usage is read, the theme, how soon before a limit reset expires the Overview warns,
 // Warden's data and its log files. The desktop app adds Keep running in the tray, Start with Windows and Open log folder; the browser version
 // shows the log folder's path only.
 import { FolderOpen, Monitor, Moon, Sun } from 'lucide-vue-next';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { api, type Theme } from '../api';
 import SegmentedControl from '../components/SegmentedControl.vue';
 import WButton from '../components/WButton.vue';
+import WSlider from '../components/WSlider.vue';
 import WSwitch from '../components/WSwitch.vue';
 import { go } from '../route';
 import { act, store } from '../store';
@@ -30,6 +31,21 @@ const startWithWindows = computed<boolean>({
   get: () => store.state?.desktop?.startWithWindows ?? false,
   set: (v) => void run(() => api.settings({ startWithWindows: v })),
 });
+
+// The warning follows the drag and is saved once, where the thumb is let go; a refused one goes back to the saved one.
+const warnDays = ref(store.state?.settings.resetWarningDays ?? 3);
+watch(
+  () => store.state?.settings.resetWarningDays,
+  (d) => {
+    if (d !== undefined) warnDays.value = d;
+  },
+);
+const warnDaysText = computed(() => (warnDays.value === 1 ? '1 day' : `${warnDays.value} days`));
+async function saveWarnDays(value: number | number[]): Promise<void> {
+  if (typeof value !== 'number') return;
+  await run(() => api.settings({ resetWarningDays: value }));
+  if (error.value) warnDays.value = store.state?.settings.resetWarningDays ?? warnDays.value;
+}
 
 async function run(f: () => ReturnType<typeof api.settings>): Promise<void> {
   error.value = await act(f);
@@ -65,7 +81,7 @@ async function runSetupAgain(): Promise<void> {
         <div class="flex flex-auto basis-65 flex-col gap-0.5">
           <span id="interval-label" class="text-14 font-medium">Read usage every</span>
           <span class="text-13 text-tertiary"
-            >One small request per Claude account; Codex is read from its logs. No model tokens.</span
+            >One small request per account; Codex usage is read from its logs. No model tokens.</span
           >
         </div>
         <SegmentedControl
@@ -78,6 +94,28 @@ async function runSetupAgain(): Promise<void> {
             { value: '30', label: '30 min' },
           ]"
         />
+      </div>
+      <div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b border-divider py-4">
+        <div class="flex min-w-0 flex-auto basis-65 flex-col gap-0.5">
+          <span id="reset-warning-label" class="cursor-default text-14 font-medium">Warn before a reset expires</span>
+          <span class="text-13 text-tertiary"
+            >A limit reset this close to expiring shows in amber on the Overview.</span
+          >
+        </div>
+        <span class="flex min-w-0 flex-auto basis-60 items-center gap-3">
+          <WSlider
+            v-model="warnDays"
+            labelledby="reset-warning-label"
+            :min="1"
+            :max="14"
+            :step="1"
+            :value-text="warnDaysText"
+            @commit="saveWarnDays"
+          />
+          <span class="text-13 whitespace-nowrap text-secondary tabular-nums" data-reset-warning>{{
+            warnDaysText
+          }}</span>
+        </span>
       </div>
       <template v-if="store.state?.desktop">
         <div class="flex items-center justify-between gap-6 border-b border-divider py-4">

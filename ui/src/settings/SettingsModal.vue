@@ -45,7 +45,7 @@ const sections: { id: Section; label: string; icon: typeof Settings; title: stri
     label: 'General',
     icon: Settings,
     title: 'General',
-    subtitle: 'Usage reading and the theme.',
+    subtitle: 'Usage reading, the theme and the reset warning.',
   },
   {
     id: 'accounts',
@@ -106,6 +106,12 @@ const INDEX: {
     label: 'Read usage every',
     help: 'How often account limits are read.',
     keys: 'usage refresh interval limit',
+  },
+  {
+    s: 'general',
+    label: 'Warn before a reset expires',
+    help: 'How many days before a limit reset expires it shows in amber.',
+    keys: 'limit resets expiry expire warning days amber banked',
   },
   {
     s: 'general',

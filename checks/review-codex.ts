@@ -37,6 +37,16 @@ export function withoutAppAliases(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out;
 }
 
+/** The first `codex.exe` in the environment's PATH, or undefined (an npm-installed codex.cmd, say). */
+export function codexExe(env: NodeJS.ProcessEnv): string | undefined {
+  const path = Object.entries(env).find(([k]) => k.toLowerCase() === 'path')?.[1] ?? '';
+  return path
+    .split(';')
+    .filter(Boolean)
+    .map((dir) => join(dir, 'codex.exe'))
+    .find((file) => existsSync(file));
+}
+
 async function main(): Promise<void> {
   const kind = process.argv[2];
   const brief = arg('brief');
@@ -68,7 +78,7 @@ async function runReviewer(kind: ReviewKind, brief: string): Promise<number> {
     kind === 'ux' && existsSync(shots)
       ? readdirSync(shots)
           .filter((f) => f.endsWith('.png'))
-          // Relative to --cd: cmd.exe takes at most 8191 characters, which 42 states in two themes with full paths pass.
+          // Relative to --cd, to keep the command line short (see the start below).
           .flatMap((f) => ['--image', `artifacts/screenshots/${f}`])
       : [];
   const output = join(REVIEW_DIR, `codex-${kind}-reviewer.md`);
@@ -84,14 +94,20 @@ async function runReviewer(kind: ReviewKind, brief: string): Promise<number> {
     ...images,
     '-',
   ];
-  // Through the shell, so an npm-installed codex.cmd is found as well as codex.exe. Every argument is a fixed word
-  // or a path inside the repo; each is quoted for cmd.exe.
-  const child = spawn(['codex', ...args.map((a) => `"${a}"`)].join(' '), {
-    cwd: ROOT,
-    env: withoutAppAliases(process.env),
-    shell: true,
-    stdio: ['pipe', 'inherit', 'inherit'],
-  });
+  // codex.exe directly when it is on PATH: a process's command line takes 32767 characters, room for every state's
+  // screenshots. Otherwise through the shell, so an npm-installed codex.cmd is found too; cmd.exe takes at most 8191
+  // characters (about 60 states in two themes). Every argument is a fixed word or a path inside the repo; each is
+  // quoted for cmd.exe.
+  const env = withoutAppAliases(process.env);
+  const exe = codexExe(env);
+  const child = exe
+    ? spawn(exe, args, { cwd: ROOT, env, stdio: ['pipe', 'inherit', 'inherit'] })
+    : spawn(['codex', ...args.map((a) => `"${a}"`)].join(' '), {
+        cwd: ROOT,
+        env,
+        shell: true,
+        stdio: ['pipe', 'inherit', 'inherit'],
+      });
   child.stdin.end(prompt);
   return new Promise((resolve) => {
     child.once('error', (error) => {

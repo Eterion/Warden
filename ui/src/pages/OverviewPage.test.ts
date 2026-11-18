@@ -4,6 +4,7 @@ import { store } from '../store';
 import type { Reset, Session } from '../api';
 import { fakeServer } from '../test/api';
 import { NOW, account, state } from '../test/state';
+import { DUST_MS } from '../components/dust';
 import OverviewPage from './OverviewPage.vue';
 
 const HOUR = 3_600_000;
@@ -799,12 +800,14 @@ describe('OverviewPage', () => {
     function stubMotion(
       reduce: boolean,
       finished: Promise<void> | (() => Promise<void>) = Promise.resolve(),
+      options: KeyframeAnimationOptions[] = [],
     ): Keyframe[][] {
       const animations: Keyframe[][] = [];
       const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
       for (const [name, value] of Object.entries({
-        animate(keyframes: Keyframe[]) {
+        animate(keyframes: Keyframe[], timing: KeyframeAnimationOptions) {
           animations.push(keyframes);
+          options.push(timing);
           return { finished: typeof finished === 'function' ? finished() : finished, cancel() {} };
         },
         getBoundingClientRect: () => BOX,
@@ -934,7 +937,8 @@ describe('OverviewPage', () => {
       expect(dialog()).toBeNull();
       // Many fragments drift up and to the side and fade, then the gap closes.
       const drifts = animations.filter((k) => String(k[k.length - 1]!.transform).startsWith('translate('));
-      expect(drifts.length).toBeGreaterThan(50);
+      // Fine dust: ten fragments high, as many across as fit (the stand-in row: 60 by 300).
+      expect(drifts.length).toBe(10 * 50);
       for (const k of drifts) {
         const end = k[k.length - 1]!;
         expect(end.opacity).toBe(0);
@@ -950,6 +954,90 @@ describe('OverviewPage', () => {
       expect(page.findAll('li').map((li) => li.text().includes('5-hour reset'))).not.toContain(true);
       expect(useButtons(page)).toHaveLength(3);
       expect(page.get('[role=status]').text()).toBe('5-hour reset used on Main.');
+    });
+
+    it('takes the row background with it, uncovering the dust bunnies where the row was', async () => {
+      let finish: () => void = () => {};
+      stubMotion(false, new Promise<void>((r) => (finish = r)));
+      store.state = withResets();
+      fakeServer(() => withResets([FULL, FULL, { id: null, title: 'Old', expiresAt: NOW + 4 * DAY }]));
+      const page = mount(OverviewPage, { attachTo: document.body });
+      // The colour the rows are seen on (in the app, the panel's, behind the transparent list).
+      (page.get('[aria-labelledby=resets-heading]').element as HTMLElement).style.backgroundColor = 'teal';
+      await page.get('[aria-label="Use 5-hour reset on Main"]').trigger('click');
+      await flushPromises();
+      dialog()!.querySelector<HTMLButtonElement>('button[type=submit]')!.click();
+      await flushPromises();
+      await flushPromises();
+      const fragments = [...document.querySelectorAll<HTMLElement>('[aria-hidden=true].fixed > div')];
+      expect(fragments).toHaveLength(10 * 50);
+      expect(fragments.every((f) => f.style.backgroundColor === 'teal')).toBe(true);
+      expect(page.get('[data-gone]').classes()).toContain('dust-hole');
+      finish();
+      await flushPromises();
+      await flushPromises();
+      expect(document.querySelectorAll('[aria-hidden=true].fixed')).toHaveLength(0);
+    });
+
+    it('draws the dust in the panel that scrolls the row, in even columns no narrower than the list corners', async () => {
+      const px = (n: number) => `${n}px`;
+      let finish: () => void = () => {};
+      stubMotion(false, new Promise<void>((r) => (finish = r)));
+      store.state = withResets();
+      fakeServer(() => withResets([FULL, FULL, { id: null, title: 'Old', expiresAt: NOW + 4 * DAY }]));
+      const page = mount(OverviewPage, { attachTo: document.body });
+      // The page stands in for the content panel that scrolls it; the list box has rounded corners inside its border.
+      const panel = page.element as HTMLElement;
+      Object.assign(panel.style, { overflowY: 'auto', position: 'relative' });
+      const list = page.get('[aria-labelledby=resets-heading] ul').element as HTMLElement;
+      Object.assign(list.style, {
+        borderTopLeftRadius: px(20),
+        borderBottomLeftRadius: px(20),
+        borderTopWidth: px(1),
+        borderBottomWidth: px(1),
+      });
+      // The first row: its top corners are the list's.
+      await page.findAll('[data-use-reset]')[0]!.trigger('click');
+      await flushPromises();
+      dialog()!.querySelector<HTMLButtonElement>('button[type=submit]')!.click();
+      await flushPromises();
+      await flushPromises();
+      const layer = panel.querySelector<HTMLElement>(':scope > [aria-hidden=true]')!;
+      expect(layer.classList).toContain('absolute');
+      expect(layer.classList).toContain('overflow-hidden');
+      expect(document.querySelectorAll('[aria-hidden=true].fixed')).toHaveLength(0);
+      // Fragments at least the 19 px corner: 3 high and 15 across the 60 by 300 row, all one width.
+      const fragments = [...layer.children] as HTMLElement[];
+      expect(fragments).toHaveLength(3 * 15);
+      expect(new Set(fragments.map((f) => f.style.width))).toEqual(new Set([px(20)]));
+      expect(fragments[0]!.style.borderTopLeftRadius).toBe(px(19));
+      expect(fragments[14]!.style.borderTopRightRadius).toBe(px(19));
+      finish();
+      await flushPromises();
+      await flushPromises();
+      expect(panel.querySelector(':scope > [aria-hidden=true]')).toBeNull();
+    });
+
+    it('lasts about 2.5 s at most before the gap closes, however the fragments scatter', async () => {
+      for (const roll of [0, 0.999]) {
+        vi.spyOn(Math, 'random').mockReturnValue(roll);
+        const timings: KeyframeAnimationOptions[] = [];
+        stubMotion(false, Promise.resolve(), timings);
+        store.state = withResets();
+        fakeServer(() => withResets([FULL, FULL, { id: null, title: 'Old', expiresAt: NOW + 4 * DAY }]));
+        const page = mount(OverviewPage, { attachTo: document.body });
+        await page.get('[aria-label="Use 5-hour reset on Main"]').trigger('click');
+        await flushPromises();
+        dialog()!.querySelector<HTMLButtonElement>('button[type=submit]')!.click();
+        await flushPromises();
+        await flushPromises();
+        const ends = timings.slice(0, -1).map((t) => Number(t.delay) + Number(t.duration));
+        expect(Math.max(...ends)).toBeLessThanOrEqual(DUST_MS);
+        expect(DUST_MS).toBe(2500);
+        page.unmount();
+        vi.restoreAllMocks();
+        for (const r of restore.splice(0)) r();
+      }
     });
 
     it('with reduced motion, the row only fades out', async () => {
@@ -1044,6 +1132,26 @@ describe('OverviewPage', () => {
       expect(h1.classList).toContain('focus-visible:outline-indicator');
     });
 
+    it('keeps focus on the Limit resets heading while the last reset goes, then gives it to the Overview heading', async () => {
+      let finish: () => void = () => {};
+      stubMotion(false, new Promise<void>((r) => (finish = r)));
+      const one = withResets([SESSION]);
+      one.accounts = one.accounts.map((a) => (a.id === 'c' ? { ...a, resets: [] } : a));
+      store.state = one;
+      const none = withResets([]);
+      none.accounts = none.accounts.map((a) => ({ ...a, resets: [] }));
+      fakeServer(() => none);
+      const page = mount(OverviewPage, { attachTo: document.body });
+      await useWithKeyboard(page, 'Use 5-hour reset on Main');
+      // The row is still turning to dust: focus stays by the list, so it stays in view.
+      expect(document.activeElement).toBe(page.get('#resets-heading').element);
+      finish();
+      await flushPromises();
+      await flushPromises();
+      expect(page.find('[aria-labelledby=resets-heading]').exists()).toBe(false);
+      expect(document.activeElement).toBe(page.get('h1').element);
+    });
+
     it('leaves focus where the user moved it while the row was going', async () => {
       let finish: () => void = () => {};
       stubMotion(true, new Promise<void>((r) => (finish = r)));
@@ -1103,13 +1211,13 @@ describe('OverviewPage', () => {
       // The list holds still for the use being sent, the first row still gone.
       expect(rowOf('main:grant-full:0').dataset.gone).toBe('');
 
-      // Used, with Codex's reset gone too: the modal closes with focus on the heading, not on the gone row's button.
+      // Used, with Codex's reset gone too: the modal closes with focus on the Limit resets heading (the list stays in view), not on the gone row's button.
       const none = withResets([FULL]);
       none.accounts = none.accounts.map((a) => (a.id === 'c' ? { ...a, resets: [] } : a));
       answer[1]!(none);
       await flushPromises();
       expect(dialog()).toBeNull();
-      expect(document.activeElement).toBe(page.get('h1').element);
+      expect(document.activeElement).toBe(page.get('#resets-heading').element);
 
       // Once the 5-hour reset's row has gone, the list shows the state, the kept row back as it was and focus on its Use.
       finish[1]!();

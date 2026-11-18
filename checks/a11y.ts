@@ -69,6 +69,17 @@ type Step =
   | { press: string }
   | { fill: string; text: string }
   | { waitFor: string }
+  /** Waits until no element matches (a row that has left, say). */
+  | { waitGone: string }
+  /** Pauses every running animation this far (ms) into its timeline: a still of one moment in it. */
+  | { freeze: number }
+  /** The page's next `Math.random()` answers this, then it is random again (to pick what a random choice shows). */
+  | { random: number }
+  /**
+   * Fails unless the element's `::before` is masked with `drawing`'s SVG (shown through a mask, kept by the CSS build)
+   * and that SVG loads and decodes under the page's policy.
+   */
+  | { masked: string; drawing: string }
   /** Fails the state unless the element is wholly visible inside the scrolling area named by `within`. */
   | { inView: string; within: string };
 
@@ -252,6 +263,42 @@ export const PAGES: {
       { click: '[aria-label="Use 5-hour reset on Main"]' },
       { click: '[role=dialog] button[type=submit]' },
       { waitFor: '[role=status] >> text=5-hour reset used on Main.' },
+      // The row has turned to dust and left the list: the screenshot shows the list without it.
+      { waitGone: '[aria-labelledby=resets-heading] [data-gone]' },
+    ],
+    viewport: { width: 1600, height: 900 },
+  },
+  {
+    // Mid-way: the used row half turned to dust, the dust bunnies uncovered where it was (a still, every animation
+    // paused 1.4 s in), under the page's policy; and the same in the desktop window, under the window's policy.
+    name: 'overview-reset-dust',
+    path: '/',
+    fixture: 'resetsUsed',
+    ready: '[aria-labelledby=resets-heading] [data-use-reset]',
+    steps: [
+      { click: '[aria-label="Use 5-hour reset on Main"]' },
+      // The dust bunnies, the first of the characters.
+      { random: 0 },
+      { click: '[role=dialog] button[type=submit]' },
+      { waitFor: '[aria-labelledby=resets-heading] .dust-hole.dust-art-bunnies' },
+      { masked: '[aria-labelledby=resets-heading] .dust-hole.dust-art-bunnies', drawing: 'dust-bunnies' },
+      { freeze: 1400 },
+    ],
+    viewport: { width: 1600, height: 900 },
+  },
+  {
+    name: 'desktop-reset-dust',
+    path: '/?desktop',
+    fixture: 'resetsUsed',
+    ready: '[aria-labelledby=resets-heading] [data-use-reset]',
+    steps: [
+      { click: '[aria-label="Use 5-hour reset on Main"]' },
+      // Cthulhu, the second (its drawing under the desktop window's policy too).
+      { random: 0.5 },
+      { click: '[role=dialog] button[type=submit]' },
+      { waitFor: '[aria-labelledby=resets-heading] .dust-hole.dust-art-cthulhu' },
+      { masked: '[aria-labelledby=resets-heading] .dust-hole.dust-art-cthulhu', drawing: 'cthulhu' },
+      { freeze: 1400 },
     ],
     viewport: { width: 1600, height: 900 },
   },
@@ -848,19 +895,73 @@ async function main(): Promise<void> {
               [step.inView, step.within],
             );
             if (!shown) throw new Error(`${p.name}: ${step.inView} is not wholly visible in ${step.within}`);
+          } else if ('masked' in step) {
+            // The hole's ::before has the expected drawing as its mask (the build names it <drawing>-<hash>.svg), and
+            // that drawing loads and decodes under the page's policy.
+            const { mask, url, decoded } = await page.evaluate(async (sel) => {
+              const el = document.querySelector(sel);
+              const mask = el ? getComputedStyle(el, '::before').maskImage : 'missing';
+              const url = /^url\("?(.*?)"?\)$/.exec(mask)?.[1];
+              if (!url) return { mask, url: '', decoded: false };
+              const img = new Image();
+              img.src = url;
+              return {
+                mask,
+                url,
+                decoded: await img.decode().then(
+                  () => true,
+                  () => false,
+                ),
+              };
+            }, step.masked);
+            const file = url ? new URL(url, page.url()).pathname.split('/').pop()! : '';
+            if (!new RegExp(`^${step.drawing}-[\\w-]+\\.svg$`).test(file))
+              throw new Error(`${step.masked}::before is not masked with ${step.drawing}.svg (${mask})`);
+            if (!decoded) throw new Error(`${step.masked}::before: ${file} does not load or decode`);
+          } else if ('random' in step) {
+            await page.evaluate((value) => {
+              const real = Math.random;
+              Math.random = () => {
+                Math.random = real;
+                return value;
+              };
+            }, step.random);
+          } else if ('freeze' in step) {
+            await page.evaluate((at) => {
+              // Remembered, so the settle wait below skips these and no others.
+              const frozen = new Set<Animation>();
+              for (const a of document.getAnimations()) {
+                a.pause();
+                a.currentTime = at;
+                frozen.add(a);
+              }
+              (window as unknown as { checkFrozen?: Set<Animation> }).checkFrozen = frozen;
+            }, step.freeze);
+          } else if ('waitGone' in step) {
+            await page.locator(step.waitGone).first().waitFor({ state: 'detached', timeout: 10_000 });
           } else await page.locator(step.waitFor).first().waitFor({ timeout: 10_000 });
         }
         await page.evaluate(() => document.fonts.ready);
         await page.waitForTimeout(300);
-        // Modals and menus animate open; check them once they have settled (spinners turn for ever, so not those).
-        await page.evaluate(() =>
-          Promise.all(
-            document
-              .getAnimations()
-              .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
-              .map((a) => a.finished),
-          ),
-        );
+        // Modals and menus animate open; check them once they have settled (spinners turn for ever, so not those, nor an
+        // animation a `freeze` step paused for a still). One that does not settle fails the state rather than hanging.
+        // Any other paused animation never finishes, so it fails the state.
+        const settled = await page.evaluate(() => {
+          const frozen = (window as unknown as { checkFrozen?: Set<Animation> }).checkFrozen;
+          return Promise.race([
+            Promise.all(
+              document
+                .getAnimations()
+                .filter((a) => !frozen?.has(a) && a.effect?.getComputedTiming().iterations !== Infinity)
+                .map((a) => a.finished.catch(() => undefined)),
+            ).then(() => true),
+            new Promise<boolean>((r) => setTimeout(() => r(false), 15_000)),
+          ]);
+        });
+        if (!settled) {
+          failures++;
+          console.error(`FAIL ${p.name} (${theme}): its animations did not settle within 15 s`);
+        }
         // Only the app's own areas scroll (the content panel, a modal's body); the page itself never does.
         const overflow = await page.evaluate(() => {
           const d = document.scrollingElement ?? document.documentElement;

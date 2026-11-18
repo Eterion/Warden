@@ -297,6 +297,40 @@ body {
   min-width: 900px;
 }
 
+@utility dust-hole {
+  /* Where a used limit reset's row was, while the row turns to dust: the window colour, and one of the characters
+     (dust-art-*, picked at random) drawn in a faint line, uncovered as the fragments blow away. Decoration only, not a
+     colour anything is read against. */
+  position: relative;
+  background-color: var(--color-win);
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 4px 12px;
+    background-color: var(--color-icon-faded);
+    mask-position: center;
+    mask-size: contain;
+    mask-repeat: no-repeat;
+  }
+}
+
+@utility dust-art-bunnies {
+  /* Three dust bunnies, one waving goodbye, in the middle of the row. */
+  &::before {
+    mask-image: url('../assets/art/dust-bunnies.svg');
+  }
+}
+
+@utility dust-art-cthulhu {
+  /* Cthulhu rising from below the row: drawn whole, a little larger than a row and anchored to its bottom centre, so the
+     row's edges crop it to a close-up and a taller or wider row shows more of it, never a drawing that ends short. */
+  &::before {
+    inset: 0;
+    mask-image: url('../assets/art/cthulhu.svg');
+    mask-position: center bottom;
+    mask-size: auto 116px;
+  }
+}
 @utility icons-faded {
   /* A faded sessions row (a parent shown only for the sessions under it, or a session that has ended or whose state is
      not known): its icons (state, subagents) a step dimmer. The working spinner's still ring keeps its own faint

@@ -78,6 +78,8 @@ const announced = ref('');
 const resetList = ref<HTMLElement | null>(null);
 /** The Overview's heading: where focus goes after a use when no Use button stays. */
 const heading = ref<HTMLElement | null>(null);
+/** The Limit resets heading: focus waits here while the last usable reset's row goes, so the list stays in view. */
+const resetsHeading = ref<HTMLElement | null>(null);
 /** The reset just used, while its confirmation closes: focus then goes to a Use button that stays. */
 let usedKey: string | null = null;
 
@@ -118,7 +120,7 @@ function nearestUse(key: string, rows: ResetRow[], self: boolean): HTMLElement |
 function returnTo(): HTMLElement | null {
   const key = usedKey;
   usedKey = null;
-  return key === null ? null : (nearestUse(key, resets.value, false) ?? heading.value);
+  return key === null ? null : (nearestUse(key, resets.value, false) ?? resetsHeading.value ?? heading.value);
 }
 
 /**
@@ -172,7 +174,7 @@ async function leave(r: ResetRow): Promise<void> {
   // Another use is under way (or began meanwhile): the last to finish releases the list and places focus.
   if (held.value) return;
   const focused = document.activeElement;
-  if (focused && focused !== document.body && focused !== heading.value) return;
+  if (focused && focused !== document.body && focused !== heading.value && focused !== resetsHeading.value) return;
   (nearestUse(r.key, rows, true) ?? heading.value)?.focus();
 }
 
@@ -615,7 +617,14 @@ function sessionAccount(s: Session): Account | undefined {
         aria-labelledby="resets-heading"
         class="flex min-w-0 grow basis-72 flex-col gap-3"
       >
-        <h2 id="resets-heading" class="text-16 font-semibold">Limit resets</h2>
+        <h2
+          id="resets-heading"
+          ref="resetsHeading"
+          tabindex="-1"
+          class="rounded-xs text-16 font-semibold outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator"
+        >
+          Limit resets
+        </h2>
         <WList>
           <WListItem v-for="r in resets" :key="r.key" :data-reset-key="r.key">
             <AccountIcon :account="r.account" />

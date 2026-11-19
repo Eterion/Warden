@@ -1,16 +1,16 @@
 // The page's Content-Security-Policies, read from where the app sets them, so the rendered check runs the page
-// under the same ones: the development server's (crates/warden-server/src/http.rs) and the desktop window's
+// under the same ones: the demo server's (crates/warden-server/src/http.rs) and the desktop window's
 // (crates/warden-desktop/tauri.conf.json).
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT } from './repo.ts';
 
-/** The policy the development server sends with every answer (`CSP` in http.rs). */
+/** The policy the demo server sends with every answer (`CSP` in http.rs). */
 export function browserCsp(): string {
   const source = readFileSync(join(ROOT, 'crates', 'warden-server', 'src', 'http.rs'), 'utf8');
   const m = /pub const CSP: &str =\s*"([^"]+)";/.exec(source);
-  if (!m?.[1]) throw new Error('the development server has no CSP constant in http.rs');
+  if (!m?.[1]) throw new Error('the demo server has no CSP constant in http.rs');
   return m[1];
 }
 

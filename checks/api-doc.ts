@@ -11,7 +11,7 @@ import { ROOT } from './lib/repo.ts';
 export const DOC = 'docs/api.md';
 /** The API's routes and request bodies, answered in-process or over HTTP. */
 export const ROUTES_FILE = 'crates/warden-server/src/api.rs';
-/** Routes only the development server answers over HTTP (the status hook's events). */
+/** Routes only the demo server answers over HTTP (the status hook's events). */
 export const HTTP_FILE = 'crates/warden-server/src/http.rs';
 
 /**

@@ -1,7 +1,7 @@
 // Accessibility check (axe-core, WCAG 2.2 A and AA, including contrast) on the rendered pages, in light and dark,
 // with a screenshot of each for the UX reviewer in artifacts/screenshots/.
 //
-// Builds the UI, serves it on 127.0.0.1 with `vite preview` as the development server does (its token traded for a
+// Builds the UI, serves it on 127.0.0.1 with `vite preview` as the demo server does (its token traded for a
 // cookie once, then refused without it, and its Content-Security-Policy), and drives the Microsoft Edge that ships with Windows
 // through playwright-core, so no browser is downloaded. The local server's API is stood in for by made-up states
 // (checks/fixtures/ui-state.ts), so no real account is read. `?desktop` pages run where the desktop window runs them
@@ -706,14 +706,14 @@ interface AxeResult {
   violations: { id: string; impact: string | null; help: string; nodes: { target: string[] }[] }[];
 }
 
-/** This run's made-up token and its cookie, as warden-server would have them on the preview's port. */
+/** This run's made-up token and its cookie, as the demo server would have them on the preview's port. */
 const TOKEN = 'a11ya11ya11y';
 const COOKIE = 'warden-token-a11y';
 /** Where the desktop window's page lives (ui/src/api.ts, `DESKTOP_ORIGIN`). */
 const DESKTOP_ORIGIN = 'http://warden.localhost';
 
 /**
- * As the development server: `?token=` trades the token for a cookie and leaves the address; anything without the
+ * As the demo server: `?token=` trades the token for a cookie and leaves the address; anything without the
  * cookie is refused. Also serves axe from the page's own origin, since the policy refuses inline scripts.
  */
 function devServerToken(axeSource: string): Plugin {

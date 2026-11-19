@@ -2,7 +2,7 @@
 
 What the tests cannot show: Warden against your real Claude and Codex accounts and the real CLIs. Each check needs you there. Try the demo first (`npm run demo`, made-up accounts, nothing real is read), then go through these in order.
 
-The checks run in a development build of the desktop app, with a data folder of their own, so nothing here mixes with a later everyday setup. The browser (the development server, `npm run dev`, the demo) is for made-up accounts only; never point it at your real ones.
+The checks run in a development build of the desktop app, with a data folder of their own, so nothing here mixes with a later everyday setup. The browser is only the demo's, on made-up accounts; real accounts are seen only by the desktop app.
 
 Every check except the hook checks also runs with `--no-hooks`: your real home, real accounts and real readings, with nothing written into any account folder. The window says "Hooks are off for this run". `--no-hooks` and `--home` exist only in development builds, never in the installed app.
 

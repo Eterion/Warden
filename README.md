@@ -18,16 +18,6 @@ cd Warden
 npm ci
 ```
 
-**Browser version (for development).** Build the UI and the `warden` routing tool, then start the local server with a data folder of its own:
-
-```sh
-npm run build -w ui
-cargo build -p warden-cli
-cargo run -p warden-server -- --data-dir <folder> --ui-dir ui/dist
-```
-
-Open the address it prints (`http://127.0.0.1:4777/?token=...`): each run has its own token, and requests without it are refused. The routing hook runs the `warden.exe` built beside the server. For work on the UI, `npm run dev -w ui` serves it with instant reload and passes `/api/` to the server: open the same address with the dev server's port.
-
 **Desktop app.** Build the UI and the routing tool, then run the app (`--data-dir` keeps a throwaway one apart from your own). It opens no network port: its window gets the page and the API in-process.
 
 ```sh
@@ -38,11 +28,11 @@ cargo run -p warden-desktop -- --data-dir <folder>
 
 `npm run desktop:installer` builds the installer into `target/release/bundle/nsis/`.
 
-Without `--data-dir`, the server and the desktop app use your real data folder, `%APPDATA%\Warden`.
+**Demo (for UI work).** `npm run demo` starts the demo server on made-up accounts in a throwaway folder, with usage readings and sessions coming and going; nothing real is read. It prints the address to open, with this run's token (`http://127.0.0.1:4787/?token=...`). For instant reload, leave it running and start `npm run dev -w ui`, then open the same address with the dev server's port: it passes `/api/` to the demo. Ctrl+C stops the demo and removes its folder.
+
+Without `--data-dir`, the desktop app uses your real data folder, `%APPDATA%\Warden`.
 
 **After an update.** When Warden starts, it rewrites the hooks an earlier build wrote differently (another `warden.exe` or data folder, the old `curl` status hook, Claude's hooks before the exec form) in main and in the accounts switched on, and notes each repair in its log. A hook that is missing or not trusted shows in Settings, Accounts, with Repair. Claude's hooks need Claude Code 2.1.139 or later. Uninstalling Warden removes its hooks from every account, main included, restoring their backups.
-
-**Demo.** `npm run demo` starts the real server on made-up accounts in a throwaway folder, with usage readings and sessions coming and going, so you can look around without touching a real account. Ctrl+C stops it and removes the folder.
 
 ## Checks
 

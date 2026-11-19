@@ -58,11 +58,12 @@ export function blankCommentsAndStrings(text: string): string {
     } else if (!prevIdent && /^[bc]?r#*"/.test(text.slice(i, i + 260))) {
       // A raw string: r"…", r#"…"#, br"…", cr"…"; no escapes, closed by the quote and as many #.
       const head = /^[bc]?r(#*)"/.exec(text.slice(i, i + 260));
+      const hashes = head?.[1] ?? '';
       const open = i + (head?.[0].length ?? 0);
-      const close = text.indexOf('"' + (head?.[1] ?? ''), open);
+      const close = text.indexOf('"' + hashes, open);
       const end = close === -1 ? text.length : close;
       blank(open, end);
-      i = close === -1 ? text.length : close + 1 + (head?.[1].length ?? 0);
+      i = close === -1 ? text.length : close + 1 + hashes.length;
     } else if (c === '"') {
       let j = i + 1;
       while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;

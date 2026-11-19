@@ -138,7 +138,7 @@ The app itself is the design. `ui/src/styles/tokens.css` and the shared componen
 - Colour only for status; there is no accent colour. Amber means it needs you or is near a limit. Usage bars are green below 50%, orange from 50%, red from 80%, and neutral grey while a Warden account's login is idle (expired).
 - Every text, icon and control colour meets WCAG AA in both themes: 4.5:1 for text, 3:1 for icons, bars (against their track and what is around it) and control outlines.
 - 8px corners on controls, cards, tables and the content panel; 16px on modals; 1px borders.
-- Lucide icons only. Provider icons are the plain marks (Claude's orange spark, Codex's mark in the text colour).
+- Lucide icons only, except Warden's own mark: the owl beside its name in the sidebar, in its own colours, the app icon's source itself (`crates/warden-desktop/icons/warden.svg`). Provider icons are the plain marks (Claude's orange spark, Codex's mark in the text colour).
 
 **App-wide rules**
 
@@ -218,7 +218,7 @@ The Overview's own parts sit there too: `SubagentsBadge` (a session's subagents,
 - **Hover and pressed**: write them with the `hov:` and `press:` variants (`group-hov:`, `group-press:` for a part inside a `group` control), never bare `hover:` or `active:`. They are `:hover` and `:active`, plus the state a connected label passes on through `v-label-state` (`ui/src/components/labels.ts`), and skip disabled controls. Put `v-label-state` on any control that can have a label (the shared switch and text field have it). They add no specificity, so a state's own colour wins unless stacked on it (`aria-pressed:hov:`). Each new hover or pressed colour gets its contrast pairs.
 - **Themes.** Each colour token holds `light-dark(light, dark)`. The theme follows Windows; `<html data-theme="light|dark">` overrides it. Never branch on the theme in components.
 - **Adding a token**: reuse an existing token where one fits; otherwise add it to `tokens.css` (for a screen not built yet, take the value from `design/`'s `light:` and `dark:` maps). If it is a text, icon, bar or control colour, add its pairs to `ui/src/styles/contrast-pairs.json` (4.5 for text, 3 for icons, bars and control outlines; a bar against its track as well as the background). The contrast check fails on any pair below WCAG AA.
-- Inter ships with the app as a Latin-subset variable woff2 with its licence (SIL OFL 1.1). Lucide icons only (`lucide-vue-next`).
+- Inter ships with the app as a Latin-subset variable woff2 with its licence (SIL OFL 1.1). Lucide icons only (`lucide-vue-next`), and Warden's owl, imported from the app icon's SVG.
 - Pages and states the rendered accessibility check visits are listed in `checks/a11y.ts` (`PAGES`, with the steps that reach a state); add each new screen and state there, so it also gets light and dark screenshots for the UX reviewer.
 
 ## Commits, review and the step summary

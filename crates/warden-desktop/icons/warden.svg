@@ -1,14 +1,172 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- The Warden mark: Lucide radar (ISC licence) in white on zinc-900. Source of the app and tray icons. -->
-  <rect width="1024" height="1024" rx="224" fill="#18181b"/>
-  <g transform="translate(152 152) scale(30)" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M19.07 4.93A10 10 0 0 0 6.99 3.34"/>
-    <path d="M4 6h.01"/>
-    <path d="M2.29 9.62A10 10 0 1 0 21.31 8.35"/>
-    <path d="M16.24 7.76A6 6 0 1 0 8.230 16.67"/>
-    <path d="M12 18h.01"/>
-    <path d="M17.99 11.66A6 6 0 0 1 15.77 16.67"/>
-    <circle cx="12" cy="12" r="2"/>
-    <path d="m13.41 10.59 5.66-5.66"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="19.5 19.5 217 217">
+  <!-- The Warden mark: a tawny owl, drawn as vectors (shapes and gradients only). Source of the app, tray and installer icons, and the mark beside Warden's name in the UI. -->
+  <defs>
+    <radialGradient id="shadow">
+      <stop offset="20%" stop-color="#412514" stop-opacity="6%"/>
+      <stop offset="1" stop-color="#412514" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="head-rim" x2="0" y2="1">
+      <stop stop-color="#e6b589"/>
+      <stop offset="53%" stop-color="#cd9a70"/>
+      <stop offset="90%" stop-color="#c29771"/>
+      <stop offset="1" stop-color="#b68157"/>
+    </linearGradient>
+    <radialGradient id="head" cx="50%" cy="37%" r="54%">
+      <stop stop-color="#4b2915"/>
+      <stop offset="55%" stop-color="#663a20"/>
+      <stop offset="1" stop-color="#774525"/>
+    </radialGradient>
+    <linearGradient id="face" x2="0" y2="1">
+      <stop stop-color="#dfb68d"/>
+      <stop offset="24%" stop-color="#e9c6a8"/>
+      <stop offset="46%" stop-color="#ebc9ae"/>
+      <stop offset="64%" stop-color="#e7c6aa"/>
+      <stop offset="82%" stop-color="#dfb997"/>
+      <stop offset="1" stop-color="#d7ac89"/>
+    </linearGradient>
+    <radialGradient id="brow-shadow" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="translate(80 107) rotate(19) scale(52 18)">
+      <stop offset="24%" stop-color="#281308" stop-opacity="56%"/>
+      <stop offset="64%" stop-color="#281308" stop-opacity="28%"/>
+      <stop offset="1" stop-color="#281308" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="face-light" cx="50%" cy="48%" r="50%">
+      <stop stop-color="#fff1e8" stop-opacity="63%"/>
+      <stop offset="56%" stop-color="#fff1e8" stop-opacity="25%"/>
+      <stop offset="1" stop-color="#fff1e8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="cheek-shade" gradientUnits="userSpaceOnUse" cx="61" cy="102" r="26" gradientTransform="matrix(1 0 0 .7 0 30.6)">
+      <stop stop-color="#5c321c" stop-opacity="47%"/>
+      <stop offset="1" stop-color="#92552b" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="iris" cx="50%" cy="47%" r="53%">
+      <stop offset="41%" stop-color="#ffab05"/>
+      <stop offset="82%" stop-color="#fa9503"/>
+      <stop offset="93%" stop-color="#e78302"/>
+      <stop offset="1" stop-color="#c96c03"/>
+    </radialGradient>
+    <linearGradient id="iris-shade" gradientUnits="userSpaceOnUse" x1="89" y1="110" x2="82" y2="125">
+      <stop stop-color="#542400"/>
+      <stop offset="53%" stop-color="#7f3300" stop-opacity="32%"/>
+      <stop offset="1" stop-color="#a34700" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="pupil" x2="0" y2="1">
+      <stop stop-color="#472814"/>
+      <stop offset="1" stop-color="#2d180d"/>
+    </linearGradient>
+    <radialGradient id="eye-shadow">
+      <stop offset="65%" stop-color="#261408" stop-opacity="77%"/>
+      <stop offset="1" stop-color="#261408" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="brow" x1="0" y1="0" x2="80%" y2="70%">
+      <stop stop-color="#e5b990"/>
+      <stop offset="45%" stop-color="#f9d9bd"/>
+      <stop offset="75%" stop-color="#f5d5ba"/>
+      <stop offset="1" stop-color="#dbaf8d"/>
+    </linearGradient>
+    <linearGradient id="forehead-rim" x2="0" y2="1">
+      <stop stop-color="#edc59e"/>
+      <stop offset="32%" stop-color="#ebba8d"/>
+      <stop offset="66%" stop-color="#dca97f"/>
+      <stop offset="1" stop-color="#d0a078"/>
+    </linearGradient>
+    <radialGradient id="rim-light" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="translate(128 39) scale(76 21)">
+      <stop stop-color="#fff2dd" stop-opacity="86%"/>
+      <stop offset="1" stop-color="#fff2dd" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="forehead" x2="0" y2="1">
+      <stop stop-color="#a96232"/>
+      <stop offset="23%" stop-color="#7d4726"/>
+      <stop offset="36%" stop-color="#65381d"/>
+      <stop offset="50%" stop-color="#65391e"/>
+      <stop offset="63%" stop-color="#65391e"/>
+      <stop offset="81%" stop-color="#573018"/>
+      <stop offset="96%" stop-color="#4c2915"/>
+      <stop offset="1" stop-color="#4b2915"/>
+    </linearGradient>
+    <radialGradient id="crown-light" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="translate(128 41) scale(115 48)">
+      <stop stop-color="#fcc178" stop-opacity="94%"/>
+      <stop offset="24%" stop-color="#f7b76d" stop-opacity="80%"/>
+      <stop offset="43%" stop-color="#ed9e59" stop-opacity="70%"/>
+      <stop offset="60%" stop-color="#d8884d" stop-opacity="56%"/>
+      <stop offset="80%" stop-color="#bd713d" stop-opacity="29%"/>
+      <stop offset="1" stop-color="#b16a38" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="tuft-light" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="translate(36 32) rotate(35) scale(64 28)">
+      <stop stop-color="#bc7138" stop-opacity="69%"/>
+      <stop offset="47%" stop-color="#c5773d" stop-opacity="65%"/>
+      <stop offset="76%" stop-color="#bd7038" stop-opacity="31%"/>
+      <stop offset="1" stop-color="#b16a38" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="beak-shadow">
+      <stop offset="36%" stop-color="#522b14" stop-opacity="56%"/>
+      <stop offset="66%" stop-color="#75431e" stop-opacity="21%"/>
+      <stop offset="1" stop-color="#75431e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="beak" x2="0" y2="1">
+      <stop stop-color="#f1dece"/>
+      <stop offset="28%" stop-color="#c3aa94"/>
+      <stop offset="78%" stop-color="#92745d"/>
+      <stop offset="1" stop-color="#7d604a"/>
+    </linearGradient>
+    <linearGradient id="beak-side">
+      <stop stop-color="#5b3d29" stop-opacity="26%"/>
+      <stop offset="1" stop-color="#5b3d29" stop-opacity="0"/>
+    </linearGradient>
+    <path id="head-shape" d="M128 40 C168 39 198 64 215.6 85 C223.3 96 231 113 231 128 C231.3 147.5 221.3 165.5 204.2 180 C186 197 159 213 140 221.5 Q132 226 128 225.6 Q124 226 116 221.5 C97 213 70 197 51.8 180 C34.7 165.5 24.7 147.5 25 128 C25 113 32.7 96 40.4 85 C58 64 88 39 128 40Z"/>
+    <path id="head-inset" d="M128 42 C166 41 196 65 212.7 87 C220.1 98.2 227.4 113.9 227.4 128.8 C227.8 148 218.3 163.3 200 179.6 C181.5 196.4 157 211.8 138.2 219.7 Q131.7 222.9 128 222.9 Q124.3 222.9 117.8 219.7 C99 211.8 74.5 196.4 56 179.6 C37.7 163.3 28.2 148 28.6 128.8 C28.6 113.9 35.9 98.2 43.3 87 C60 65 90 41 128 42Z"/>
+    <path id="face-shape" d="M128 144 C137 145 145 155 158 157 C181 162 200 145 202 126 C203 116 200 109 196 104 C211 105 220 120 220 134 C222 161.5 191 193 150 214.5 C139 220.3 131 223 128 223 C125 223 117 220.3 106 214.5 C65 193 34 161.5 36 134 C36 120 45 105 60 104 C56 109 53 116 54 126 C56 145 75 162 98 157 C111 155 119 145 128 144Z"/>
+    <path id="brow-shape" d="M40.5 83 C49.6 91.1 65.6 93 80.2 97.1 C102.6 102 121.8 114.6 124 129.2 C112 120 98 114 80 110 C60 106 51 106 43 88Z"/>
+    <path id="cap" d="M128 39.5 C108 39.5 89 45.6 74 57.6 Q73.5 58.2 72.6 57.7 C60 51 47.6 41.5 36.4 31.9 Q30.6 26.9 29 35.2 C26.4 49 28.6 70.6 40.3 84.6 Q42.3 86.7 43.7 86.1 C31.8 72.9 28.7 50.5 32.1 36.4 Q32.7 33.2 35 35.3 C45.4 44.4 57.6 53.9 72 61.5 Q73.5 62.4 75 61.2 C90.4 48.4 109 42.3 128 42.3 C147 42.3 165.6 48.4 181 61.2 Q182.5 62.4 184 61.5 C198.4 53.9 210.6 44.4 221 35.3 Q223.3 33.2 223.9 36.4 C227.3 50.5 224.2 72.9 212.3 86.1 Q213.7 86.7 215.7 84.6 C227.4 70.6 229.6 49 227 35.2 Q225.4 26.9 219.6 31.9 C208.4 41.5 196 51 183.4 57.7 Q182.5 58.2 182 57.6 C167 45.6 148 39.5 128 39.5Z"/>
+    <path id="cap-inset" d="M128 42.3 C109 42.3 90.4 48.4 75 61.2 Q73.5 62.4 72 61.5 C57.6 53.9 45.4 44.4 35 35.3 Q32.7 33.2 32.1 36.4 C28.7 50.5 31.8 72.9 43.7 86.1 C52.7 92.8 65.6 93.6 80 97.5 C102.4 102.4 121.8 115 124 129.2 Q126.1 130.5 128 130.5 Q129.9 130.5 132 129.2 C134.2 115 153.6 102.4 176 97.5 C190.4 93.6 203.3 92.8 212.3 86.1 C224.2 72.9 227.3 50.5 223.9 36.4 Q223.3 33.2 221 35.3 C210.6 44.4 198.4 53.9 184 61.5 Q182.5 62.4 181 61.2 C165.6 48.4 147 42.3 128 42.3Z"/>
+    <path id="beak-half" d="M128 136.7 C125.1 136.7 119.1 139.5 115.7 142.3 Q110.5 146.3 113.4 150.8 C116.8 157.7 121.2 164.8 125.8 171 Q126.8 172.3 128 172.3Z"/>
+    <g id="eye">
+      <ellipse cx="89.2" cy="128.8" rx="24.6" ry="24.1" fill="url(#eye-shadow)"/>
+      <circle cx="89.2" cy="126.9" r="20.9" fill="url(#iris)"/>
+      <circle cx="89.2" cy="126.9" r="20.9" fill="url(#iris-shade)"/>
+      <circle cx="90.6" cy="127.1" r="9.3" fill="url(#pupil)"/>
+      <circle cx="95" cy="122.7" r="1.8" fill="#fbf8f7"/>
+    </g>
+  </defs>
+
+  <!-- Shadow -->
+  <ellipse cx="128" cy="222.2" rx="28" ry="5.2" fill="url(#shadow)"/>
+
+  <!-- Head and lower rim -->
+  <use href="#head-shape" fill="url(#head-rim)"/>
+  <use href="#head-inset" fill="url(#head)"/>
+
+  <use href="#head-inset" fill="url(#brow-shadow)"/>
+  <use href="#head-inset" transform="matrix(-1 0 0 1 256 0)" fill="url(#brow-shadow)"/>
+
+  <!-- Cream face and cheek shading -->
+  <use href="#face-shape" fill="url(#face)"/>
+  <use href="#face-shape" fill="url(#face-light)"/>
+  <use href="#face-shape" fill="url(#cheek-shade)"/>
+  <use href="#face-shape" transform="matrix(-1 0 0 1 256 0)" fill="url(#cheek-shade)"/>
+  <path id="face-edge" d="M54 126 C56 145 75 162 98 157 C103.7 156 108.6 153.5 112.8 151 C108.7 154 103.6 156.6 98 157.5 C74.8 162.8 55.9 145.3 54 126Z" fill="#ffebd8" opacity="75%"/>
+  <use href="#face-edge" transform="matrix(-1 0 0 1 256 0)"/>
+
+  <!-- Eyes -->
+  <use href="#eye"/>
+  <use href="#eye" transform="matrix(-1 0 0 1 256 0)"/>
+
+  <!-- Brows -->
+  <use href="#brow-shape" fill="url(#brow)"/>
+  <use href="#brow-shape" transform="matrix(-1 0 0 1 256 0)" fill="url(#brow)"/>
+
+  <!-- Upper rim, forehead and tufts -->
+  <use href="#cap" fill="url(#forehead-rim)"/>
+  <use href="#cap" fill="url(#rim-light)"/>
+  <use href="#cap-inset" fill="url(#forehead)"/>
+  <use href="#cap-inset" fill="url(#crown-light)"/>
+  <use href="#cap-inset" fill="url(#tuft-light)"/>
+  <use href="#cap-inset" transform="matrix(-1 0 0 1 256 0)" fill="url(#tuft-light)"/>
+  <path id="brow-edge" d="M43.7 86.1 C52.7 92.8 65.6 93.6 80 97.5 C102.4 102.4 121.8 115 124 129.2 C121.3 115.2 102.5 103 79.9 98 C65.5 94.1 52.6 93 43.7 86.1Z" fill="#ffe5cc" opacity="87%"/>
+  <use href="#brow-edge" transform="matrix(-1 0 0 1 256 0)"/>
+
+  <!-- Beak -->
+  <ellipse cx="128" cy="156.7" rx="21" ry="24" fill="url(#beak-shadow)"/>
+  <path d="M128 136.7 C130.9 136.7 136.9 139.5 140.3 142.3 Q145.5 146.3 142.6 150.8 C139.2 157.7 134.8 164.8 130.2 171 Q129 172.3 128 172.3 Q127 172.3 125.8 171 C121.2 164.8 116.8 157.7 113.4 150.8 Q110.5 146.3 115.7 142.3 C119.1 139.5 125.1 136.7 128 136.7Z" fill="url(#beak)"/>
+  <use href="#beak-half" fill="url(#beak-side)"/>
+  <use href="#beak-half" transform="matrix(-1 0 0 1 256 0)" fill="url(#beak-side)"/>
 </svg>

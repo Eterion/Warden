@@ -35,6 +35,8 @@ use warden_server::{Config, start_core};
 
 const WINDOW: &str = "main";
 const TRAY: &str = "warden";
+/// Windows draws a window's taskbar button icon this many pixels square at 100% scale.
+const TASKBAR_ICON: f64 = 24.0;
 /// The app's own URL scheme: the page and its API, answered in-process.
 const SCHEME: &str = "warden";
 /// The page's address: WebView2 reaches an app's own scheme as `http://<scheme>.localhost`.
@@ -324,6 +326,7 @@ pub fn open_window(handle: &AppHandle) {
     }
     *lock_place(&core) = saved;
     follow_place(handle, &window);
+    let _ = window.set_icon(taskbar_icon(window.scale_factor().unwrap_or(1.0)));
     let h = handle.clone();
     window.on_window_event(move |event| match event {
         WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
@@ -331,9 +334,62 @@ pub fn open_window(handle: &AppHandle) {
                 follow_place(&h, &w);
             }
         }
+        // On a screen with another scale, the taskbar button's icon at that scale.
+        WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+            if let Some(w) = h.get_webview_window(WINDOW) {
+                let _ = w.set_icon(taskbar_icon(*scale_factor));
+            }
+        }
         WindowEvent::Destroyed => save_place(&h),
         _ => {}
     });
+}
+
+/// The app icon's ICO layers the taskbar button can use, smallest first, each a square of RGBA pixels decoded from
+/// `icons/icon.ico` by the build script.
+const TASKBAR_ICONS: [(u32, &[u8]); 4] = [
+    (
+        24,
+        include_bytes!(concat!(env!("OUT_DIR"), "/app-icon-24.rgba")),
+    ),
+    (
+        32,
+        include_bytes!(concat!(env!("OUT_DIR"), "/app-icon-32.rgba")),
+    ),
+    (
+        48,
+        include_bytes!(concat!(env!("OUT_DIR"), "/app-icon-48.rgba")),
+    ),
+    (
+        64,
+        include_bytes!(concat!(env!("OUT_DIR"), "/app-icon-64.rgba")),
+    ),
+];
+
+/// The window's icon for its taskbar button on a screen of this scale: the ICO's layer for that size, or the next
+/// larger one. Tauri's default window icon is the ICO's first layer (16 pixels), which the taskbar enlarges to its 24
+/// and blurs.
+fn taskbar_icon(scale: f64) -> tauri::image::Image<'static> {
+    let (size, rgba) = TASKBAR_ICONS[taskbar_layer(icon_px(TASKBAR_ICON, scale))];
+    tauri::image::Image::new(rgba, size, size)
+}
+
+/// Which of `TASKBAR_ICONS` to use for an icon this many pixels square: the smallest that is at least as large (a
+/// smaller one Windows would have to enlarge), else the largest.
+fn taskbar_layer(px: u32) -> usize {
+    TASKBAR_ICONS
+        .iter()
+        .position(|(size, _)| *size >= px)
+        .unwrap_or(TASKBAR_ICONS.len() - 1)
+}
+
+fn icon_px(logical: f64, scale: f64) -> u32 {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    (logical * scale).round().max(1.0) as u32
 }
 
 fn lock_place(core: &Core) -> std::sync::MutexGuard<'_, Option<Place>> {
@@ -758,6 +814,26 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_taskbar_gets_the_icon_layer_for_its_size() {
+        // The taskbar's 24 pixels at 100%, 125%, 150%, 200%, 250% and 300%: the layer for that size, else the next
+        // larger, else the largest there is.
+        let layer = |scale| TASKBAR_ICONS[taskbar_layer(icon_px(TASKBAR_ICON, scale))].0;
+        assert_eq!(layer(1.0), 24);
+        assert_eq!(layer(1.25), 32);
+        assert_eq!(layer(1.5), 48);
+        assert_eq!(layer(2.0), 48);
+        assert_eq!(layer(2.5), 64);
+        assert_eq!(layer(3.0), 64);
+        // A scale Windows did not give counts as 100%.
+        assert_eq!(layer(0.0), 24);
+        assert_eq!(layer(f64::NAN), 24);
+        // Each layer is a whole square of RGBA pixels.
+        for (size, rgba) in TASKBAR_ICONS {
+            assert_eq!(rgba.len(), (size * size * 4) as usize, "layer {size}");
+        }
+    }
 
     #[test]
     fn one_page_load_is_said_once_each_whatever_else_the_window_asks_for() {

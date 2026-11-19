@@ -29,6 +29,8 @@ warden-rules = { path = "../warden-rules" }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# Decodes the taskbar's layers of the app icon (build.rs); the version Tauri's own build step already uses.
+png = "0.17"
 
 [lints]
 workspace = true

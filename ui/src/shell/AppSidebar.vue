@@ -3,7 +3,7 @@
 // "Install and restart", and Settings at the bottom. In
 // the desktop app, Warden's name opens the app menu (Quit) and the row around it moves the window. In a window too
 // short for all of it, the sidebar scrolls on its own (`relative`, so nothing positioned inside reaches past it).
-import { ChevronDown, LayoutDashboard, Power, Radar, Settings } from 'lucide-vue-next';
+import { ChevronDown, LayoutDashboard, Power, Settings } from 'lucide-vue-next';
 import { DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from 'reka-ui';
 import { computed } from 'vue';
 import NavItem from '../components/NavItem.vue';
@@ -17,6 +17,8 @@ import { limitView, loginIdle } from '../format';
 import { openSettings } from '../route';
 import { store, usedAccounts } from '../store';
 import UpdateItem from './UpdateItem.vue';
+// Warden's own mark, the owl: the app icon's own source, so the two never differ.
+import mark from '../../../crates/warden-desktop/icons/warden.svg';
 
 const accounts = computed(() =>
   usedAccounts(store.state).map((a) => {
@@ -37,7 +39,7 @@ const accounts = computed(() =>
           aria-label="Warden menu"
           class="inline-flex h-9 cursor-pointer items-center gap-2.25 rounded-lg px-2 hov:bg-active press:bg-press focus-visible:outline-2 focus-visible:outline-indicator data-[state=open]:bg-active data-[state=open]:press:bg-press"
         >
-          <Radar class="size-5" aria-hidden="true" />
+          <img :src="mark" alt="" class="size-5" />
           <span class="text-14 font-semibold">Warden</span>
           <ChevronDown class="size-3.5 text-icon" aria-hidden="true" />
         </DropdownMenuTrigger>
@@ -50,7 +52,7 @@ const accounts = computed(() =>
       </DropdownMenuRoot>
     </div>
     <div v-else class="flex h-12 shrink-0 items-center gap-2.25 px-2">
-      <Radar class="size-5" aria-hidden="true" />
+      <img :src="mark" alt="" class="size-5" />
       <span class="text-14 font-semibold">Warden</span>
     </div>
 

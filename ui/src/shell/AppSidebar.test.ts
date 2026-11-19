@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { watch } from 'vue';
 import { desktop } from '../desktop';
-import { closeModal, openSettings, route } from '../route';
+import { closeModal, go, openSettings, route } from '../route';
 import SettingsModal from '../settings/SettingsModal.vue';
 import { store } from '../store';
 import { fakeServer } from '../test/api';
@@ -162,6 +162,72 @@ describe('AppSidebar', () => {
     expect(bar.findAll('[role=menuitem]')).toHaveLength(0);
     expect(document.activeElement).toBe(button);
     bar.unmount();
+    settings.unmount();
+  });
+
+  it('opens Add account on its own from the button beside Accounts; closing it any way goes back to the page', async () => {
+    store.state = state([account({ id: 'main', label: 'Main' })]);
+    const calls = fakeServer(() => store.state!);
+    const settings = mount(SettingsModal, { attachTo: document.body });
+    const bar = mount(AppSidebar, { attachTo: document.body });
+    const add = bar.get<HTMLButtonElement>('button[aria-label="Add account"]');
+
+    for (const how of ['Cancel', 'Escape', 'a click beside it', 'an account added'] as const) {
+      add.element.focus();
+      await add.trigger('click');
+      await flushPromises();
+      expect(route.addAlone.value).toBe(true);
+      expect(route.settingsOpen.value).toBe(false);
+      const dialogs = [...document.querySelectorAll('[role=dialog]')];
+      expect(dialogs.map((d) => d.querySelector('h2')?.textContent)).toEqual(['Add account']);
+      const dialog = dialogs[0]!;
+      expect(dialog.contains(document.activeElement)).toBe(true);
+
+      if (how === 'Cancel') {
+        [...dialog.querySelectorAll('button')].find((b) => b.textContent!.trim() === 'Cancel')!.click();
+      } else if (how === 'Escape') {
+        document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      } else if (how === 'a click beside it') {
+        // Reka listens for a press outside once the modal has opened (a timer turn later).
+        await new Promise((r) => setTimeout(r, 0));
+        const beside = bar.get('h2').element;
+        beside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        beside.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+        beside.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      } else {
+        dialog.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }));
+      }
+      await flushPromises();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(route.addOpen.value, how).toBe(false);
+      expect(route.settingsOpen.value, how).toBe(false);
+      expect(location.hash, how).toBe('');
+      expect(document.querySelector('[role=dialog]'), how).toBeNull();
+      expect(document.activeElement, how).toBe(add.element);
+    }
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
+    bar.unmount();
+    settings.unmount();
+  });
+
+  it('still opens Add account over Settings › Accounts from there, and closing it goes back to Accounts', async () => {
+    store.state = state([account({ id: 'main', label: 'Main' })]);
+    fakeServer(() => store.state!);
+    const settings = mount(SettingsModal, { attachTo: document.body });
+    go('settings/accounts/add');
+    await flushPromises();
+    expect(route.addAlone.value).toBe(false);
+    expect(route.settingsOpen.value).toBe(true);
+    expect(document.querySelectorAll('[role=dialog]')).toHaveLength(2);
+
+    const add = [...document.querySelectorAll('[role=dialog]')].find(
+      (d) => d.querySelector('h2')?.textContent === 'Add account',
+    )!;
+    [...add.querySelectorAll('button')].find((b) => b.textContent!.trim() === 'Cancel')!.click();
+    await flushPromises();
+    expect(route.addOpen.value).toBe(false);
+    expect(route.settingsOpen.value).toBe(true);
+    expect(route.section.value).toBe('accounts');
     settings.unmount();
   });
 

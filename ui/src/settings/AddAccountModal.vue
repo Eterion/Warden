@@ -16,6 +16,8 @@ import { newFolderPreview } from '../format';
 import { act, store } from '../store';
 
 const open = defineModel<boolean>('open', { required: true });
+/** Over Settings (opened from Settings › Accounts) rather than on its own (from the sidebar). */
+const props = defineProps<{ stacked?: boolean }>();
 
 type Mode = 'new' | 'existing';
 
@@ -24,6 +26,7 @@ const mode = ref<Mode>('new');
 const name = ref('');
 const folder = ref('');
 const error = ref<string | null>(null);
+/** An account is being added: true until its answer comes, across openings, so a second one is never sent meanwhile. */
 const busy = ref(false);
 const found = ref<Candidate[]>([]);
 const providerName = computed(() => (provider.value === 'claude' ? 'Claude' : 'Codex'));
@@ -37,10 +40,14 @@ function defaultName(): string {
   return `${providerName.value} ${n}`;
 }
 
+/** Counts openings, so a request started in an earlier one never closes a later one or shows its refusal there. */
+let opening = 0;
+
 watch(
   open,
   (o) => {
     if (!o) return;
+    opening++;
     provider.value = 'claude';
     mode.value = 'new';
     folder.value = '';
@@ -80,25 +87,29 @@ async function choose(): Promise<void> {
 async function submit(): Promise<void> {
   if (busy.value) return;
   busy.value = true;
-  error.value = await act(() =>
+  const mine = opening;
+  const failed = await act(() =>
     mode.value === 'new'
       ? api.addNew(provider.value, name.value)
       : api.addExisting(provider.value, folder.value, name.value),
   );
   busy.value = false;
-  if (!error.value) open.value = false;
+  // Closed (and maybe opened again) while it was sent: this opening is not the one it came from.
+  if (mine !== opening || !open.value) return;
+  error.value = failed;
+  if (!failed) open.value = false;
 }
 
 const providers = [
-  { id: 'claude', label: 'Claude', text: 'Claude Code account' },
-  { id: 'codex', label: 'Codex', text: 'OpenAI Codex account' },
+  { id: 'claude', label: 'Claude', text: 'Anthropic' },
+  { id: 'codex', label: 'Codex', text: 'OpenAI' },
 ] as const;
 </script>
 
 <template>
-  <AppModal v-model:open="open" title="Add account" stacked>
+  <AppModal v-model:open="open" title="Add account" :stacked="props.stacked">
     <form
-      class="flex max-h-full w-full max-w-130 flex-col gap-5 overflow-y-auto rounded-2xl bg-modal p-7 shadow-modal"
+      class="flex max-h-full w-full max-w-115 flex-col gap-5 overflow-y-auto rounded-2xl bg-modal p-7 shadow-modal"
       @submit.prevent="submit"
     >
       <div class="flex flex-col gap-1">
@@ -118,7 +129,7 @@ const providers = [
           { value: 'new', label: 'New account' },
           { value: 'existing', label: 'Existing folder' },
         ]"
-        class="self-start"
+        full
       />
 
       <div class="flex flex-col border-t border-divider-strong">
@@ -134,7 +145,7 @@ const providers = [
                 id="add-folder"
                 v-model="folder"
                 kind="path"
-                :placeholder="`Full path of a ${providerName} folder`"
+                :placeholder="`Path of a ${providerName} folder`"
                 class="min-w-0 flex-auto"
               />
               <WButton v-if="desktop.inApp" :icon="FolderOpen" @click="choose">Choose folder…</WButton>

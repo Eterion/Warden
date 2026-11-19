@@ -24,8 +24,18 @@ const open = computed({
 });
 const addOpen = computed({
   get: () => route.addOpen.value,
-  set: (v: boolean) => go(v ? 'settings/accounts/add' : 'settings/accounts'),
+  set: (v: boolean) => {
+    if (v) go('settings/accounts/add');
+    // Opened on its own (from the sidebar): closing goes back to the page, not to Settings.
+    else if (route.addAlone.value) closeModal();
+    else go('settings/accounts');
+  },
 });
+/** Whether Add account sits over Settings; kept while it closes, so its backdrop does not change as it goes. */
+const addOverSettings = keptWhileClosing(
+  () => addOpen.value,
+  () => !route.addAlone.value,
+);
 
 const query = ref('');
 // Cleared when Settings opens again, not as it closes, so the closing modal keeps what it showed.
@@ -231,5 +241,5 @@ function goTo(r: (typeof INDEX)[number]): void {
       </div>
     </div>
   </AppModal>
-  <AddAccountModal v-model:open="addOpen" />
+  <AddAccountModal v-model:open="addOpen" :stacked="addOverSettings" />
 </template>

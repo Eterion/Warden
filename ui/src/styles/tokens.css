@@ -55,6 +55,7 @@
   --color-tertiary: light-dark(#71717a, #a1a1aa);
   --color-icon: light-dark(#71717a, #a1a1aa);
   --color-icon-faded: light-dark(#8a8a93, #71717a); /* icons of a faded sessions row */
+  --color-icon-hover: light-dark(#3f3f46, #d4d4d8); /* a bare icon button on hover; pressed, it takes the text colour */
 
   /* Controls */
   --color-primary: light-dark(#18181b, #fafafa);

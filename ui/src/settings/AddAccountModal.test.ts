@@ -131,7 +131,7 @@ describe('AddAccountModal', () => {
     const open = await openModal();
     radio('Existing folder').click();
     await flushPromises();
-    expect($('#add-folder').getAttribute('placeholder')).toBe('Full path of a Claude folder');
+    expect($('#add-folder').getAttribute('placeholder')).toBe('Path of a Claude folder');
     await type('#add-folder', '%USERPROFILE%\\empty');
     await submit();
     expect($('[role=alert]').textContent).toBe('That folder has no signed-in Claude login.');
@@ -154,6 +154,34 @@ describe('AddAccountModal', () => {
     expect($<HTMLInputElement>('#add-name').value).toBe('Claude 2');
   });
 
+  it('a request still being sent when it closes never closes a later opening, which sends no second one meanwhile', async () => {
+    store.state = state([account({ id: 'main', label: 'Main' })]);
+    let answer: (r: Response) => void = () => {};
+    let posts = 0;
+    vi.stubGlobal('fetch', async (_path: string, init: RequestInit = {}) => {
+      if ((init.method ?? 'GET') === 'GET') return new Response('[]', { status: 200 });
+      posts++;
+      return new Promise<Response>((r) => (answer = r));
+    });
+    const open = await openModal();
+    await submit();
+    expect(button('Create and sign in')!.getAttribute('aria-busy')).toBe('true');
+    open.value = false;
+    await flushPromises();
+    open.value = true;
+    await flushPromises();
+    // Still being added: the new opening says so and sends nothing more.
+    expect(button('Create and sign in')!.getAttribute('aria-busy')).toBe('true');
+    await submit();
+    expect(posts).toBe(1);
+
+    answer(new Response(JSON.stringify(store.state), { status: 200 }));
+    await flushPromises();
+    expect(open.value).toBe(true);
+    expect(document.querySelector('#add-name')).not.toBeNull();
+    expect(button('Create and sign in')!.hasAttribute('aria-busy')).toBe(false);
+  });
+
   it('chooses between a new account and an existing folder with a segmented control, not cards', async () => {
     await openModal();
     const how = document.querySelector('[role=radiogroup][aria-label="How to add"]')!;
@@ -161,8 +189,15 @@ describe('AddAccountModal', () => {
       'New account',
       'Existing folder',
     ]);
-    // Claude or Codex stays as cards: two of them, with their line of text.
-    expect(document.body.textContent).toContain('Claude Code account');
+    // Claude or Codex stays as cards: two of them, each with its company.
+    const cards = [...document.querySelectorAll('[role=radiogroup][aria-label=Provider] [role=radio]')];
+    expect(cards).toHaveLength(2);
+    for (const [card, [title, company]] of cards.map(
+      (c, i) => [c, i ? ['Codex', 'OpenAI'] : ['Claude', 'Anthropic']] as const,
+    )) {
+      expect(card.textContent).toContain(title);
+      expect(card.textContent).toContain(company);
+    }
     expect(document.body.textContent).not.toContain('Warden creates it and opens');
   });
 });

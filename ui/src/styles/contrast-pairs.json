@@ -162,6 +162,18 @@
     "use": "sidebar and status bar icons"
   },
   {
+    "fg": "icon-hover",
+    "bg": ["win"],
+    "min": 3,
+    "use": "a bare icon button on hover (the sidebar's Add account)"
+  },
+  {
+    "fg": "text",
+    "bg": ["win"],
+    "min": 3,
+    "use": "a bare icon button pressed or open (the sidebar's Add account)"
+  },
+  {
     "fg": "icon",
     "bg": ["panel"],
     "min": 3,

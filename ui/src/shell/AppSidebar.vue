@@ -1,21 +1,22 @@
 <script setup lang="ts">
-// The full-height sidebar: Warden, Overview, the accounts in use with their weekly bars, a newer Warden's download or
-// "Install and restart", and Settings at the bottom. In
+// The full-height sidebar: Warden, Overview, the accounts in use with their weekly bars (and Add account beside their
+// heading), a newer Warden's download or "Install and restart", and Settings at the bottom. In
 // the desktop app, Warden's name opens the app menu (Settings, Accounts, Quit) and the row around it moves the window.
 // In a window too short for all of it, the sidebar scrolls on its own (`relative`, so nothing positioned inside reaches
 // past it).
-import { ChevronDown, CircleUserRound, LayoutDashboard, Power, Settings } from 'lucide-vue-next';
+import { ChevronDown, CircleUserRound, LayoutDashboard, Plus, Power, Settings } from 'lucide-vue-next';
 import { DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger } from 'reka-ui';
 import { computed, useTemplateRef } from 'vue';
 import NavItem from '../components/NavItem.vue';
 import ProviderMark from '../components/ProviderMark.vue';
 import StateIcon from '../components/StateIcon.vue';
 import UsageBar from '../components/UsageBar.vue';
+import WIconButton from '../components/WIconButton.vue';
 import WMenuContent from '../components/WMenuContent.vue';
 import WMenuItem from '../components/WMenuItem.vue';
 import { desktop, quit } from '../desktop';
 import { limitView, loginIdle } from '../format';
-import { openSettings, route, type Section } from '../route';
+import { openAddAccount, openSettings, route, type Section } from '../route';
 import { store, usedAccounts } from '../store';
 import UpdateItem from './UpdateItem.vue';
 // Warden's own mark, the owl: the app icon's own source, so the two never differ.
@@ -108,7 +109,10 @@ function onMenuClosed(): void {
       <NavItem href="#" :icon="LayoutDashboard" current>Overview</NavItem>
     </nav>
 
-    <h2 class="px-2 pt-5 pb-1 text-12 font-medium text-secondary">Accounts</h2>
+    <div class="flex items-center justify-between gap-2 pt-4 pb-0.5 pl-2">
+      <h2 class="text-12 font-medium text-secondary">Accounts</h2>
+      <WIconButton label="Add account" :icon="Plus" size="xs" @click="openAddAccount" />
+    </div>
     <ul class="flex flex-col gap-0.5">
       <li
         v-for="{ account, week, busy, aria } in accounts"

@@ -425,6 +425,27 @@ export const PAGES: {
     ready: '#add-name',
   },
   {
+    name: 'add-account-alone',
+    path: '/',
+    fixture: 'normal',
+    ready: 'main [role=table]',
+    steps: [{ click: 'aside button[aria-label="Add account"]' }, { waitFor: '#add-name' }],
+  },
+  {
+    name: 'sidebar-add-account-hover',
+    path: '/',
+    fixture: 'normal',
+    ready: 'main [role=table]',
+    steps: [{ hover: 'aside button[aria-label="Add account"]' }],
+  },
+  {
+    name: 'sidebar-add-account-press',
+    path: '/',
+    fixture: 'normal',
+    ready: 'main [role=table]',
+    steps: [{ press: 'aside button[aria-label="Add account"]' }],
+  },
+  {
     name: 'settings-add-existing-folder',
     path: '/#/settings/accounts/add',
     fixture: 'normal',

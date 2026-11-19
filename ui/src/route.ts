@@ -1,5 +1,6 @@
-// Which modal is open, kept in the address (#/settings/accounts, #/settings/accounts/add,
-// or #/settings/general), so each state has its own link and the back button closes it.
+// Which modal is open, kept in the address (#/settings/accounts, #/settings/accounts/add, #/settings/general, or
+// #/add-account for Add account on its own, from the sidebar), so each state has its own link and the back button
+// closes it.
 
 import { useEventListener } from '@vueuse/core';
 import { computed, ref } from 'vue';
@@ -19,12 +20,24 @@ export const route = {
     const s = parts.value[1] as Section | undefined;
     return s && SECTIONS.includes(s) ? s : 'general';
   }),
-  addOpen: computed(() => parts.value[0] === 'settings' && parts.value[1] === 'accounts' && parts.value[2] === 'add'),
+  /** Add account, over Settings or on its own. */
+  addOpen: computed(
+    () =>
+      parts.value[0] === 'add-account' ||
+      (parts.value[0] === 'settings' && parts.value[1] === 'accounts' && parts.value[2] === 'add'),
+  ),
+  /** Add account on its own, without Settings underneath. */
+  addAlone: computed(() => parts.value[0] === 'add-account'),
 };
 
 export function go(path: string): void {
   location.hash = path ? `#/${path}` : '';
   hash.value = location.hash;
+}
+
+/** Opens Add account on its own (the sidebar's Add account). */
+export function openAddAccount(): void {
+  go('add-account');
 }
 
 /** Where Settings gives focus back as it closes, when what opened it is gone by then (a menu item). */

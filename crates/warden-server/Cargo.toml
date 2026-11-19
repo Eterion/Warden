@@ -1,6 +1,6 @@
 [package]
 name = "warden-server"
-description = "Warden's local server on 127.0.0.1 and its API for the UI."
+description = "The core and its API for the UI, answered in-process by the desktop app, or over HTTP on 127.0.0.1 by the demo server."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

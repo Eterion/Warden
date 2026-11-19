@@ -957,7 +957,7 @@ fn the_log_folder_opens_in_the_desktop_app_and_its_path_is_in_the_state() {
 }
 
 #[test]
-fn the_browser_version_has_no_desktop_settings() {
+fn the_demo_has_no_desktop_settings() {
     let f = Fixture::new();
     let server = f.start();
     let addr = server.addr;

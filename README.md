@@ -47,4 +47,4 @@ The full set covers Rust (format, Clippy, tests including the rule tests and an 
 
 ## Rules
 
-`AGENTS.md` holds the project's rules: the stack, the folders, how work is done and reviewed, and the rules every change follows (self-contained, login data, network, performance, UI). Read it before changing anything. The local server's API is in `docs/api.md`.
+`AGENTS.md` holds the project's rules: the stack, the folders, how work is done and reviewed, and the rules every change follows (self-contained, login data, network, performance, UI). Read it before changing anything. Warden's API is in `docs/api.md`.

@@ -1,5 +1,5 @@
-//! The API routes and the built UI's files, apart from how a request arrives: the development server answers them
-//! over HTTP on 127.0.0.1 (`http.rs`), the desktop app in-process through its custom URL scheme.
+//! The API routes and the built UI's files, apart from how a request arrives: the demo server answers them over HTTP
+//! on 127.0.0.1 (`http.rs`), the desktop app in-process through its custom URL scheme.
 
 use crate::app::{ApiError, ApiResult, App, SettingsPatch};
 use serde::Deserialize;

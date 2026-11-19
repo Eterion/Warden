@@ -50,7 +50,7 @@ impl ApiError {
 
 pub type ApiResult<T> = Result<T, ApiError>;
 
-/// What only the desktop app can do. The browser version has none, and its settings are refused there.
+/// What only the desktop app can do. The demo server has none, and its settings are refused there.
 pub trait Desktop: Send + Sync {
     /// Whether Warden is registered to start when the user signs in to Windows.
     fn start_with_windows(&self) -> bool;
@@ -296,7 +296,7 @@ pub struct StateView {
     sessions: Vec<Session>,
     activity: Vec<ActivityView>,
     desktop: Option<DesktopView>,
-    /// A newer Warden, found by the desktop app; `null` when there is nothing newer and in the browser version.
+    /// A newer Warden, found by the desktop app; `null` when there is nothing newer and in the demo server.
     update: Option<UpdateView>,
 }
 
@@ -1711,8 +1711,8 @@ impl App {
 
     // ---- Settings and accounts ------------------------------------------------------------------------------
 
-    /// "Open log folder": the desktop app opens the data folder's `logs` in Explorer. The browser version only shows
-    /// its path.
+    /// "Open log folder": the desktop app opens the data folder's `logs` in Explorer. The demo server only shows its
+    /// path.
     pub fn open_log_folder(&self) -> ApiResult<()> {
         let Some(desktop) = &self.desktop else {
             return Err(ApiError::bad(

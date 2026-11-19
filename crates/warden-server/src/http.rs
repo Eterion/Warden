@@ -1,4 +1,4 @@
-//! The development server's HTTP side: the Host, Origin and `Sec-Fetch-Site` checks, the per-run token, and the
+//! The demo server's HTTP side: the Host, Origin and `Sec-Fetch-Site` checks, the per-run token, and the
 //! answers from `api.rs` written out over HTTP. The desktop app does not use it: it answers in-process.
 
 use crate::api::{self, Answer, MAX_BODY, SECURITY_HEADERS};
@@ -7,7 +7,7 @@ use std::io::Read;
 use std::path::Path;
 use tiny_http::{Header, Request, Response, StatusCode};
 
-/// The page's Content-Security-Policy in the browser: its own scripts, styles, fonts and images only, no inline
+/// The page's Content-Security-Policy in the browser, which only the demo uses: its own scripts, styles, fonts and images only, no inline
 /// script, and requests only to this server.
 pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
@@ -35,7 +35,7 @@ pub fn allowed(
     host_ok && origin_ok && site_ok
 }
 
-/// The random token one run of the development server is opened with: the address it prints carries it, the first
+/// The random token one run of the demo server is opened with: the address it prints carries it, the first
 /// request trades it for a cookie, and every request after that must carry the cookie.
 pub struct Token {
     value: String,
@@ -173,7 +173,7 @@ pub fn handle(app: &App, mut req: Request, port: u16, token: &Token, ui_dir: Opt
     if !token.in_cookie(header(&req, "Cookie")) {
         refuse(
             req,
-            "Open Warden with the address warden-server printed when it started (it carries this run's token).",
+            "Open Warden with the address the demo printed when it started (it carries this run's token).",
         );
         return;
     }

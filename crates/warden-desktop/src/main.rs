@@ -1,4 +1,5 @@
-//! Warden's desktop app: the same core, API and UI as the browser version, in a Tauri window, with no network port.
+//! Warden's desktop app: the same core, API and UI as the demo in the browser, in a Tauri window, with no network
+//! port.
 //!
 //! ```text
 //! warden-desktop [--data-dir <folder>] [--ui-dir <folder>] [--autostart]

@@ -1,6 +1,6 @@
 //! Warden's core and its API (`docs/api.md`): reads usage on its interval and from the Codex logs as they change, and
-//! answers the UI. The desktop app answers in-process ([`start_core`], `api.rs`); the development server ([`start`])
-//! also listens on 127.0.0.1, behind a per-run token. The hooks reach the core over the per-user pipe
+//! answers the UI. The desktop app answers in-process ([`start_core`], `api.rs`); the demo server ([`start`]) also
+//! listens on 127.0.0.1, behind a per-run token. The hooks reach the core over the per-user pipe
 //! (`warden_core::pipe`), never over HTTP.
 
 pub mod api;
@@ -19,8 +19,6 @@ use warden_core::detect::Env;
 use warden_core::pipe::Listener;
 use warden_core::policy::BIND_IP;
 
-/// The port the development server listens on unless told otherwise.
-pub const DEFAULT_PORT: u16 = 4777;
 /// Request workers. An open window holds one in its long poll for changes.
 const WORKERS: usize = 6;
 /// Hook connections handled at once, each on a small thread of its own; one more is hung up on at once.
@@ -40,7 +38,7 @@ pub struct Config {
     pub log: Log,
     /// The `warden` binary the routing hook runs (`None`: not found).
     pub route_exe: Option<PathBuf>,
-    /// The desktop app's own parts; `None` in the browser version.
+    /// The desktop app's own parts; `None` in the demo server.
     pub desktop: Option<Arc<dyn Desktop>>,
 }
 
@@ -165,7 +163,7 @@ pub fn start_core(config: Config) -> io::Result<Core> {
     })
 }
 
-/// The development server: the core, and a listener on 127.0.0.1 that answers only requests carrying its token.
+/// The demo server: the core, and a listener on 127.0.0.1 that answers only requests carrying its token.
 pub struct Running {
     pub addr: SocketAddr,
     pub app: Arc<App>,
@@ -202,7 +200,7 @@ impl Running {
     }
 }
 
-/// Starts the development server: the core, and the listener on 127.0.0.1 with its request workers. `port` 0 picks
+/// Starts the demo server: the core, and the listener on 127.0.0.1 with its request workers. `port` 0 picks
 /// a free port (tests).
 pub fn start(config: Config, port: u16) -> io::Result<Running> {
     let core = start_core(config)?;

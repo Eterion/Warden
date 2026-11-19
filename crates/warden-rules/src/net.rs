@@ -1,4 +1,4 @@
-//! Rule: the development server listens only on 127.0.0.1 and checks the Host header, the Origin, `Sec-Fetch-Site`
+//! Rule: the demo server listens only on 127.0.0.1 and checks the Host header, the Origin, `Sec-Fetch-Site`
 //! and its per-run token.
 
 use std::net::{Ipv4Addr, SocketAddr};

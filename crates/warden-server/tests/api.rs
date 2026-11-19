@@ -880,7 +880,7 @@ impl warden_server::app::Desktop for FakeDesktop {
 fn an_update_shows_in_the_state_and_installs_only_when_ready_in_the_desktop_app() {
     use warden_server::app::UpdateView;
     let f = Fixture::new();
-    // The browser version has no update and installs none.
+    // The demo server has no update and installs none.
     let server = f.start();
     assert_eq!(state(server.addr)["update"], Value::Null);
     assert_eq!(
@@ -939,7 +939,7 @@ fn the_log_folder_opens_in_the_desktop_app_and_its_path_is_in_the_state() {
         state(addr)["logDir"].as_str().map(std::path::PathBuf::from),
         Some(logs.clone())
     );
-    // The browser version only shows the path.
+    // The demo server only shows the path.
     assert_eq!(call(addr, "POST", "/api/logs/open", None).status, 400);
     server.stop();
 

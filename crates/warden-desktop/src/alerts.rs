@@ -1,5 +1,5 @@
 //! Which identity changes to notify about: each account once, when its folder starts being signed in as someone
-//! else. The same words as the browser version's notifications.
+//! else.
 
 use std::collections::HashSet;
 use warden_core::store::Readings;

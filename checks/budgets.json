@@ -3,13 +3,13 @@
   "coreIdleMemoryMB": {
     "budget": 15,
     "unit": "MB",
-    "what": "server private memory after 5 s idle, with its session table full (200 sessions)",
+    "what": "the demo server's private memory (the core with its loopback listener, stand-in endpoints, no logins) after 5 s idle, with its session table full (200 sessions)",
     "measured": "step 4.1: measured 1.7 MB with no accounts; room for accounts, readings and capped history; step 4.3: 2.0 MB with 200 sessions"
   },
   "coreIdleCpuPercent": {
     "budget": 0.5,
     "unit": "% of one core",
-    "what": "server CPU over 20 s idle, with its session table full",
+    "what": "the demo server's CPU (the core with its loopback listener, stand-in endpoints, no logins) over 20 s idle, with its session table full",
     "measured": "step 4.1: measured 0.00% over 5 s idle"
   },
   "windowMemoryMB": {
@@ -45,26 +45,20 @@
   "statusHookMs": {
     "budget": 50,
     "unit": "ms",
-    "what": "median time of one status hook event (`warden event`: started, the event read, sent over the pipe and answered), when run without async",
+    "what": "median time of one status hook event (`warden event`: started, the event read, sent over the pipe and answered), when run without async, against the demo server (the core with its loopback listener, stand-in endpoints, no logins)",
     "measured": "step 4.3: measured 9.9 ms with curl; the pipe run: 5.3 ms for `warden event`"
   },
   "statusEventCpuMs": {
     "budget": 3,
     "unit": "ms",
-    "what": "server CPU time per status hook event with four windows waiting for changes (each answered) and three accounts with hook files",
+    "what": "the demo server's CPU time (the core with its loopback listener, stand-in endpoints, no logins) per status hook event with four windows waiting for changes (each answered) and three accounts with hook files",
     "measured": "measured 1.33 to 1.42 ms before the hook state was kept in memory, 0.38 to 0.80 ms after (three runs of 1000 events each)"
   },
   "statusHookDownMs": {
     "budget": 50,
     "unit": "ms",
-    "what": "median time of one status hook event (`warden event`) with Warden stopped",
+    "what": "median time of one status hook event (`warden event`) with the demo server (the core with its loopback listener, stand-in endpoints, no logins) stopped",
     "measured": "step 4.3: measured 9.4 ms with curl; the pipe run: 5.4 ms for `warden event`, which finds no pipe"
-  },
-  "serverBinaryKB": {
-    "budget": 3072,
-    "unit": "KB",
-    "what": "release warden-server.exe",
-    "measured": "step 4.1: measured 1506 KB"
   },
   "cliBinaryKB": {
     "budget": 2048,

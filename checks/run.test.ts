@@ -73,6 +73,8 @@ describe('run only what changed', () => {
       'crates/warden-core/Cargo.toml',
       'crates/warden-desktop/tauri.conf.json',
       'crates/warden-desktop/build.rs',
+      'crates/warden-server/examples/demo.rs',
+      'crates/warden-server/examples/demo.rs',
       '.cargo/config.toml',
       'package-lock.json',
       'checks/budgets.ts',

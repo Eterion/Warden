@@ -9,6 +9,8 @@ export function affectsBudgets(path: string): boolean {
     // The budget harness and every local helper it imports can change the measurement.
     ['checks/budgets.ts', 'checks/budgets.json', 'checks/lib/pipe.ts', 'checks/lib/repo.ts'].includes(path) ||
     /^crates\/[^/]+\/src\//.test(path) ||
+    // The demo server the core budgets measure.
+    path === 'crates/warden-server/examples/demo.rs' ||
     /(?:^|\/)Cargo\.(?:toml|lock)$/.test(path) ||
     path.startsWith('.cargo/') ||
     /^rust-toolchain(?:\.toml)?$/.test(path) ||

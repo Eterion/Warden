@@ -19,6 +19,8 @@ interface Budget {
 type Measured = number | { notYet: string };
 
 const RELEASE = join(ROOT, 'target', 'release');
+/** The demo server (crates/warden-server/examples/demo.rs), built in release: the core with its loopback listener. */
+const DEMO = join(RELEASE, 'examples', 'demo.exe');
 const IDLE_SECONDS = 5;
 /**
  * Idle CPU is measured over this long. Windows charges CPU time in whole clock ticks (15.6 ms) to whichever thread is
@@ -145,13 +147,26 @@ function measureHook(data: string, running: boolean): number {
 }
 
 /**
- * Where the development server listens and the cookie its token trades for, from the address it prints
- * ("warden-server: open http://127.0.0.1:<port>/?token=<token>").
+ * Starts the demo server on a free port with this data folder, the scratch folder as its home, and empty folders for
+ * its stand-in usage answers and its UI: the core with its loopback listener, stand-in endpoints and no logins.
+ */
+function startDemo(scratch: string, data: string, env: NodeJS.ProcessEnv): ChildProcess & { pid: number } {
+  const usage = mkdtempSync(join(scratch, 'usage-'));
+  const ui = mkdtempSync(join(scratch, 'ui-'));
+  const args = ['--port', '0', '--data-dir', data, '--home', scratch, '--usage-dir', usage, '--ui-dir', ui];
+  const child = spawn(DEMO, args, { stdio: ['ignore', 'ignore', 'pipe'], env });
+  if (child.pid === undefined) throw new Error('the demo server did not start');
+  return child as ChildProcess & { pid: number };
+}
+
+/**
+ * Where the demo server listens and the cookie its token trades for, from the address it prints
+ * ("demo: open http://127.0.0.1:<port>/?token=<token>").
  */
 async function listening(child: ChildProcess): Promise<{ port: number; cookie: string }> {
   return new Promise((resolve, reject) => {
     let text = '';
-    const timer = setTimeout(() => reject(new Error('warden-server did not say where it listens')), 10_000);
+    const timer = setTimeout(() => reject(new Error('the demo server did not say where it listens')), 10_000);
     child.stderr?.on('data', (chunk: Buffer) => {
       text += chunk.toString();
       const m = /open http:\/\/127\.0\.0\.1:(\d+)\/\?token=([0-9a-f]+)/.exec(text);
@@ -194,9 +209,7 @@ async function measureCore(): Promise<{ memory: number; cpu: number; hook: numbe
     join(data, 'settings.json'),
     JSON.stringify({ version: 2, setupDone: true, accounts: [account], nextId: 2 }),
   );
-  const args = ['--port', '0', '--data-dir', data];
-  const child = spawn(join(RELEASE, 'warden-server.exe'), args, { stdio: ['ignore', 'ignore', 'pipe'], env });
-  if (child.pid === undefined) throw new Error('warden-server did not start');
+  const child = startDemo(scratch, data, env);
   try {
     await listening(child);
     await pipeReady(data);
@@ -263,9 +276,7 @@ async function measureEvents(): Promise<number> {
   };
   const accounts = [account('a1', 'claude', 1), account('a2', 'claude', 2), account('a3', 'codex', 3)];
   writeFileSync(join(data, 'settings.json'), JSON.stringify({ version: 2, setupDone: true, accounts, nextId: 4 }));
-  const args = ['--port', '0', '--data-dir', data];
-  const child = spawn(join(RELEASE, 'warden-server.exe'), args, { stdio: ['ignore', 'ignore', 'pipe'], env });
-  if (child.pid === undefined) throw new Error('warden-server did not start');
+  const child = startDemo(scratch, data, env);
   let open = true;
   const answers = new Array<number>(EVENT_WINDOWS).fill(0);
   const windows: Promise<void>[] = [];
@@ -317,7 +328,7 @@ async function measureEvents(): Promise<number> {
   }
 }
 
-/** Runs `measure` once the server has exited. */
+/** Runs `measure` once the demo server has exited. */
 async function stopped<T>(child: ChildProcess, measure: () => T): Promise<T> {
   const exited = new Promise((r) => child.once('exit', r));
   child.kill();
@@ -531,7 +542,7 @@ function measureRoute(silent: boolean): number {
 function releaseRefusesDevelopmentOptions(): void {
   const scratch = mkdtempSync(join(tmpdir(), 'warden-release-options-'));
   try {
-    for (const binary of ['warden-server.exe', 'warden-desktop.exe', 'warden.exe']) {
+    for (const binary of ['warden-desktop.exe', 'warden.exe']) {
       for (const args of [['--no-hooks'], ['--home', scratch]]) {
         const result = spawnSync(join(RELEASE, binary), ['--data-dir', join(scratch, 'data'), ...args], {
           env: scratchEnv(scratch),
@@ -544,7 +555,7 @@ function releaseRefusesDevelopmentOptions(): void {
         }
       }
     }
-    console.log('release: server, desktop and CLI refuse --no-hooks and --home');
+    console.log('release: desktop and CLI refuse --no-hooks and --home');
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -555,6 +566,7 @@ async function main(): Promise<void> {
   // The desktop window shows the built UI (ui/dist), found beside target/release.
   if (
     !run('cargo', ['build', '--release', '--workspace', '--bins', '--quiet']).ok ||
+    !run('cargo', ['build', '--release', '-p', 'warden-server', '--example', 'demo', '--quiet']).ok ||
     !run('npm', ['run', '--silent', 'build', '-w', 'ui']).ok
   ) {
     process.exitCode = 1;
@@ -575,7 +587,6 @@ async function main(): Promise<void> {
     statusHookMs: core.hook,
     statusHookDownMs: core.hookDown,
     statusEventCpuMs: events,
-    serverBinaryKB: sizeKB('warden-server.exe'),
     cliBinaryKB: sizeKB('warden.exe'),
     desktopBinaryKB: sizeKB('warden-desktop.exe'),
   };

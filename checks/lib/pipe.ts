@@ -42,7 +42,7 @@ export async function pipeReady(data: string): Promise<void> {
       readFileSync(join(data, 'pipe.json'));
       return;
     } catch {
-      if (performance.now() > deadline) throw new Error('warden-server did not open its pipe');
+      if (performance.now() > deadline) throw new Error('Warden did not open its pipe');
       await sleep(20);
     }
   }

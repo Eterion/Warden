@@ -165,14 +165,19 @@ function startDemo(scratch: string, data: string, env: NodeJS.ProcessEnv): Child
  */
 async function listening(child: ChildProcess): Promise<{ port: number; cookie: string }> {
   return new Promise((resolve, reject) => {
-    let text = '';
+    // The demo writes its line in pieces, so only whole lines are matched (as checks/demo.ts does): a token cut at a
+    // chunk's end would make every request after it unauthenticated. The unfinished piece waits for the next chunk.
+    let pending = '';
     const timer = setTimeout(() => reject(new Error('the demo server did not say where it listens')), 10_000);
     child.stderr?.on('data', (chunk: Buffer) => {
-      text += chunk.toString();
-      const m = /open http:\/\/127\.0\.0\.1:(\d+)\/\?token=([0-9a-f]+)/.exec(text);
-      if (m) {
-        clearTimeout(timer);
-        resolve({ port: Number(m[1]), cookie: `warden-token-${m[1]}=${m[2]}` });
+      const lines = (pending + chunk.toString()).split('\n');
+      pending = lines.pop() ?? '';
+      for (const line of lines) {
+        const m = /^demo: open http:\/\/127\.0\.0\.1:(\d+)\/\?token=([0-9a-f]+)$/.exec(line.trim());
+        if (m) {
+          clearTimeout(timer);
+          resolve({ port: Number(m[1]), cookie: `warden-token-${m[1]}=${m[2]}` });
+        }
       }
     });
   });

@@ -5,12 +5,13 @@
 
 import { listFiles, readFiles } from '../lib/repo.ts';
 import { cliFallback } from './cli-fallback.ts';
+import { httpDemoOnly } from './http-demo-only.ts';
 import { personalPaths } from './personal-paths.ts';
 import { tokensOnly } from './tokens-only.ts';
 import type { Rule, Violation } from './types.ts';
 import type { SourceFile } from '../lib/repo.ts';
 
-export const RULES: Rule[] = [personalPaths, tokensOnly, cliFallback];
+export const RULES: Rule[] = [personalPaths, tokensOnly, cliFallback, httpDemoOnly];
 
 export function checkFiles(files: SourceFile[], rules: Rule[] = RULES): Violation[] {
   return rules.flatMap((rule) => files.filter((f) => rule.applies(f.path)).flatMap((f) => rule.check(f)));

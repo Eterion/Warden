@@ -6,6 +6,7 @@ import { checkFiles } from './run.ts';
 import { namesPattern, personalPaths, personalPathsRule } from './personal-paths.ts';
 import { TOKENS_FILE, tokensOnly } from './tokens-only.ts';
 import { FALLBACK_MODULE, cliFallback } from './cli-fallback.ts';
+import { SERVER_LIB, httpDemoOnly } from './http-demo-only.ts';
 import type { Rule } from './types.ts';
 
 function caught(rule: Rule, path: string, text: string): string[] {
@@ -257,5 +258,75 @@ describe('cli-fallback-only', () => {
       [],
     );
     assert.deepEqual(caught(cliFallback, 'crates/warden-core/src/lib.rs', '//! Never use Command::new here.'), []);
+  });
+});
+
+describe('http-demo-only', () => {
+  const desktop = 'crates/warden-desktop/src/shell.rs';
+
+  it('catches the loopback server started from the desktop app', () => {
+    assert.ok(
+      caught(httpDemoOnly, desktop, 'let running = warden_server::start(config, 4787)?;').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(httpDemoOnly, 'crates/warden-server/src/app.rs', 'let r = crate::start(config, 0);').length > 0,
+      'planted violation not caught',
+    );
+  });
+
+  it('catches a use of start', () => {
+    assert.ok(caught(httpDemoOnly, desktop, 'use warden_server::start;').length > 0, 'planted violation not caught');
+    assert.ok(
+      caught(httpDemoOnly, desktop, 'use warden_server::{\n    Config,\n    start,\n};').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(httpDemoOnly, desktop, 'use warden_server::{app::{App}, start as serve};').length > 0,
+      'planted violation not caught',
+    );
+  });
+
+  it('catches a listener outside lib.rs', () => {
+    assert.ok(
+      caught(httpDemoOnly, desktop, 'let l = std::net::TcpListener::bind("127.0.0.1:0")?;').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(httpDemoOnly, 'crates/warden-server/src/http.rs', 'tiny_http::Server::http("127.0.0.1:0")').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(httpDemoOnly, 'crates/warden-server/examples/demo.rs', 'let s = Server::http(addr)?;').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(httpDemoOnly, 'crates/warden-cli/tests/route.rs', 'let l = TcpListener::bind(addr);').length > 0,
+      'planted violation not caught',
+    );
+  });
+
+  it('allows the demo, integration tests, lib.rs itself, start_core and comments', () => {
+    assert.deepEqual(
+      caught(
+        httpDemoOnly,
+        'crates/warden-server/examples/demo.rs',
+        'use warden_server::{Config, start};\nstart(c, 0);',
+      ),
+      [],
+    );
+    assert.deepEqual(
+      caught(httpDemoOnly, 'crates/warden-server/tests/common/mod.rs', 'use warden_server::{Config, Running, start};'),
+      [],
+    );
+    assert.deepEqual(
+      caught(httpDemoOnly, SERVER_LIB, 'let server = tiny_http::Server::http(SocketAddr::new(BIND_IP, port));'),
+      [],
+    );
+    assert.deepEqual(caught(httpDemoOnly, desktop, 'use warden_server::{Config, start_core};'), []);
+    assert.deepEqual(
+      caught(httpDemoOnly, desktop, '//! Unlike warden_server::start, no TcpListener is opened here.'),
+      [],
+    );
   });
 });

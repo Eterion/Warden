@@ -67,6 +67,10 @@ type Step =
   | { focus: string }
   | { hover: string }
   | { press: string }
+  /** Presses a key (`Enter`, `ArrowDown`) on whatever has focus. */
+  | { key: string }
+  /** Fails unless the element with focus matches this selector (waiting up to 10 s for it to). */
+  | { focused: string }
   | { fill: string; text: string }
   | { waitFor: string }
   /** Waits until no element matches (a row that has left, say). */
@@ -530,6 +534,54 @@ export const PAGES: {
     ],
   },
   {
+    // The same menu opened from the keyboard: its first item, Settings, has focus and shows the focus outline.
+    name: 'desktop-app-menu-keyboard',
+    path: '/?desktop',
+    fixture: 'desktop',
+    ready: 'main [role=table]',
+    steps: [{ focus: '[aria-label="Warden menu"]' }, { key: 'Enter' }, { waitFor: '[role=menuitem]:focus-visible' }],
+  },
+  {
+    // Settings chosen from the menu with the keyboard: it opens in General once the menu has closed, focus inside it
+    // (with the menu's closing animation, which the unit tests do not have).
+    name: 'desktop-app-menu-settings',
+    path: '/?desktop',
+    fixture: 'desktop',
+    ready: 'main [role=table]',
+    steps: [
+      { focus: '[aria-label="Warden menu"]' },
+      { key: 'Enter' },
+      { waitFor: '[role=menuitem]:focus-visible' },
+      { key: 'Enter' },
+      { waitFor: '[role=dialog] h2 >> text=General' },
+      { focused: ':is([role=dialog], [role=dialog] *)' },
+      // Still there once the menu has gone: nothing took focus back from Settings.
+      { waitGone: '[role=menu]' },
+      { focused: ':is([role=dialog], [role=dialog] *)' },
+    ],
+  },
+  {
+    // Accounts chosen the same way, then Escape: focus is back on the menu's button (the item it came from is gone).
+    name: 'desktop-app-menu-accounts-closed',
+    path: '/?desktop',
+    fixture: 'desktop',
+    ready: 'main [role=table]',
+    steps: [
+      { focus: '[aria-label="Warden menu"]' },
+      { key: 'Enter' },
+      { waitFor: '[role=menuitem]:focus-visible' },
+      { key: 'ArrowDown' },
+      { key: 'Enter' },
+      { waitFor: '[role=dialog] h2 >> text=Accounts' },
+      { focused: ':is([role=dialog], [role=dialog] *)' },
+      { waitGone: '[role=menu]' },
+      { focused: ':is([role=dialog], [role=dialog] *)' },
+      { key: 'Escape' },
+      { waitGone: '[role=dialog]' },
+      { focused: '[aria-label="Warden menu"]' },
+    ],
+  },
+  {
     name: 'desktop-close-hovered',
     path: '/?desktop',
     fixture: 'desktop',
@@ -884,6 +936,20 @@ async function main(): Promise<void> {
           else if ('press' in step) {
             await page.locator(step.press).hover({ timeout: 10_000 });
             await page.mouse.down();
+          } else if ('key' in step) await page.keyboard.press(step.key);
+          else if ('focused' in step) {
+            const ok = await page
+              .waitForFunction((sel) => document.activeElement?.matches(sel) ?? false, step.focused, {
+                timeout: 10_000,
+              })
+              .then(
+                () => true,
+                () => false,
+              );
+            if (!ok) {
+              const has = await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 120) ?? 'nothing');
+              throw new Error(`${p.name}: focus is not on ${step.focused} (it is on ${has})`);
+            }
           } else if ('fill' in step) await page.locator(step.fill).fill(step.text, { timeout: 10_000 });
           else if ('inView' in step) {
             const shown = await page.evaluate(

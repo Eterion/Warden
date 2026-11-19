@@ -27,28 +27,11 @@ function applyTheme(theme: Theme): void {
   else root.dataset.theme = theme;
 }
 
-/** Browser notifications. The desktop app's core shows Windows notifications instead, even with the window closed. */
-function notifyChanges(before: State | null, after: State): void {
-  if (!before || after.desktop || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-  const was = new Set(before.accounts.filter((a) => a.identityChange).map((a) => a.id));
-  for (const a of after.accounts) {
-    if (a.identityChange && !was.has(a.id)) {
-      const who = a.identityChange.now?.email ?? 'nobody (signed out)';
-      new Notification(`${a.label} is signed in as someone else`, {
-        body: `Its folder is now signed in as ${who}. Warden keeps its usage apart until you confirm in Settings, Accounts.`,
-        tag: `identity-${a.id}`,
-      });
-    }
-  }
-}
-
 /** Takes in a new state from the server. */
 export function apply(next: State): void {
-  const before = store.state;
   store.state = next;
   store.connected = true;
   applyTheme(next.settings.theme);
-  notifyChanges(before, next);
 }
 
 async function load(): Promise<void> {
@@ -84,10 +67,7 @@ async function follow(): Promise<void> {
   }
 }
 
-/**
- * Starts following the server. In the browser, notification permission is asked on the first click, never unprompted;
- * the desktop app needs none.
- */
+/** Starts following the server. */
 export function startStore(): void {
   // The app's whole life: one scope, never stopped.
   effectScope(true).run(() => {
@@ -116,18 +96,6 @@ export function startStore(): void {
     watch(usePreferredReducedMotion(), () => requestAnimationFrame(syncSpinners));
     // A spinner drawn again or moved starts its animation afresh: back onto the shared clock.
     useEventListener(document, 'animationstart', onAnimationStart);
-
-    if (!desktop.inApp) {
-      useEventListener(
-        document,
-        'pointerdown',
-        () => {
-          if (typeof Notification !== 'undefined' && Notification.permission === 'default')
-            void Notification.requestPermission();
-        },
-        { once: true },
-      );
-    }
   });
 }
 

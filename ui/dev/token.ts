@@ -1,9 +1,9 @@
-// The development server's token (docs/api.md). warden-server prints an address carrying a random token for this
-// run, and answers only requests with the token's cookie. Opened on Vite's dev server instead (the same address with
+// The demo server's token (docs/api.md). The demo prints an address carrying a random token for this run, and
+// answers only requests with the token's cookie. Opened on Vite's dev server instead (the same address with
 // Vite's port), the token is put into the server's cookie here and taken out of the address bar; the proxy then
 // passes the cookie on with every /api/ request, since cookies do not depend on the port.
 
-/** The cookie warden-server on this port expects. */
+/** The cookie the demo server on this port expects. */
 export function tokenCookie(serverPort: number): string {
   return `warden-token-${serverPort}`;
 }

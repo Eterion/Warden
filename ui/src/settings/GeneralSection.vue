@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Settings, General: how often usage is read, the theme, how soon before a limit reset expires the Overview warns,
-// Warden's data and its log files. The desktop app adds Keep running in the tray, Start with Windows and Open log folder; the browser version
-// shows the log folder's path only.
+// Warden's data and its log files. The desktop app adds Keep running in the tray, Start with Windows and Open log folder; the demo in the
+// browser shows the log folder's path only.
 import { FolderOpen, Monitor, Moon, Sun } from 'lucide-vue-next';
 import { computed, ref, watch } from 'vue';
 import { api, type Theme } from '../api';

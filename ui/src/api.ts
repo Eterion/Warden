@@ -134,7 +134,7 @@ export interface State {
   activity: { accountId: string; bins: Bin[] }[];
   /** Present only in the desktop app. */
   desktop: { startWithWindows: boolean } | null;
-  /** A newer Warden the desktop app found; null when there is nothing newer and in the browser version. */
+  /** A newer Warden the desktop app found; null when there is nothing newer and in the demo in the browser. */
   update: Update | null;
 }
 

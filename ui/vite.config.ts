@@ -4,18 +4,18 @@ import tailwindcss from '@tailwindcss/vite';
 import { forwardedOrigin } from './dev/origin.ts';
 import { tradeToken } from './dev/token.ts';
 
-// The local development server (docs/api.md). In development the UI runs here with instant reload and passes /api/
-// on to it.
-const SERVER_PORT = 4777;
-const SERVER = `http://127.0.0.1:${SERVER_PORT}`;
+// The demo server (`npm run demo`, docs/api.md), on its default port. In development the UI runs here with instant
+// reload and passes /api/ on to it.
+const DEMO_PORT = 4787;
+const SERVER = `http://127.0.0.1:${DEMO_PORT}`;
 
-/** Opened with the token warden-server printed (`?token=`), the page puts it into the server's cookie (dev/token.ts). */
+/** Opened with the token the demo printed (`?token=`), the page puts it into the demo server's cookie (dev/token.ts). */
 function serverToken(): Plugin {
   return {
-    name: 'warden-server-token',
+    name: 'warden-demo-token',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        const traded = req.method === 'GET' ? tradeToken(req.url ?? '/', SERVER_PORT) : undefined;
+        const traded = req.method === 'GET' ? tradeToken(req.url ?? '/', DEMO_PORT) : undefined;
         if (!traded) {
           next();
           return;
@@ -35,7 +35,7 @@ export default defineConfig({
     host: '127.0.0.1',
     strictPort: false,
     proxy: {
-      // The server accepts only its own Host and Origin: the UI's own requests are passed on as the server's,
+      // The demo server accepts only its own Host and Origin: the UI's own requests are passed on as the server's,
       // anyone else's keep their Origin and are refused there (dev/origin.ts). The token's cookie goes with them.
       '/api': {
         target: SERVER,

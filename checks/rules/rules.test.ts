@@ -306,6 +306,61 @@ describe('http-demo-only', () => {
     );
   });
 
+  it('catches start reached through a crate alias or a glob', () => {
+    for (const text of [
+      'use warden_server as server;\nlet r = server::start(c, 0);',
+      'extern crate warden_server as ws;\nws::start(c, 0)',
+      'use warden_server::{self as ws, Config};\nlet r = ws::start(c, 0);',
+      'use warden_server as server;\nuse server as s;\ns::start(c, 0);',
+      'use ::warden_server as server;\nuse server::{Config, start};',
+      'use warden_server::*;\nlet r = start(c, 0);',
+    ])
+      assert.ok(caught(httpDemoOnly, desktop, text).length > 0, text);
+    assert.ok(
+      caught(httpDemoOnly, 'crates/warden-server/src/app.rs', 'use crate as root;\nroot::start(c, 0);').length > 0,
+      'planted violation not caught',
+    );
+    assert.ok(
+      caught(httpDemoOnly, 'crates/warden-server/src/http.rs', 'use super::*;\nfn f() { start(c, 0); }').length > 0,
+      'planted violation not caught',
+    );
+  });
+
+  it('catches calls to start and listeners in lib.rs outside start', () => {
+    const start = 'pub fn start(config: Config, port: u16) -> io::Result<Running> {\n    serve(config, port)\n}\n';
+    for (const text of [
+      start + 'pub fn open_window() {\n    let r = start(c, 0);\n}',
+      start + 'mod tests {\n    fn t() { let r = crate::start(c, 0); }\n}',
+      start + 'fn serve(c: Config, port: u16) {\n    let s = tiny_http::Server::http(addr);\n}',
+      'fn other() { let l = std::net::TcpListener::bind(addr); }',
+    ])
+      assert.ok(caught(httpDemoOnly, SERVER_LIB, text).length > 0, text);
+  });
+
+  it('reads past strings and block comments', () => {
+    for (const text of [
+      'let u = "http://127.0.0.1"; let r = warden_server::start(c, 0);',
+      'let q = \'"\'; let u = "//"; let l = TcpListener::bind(a);',
+      'let u = r#"a "// quoted" b"#; warden_server::start(c, 0);',
+      '/*\n*/\nlet l = TcpListener::bind(a);',
+    ])
+      assert.ok(caught(httpDemoOnly, desktop, text).length > 0, text);
+    assert.deepEqual(
+      caught(httpDemoOnly, desktop, "/* warden_server::start(c, 0)\n   and a TcpListener */\nfn f<'a>(x: &'a str) {}"),
+      [],
+    );
+    assert.deepEqual(caught(httpDemoOnly, desktop, '/* outer /* inner */ TcpListener::bind(a) */ let x = 1;'), []);
+    assert.deepEqual(caught(httpDemoOnly, desktop, 'let m = "never call warden_server::start here";'), []);
+  });
+
+  it('keeps line numbers past block comments and strings', () => {
+    const text = '/* one\ntwo */\nlet s = "a\nb";\nlet l = TcpListener::bind(a);';
+    assert.deepEqual(
+      checkFiles([{ path: desktop, text }], [httpDemoOnly]).map((v) => v.line),
+      [5],
+    );
+  });
+
   it('allows the demo, integration tests, lib.rs itself, start_core and comments', () => {
     assert.deepEqual(
       caught(
@@ -320,7 +375,21 @@ describe('http-demo-only', () => {
       [],
     );
     assert.deepEqual(
-      caught(httpDemoOnly, SERVER_LIB, 'let server = tiny_http::Server::http(SocketAddr::new(BIND_IP, port));'),
+      caught(
+        httpDemoOnly,
+        SERVER_LIB,
+        [
+          'struct Running {',
+          '    server: Arc<tiny_http::Server>,',
+          '}',
+          '/// Starts the demo server.',
+          'pub fn start(config: Config, port: u16) -> io::Result<Running> {',
+          '    let core = start_core(config)?;',
+          '    let server = tiny_http::Server::http(SocketAddr::new(BIND_IP, port));',
+          '    if port == 0 { log("{}"); }',
+          '}',
+        ].join('\n'),
+      ),
       [],
     );
     assert.deepEqual(caught(httpDemoOnly, desktop, 'use warden_server::{Config, start_core};'), []);

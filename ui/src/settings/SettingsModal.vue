@@ -9,7 +9,7 @@ import WList from '../components/WList.vue';
 import WListItem from '../components/WListItem.vue';
 import WIconButton from '../components/WIconButton.vue';
 import WTextField from '../components/WTextField.vue';
-import { closeModal, go, route, type Section } from '../route';
+import { closeModal, go, route, takeSettingsReturn, type Section } from '../route';
 import { keptWhileClosing } from '../components/kept';
 import { store } from '../store';
 import AccountsSection from './AccountsSection.vue';
@@ -168,7 +168,7 @@ function goTo(r: (typeof INDEX)[number]): void {
 </script>
 
 <template>
-  <AppModal v-model:open="open" title="Settings">
+  <AppModal v-model:open="open" title="Settings" :return-to="takeSettingsReturn">
     <div class="flex h-205 max-h-full w-full max-w-240 flex-wrap overflow-hidden rounded-2xl bg-modal shadow-modal">
       <nav aria-label="Settings sections" class="flex max-w-55 grow basis-47.5 flex-col gap-0.5 bg-nav px-3 py-4">
         <WTextField

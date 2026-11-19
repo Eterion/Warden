@@ -27,8 +27,20 @@ export function go(path: string): void {
   hash.value = location.hash;
 }
 
-export function openSettings(section: Section = 'general'): void {
+/** Where Settings gives focus back as it closes, when what opened it is gone by then (a menu item). */
+let settingsReturn: (() => HTMLElement | null) | null = null;
+
+/** Opens Settings in a section; `returnTo` names where focus goes as it closes, in place of what had focus. */
+export function openSettings(section: Section = 'general', returnTo?: () => HTMLElement | null): void {
+  settingsReturn = returnTo ?? null;
   go(`settings/${section}`);
+}
+
+/** The element Settings was told to give focus back to, once (Settings asks as it closes). */
+export function takeSettingsReturn(): HTMLElement | null {
+  const to = settingsReturn?.() ?? null;
+  settingsReturn = null;
+  return to;
 }
 
 export function closeModal(): void {

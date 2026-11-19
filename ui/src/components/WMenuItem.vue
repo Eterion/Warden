@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // An item in a dropdown menu: a Lucide icon and a label on one line. `danger` marks a destructive action (Remove) in
-// red, which keeps its contrast on hover and when pressed.
+// red, which keeps its contrast on hover and when pressed. Keyboard focus shows the focus outline inside the row.
 import { DropdownMenuItem } from 'reka-ui';
 import type { Component } from 'vue';
 
@@ -12,7 +12,7 @@ const emit = defineEmits<{ select: [event: Event] }>();
   <DropdownMenuItem
     :disabled="props.disabled"
     :class="[
-      'flex h-8 cursor-pointer items-center gap-2.5 rounded-md px-2.5 whitespace-nowrap outline-none select-none data-[disabled]:cursor-default data-[disabled]:text-tertiary data-[highlighted]:bg-chip-off data-[highlighted]:press:bg-press',
+      'flex h-8 cursor-pointer items-center gap-2.5 rounded-md px-2.5 whitespace-nowrap select-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indicator data-[disabled]:cursor-default data-[disabled]:text-tertiary data-[highlighted]:bg-chip-off data-[highlighted]:press:bg-press',
       props.danger && 'text-danger',
     ]"
     @select="emit('select', $event)"

@@ -93,6 +93,8 @@ export function normalState(now: number): State {
       workHours: null,
       resetWarningDays: 3,
       showQuietSessions: true,
+      hiddenResetAccounts: [],
+      soonestResetOnly: false,
     },
     accounts: accounts.slice(1),
     main: { ...accounts[0]!, signIn: { state: 'signedIn', email: accounts[0]!.identity?.email ?? null } },

@@ -92,11 +92,29 @@ pub struct SettingsPatch {
     /// value that is not a boolean.
     #[serde(default, deserialize_with = "strict_bool")]
     pub show_quiet_sessions: Option<bool>,
+    /// The accounts whose limit resets the Overview's list leaves out: ids of accounts Warden knows (main is `main`).
+    /// `null` is refused, as anything but a list of strings.
+    #[serde(default, deserialize_with = "strict_ids")]
+    pub hidden_reset_accounts: Option<Vec<String>>,
+    /// Whether the Overview's limit resets list shows only each account's soonest reset. `null` is refused, as any
+    /// other value that is not a boolean.
+    #[serde(default, deserialize_with = "strict_bool")]
+    pub soonest_reset_only: Option<bool>,
+}
+
+/// A list of ids that, when there, must be a list of strings; absent leaves the setting.
+fn strict_ids<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Vec<String>>, D::Error> {
+    Vec::<String>::deserialize(d).map(Some)
 }
 
 /// A boolean that, when there, must be `true` or `false`; absent leaves the setting.
 fn strict_bool<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<bool>, D::Error> {
     bool::deserialize(d).map(Some)
+}
+
+/// Whether `id` names an account Warden knows: main (`main`) or one of its own.
+fn known_account(s: &store::Settings, id: &str) -> bool {
+    id == "main" || s.accounts.iter().any(|a| a.id == id)
 }
 
 /// A field that is there, even as `null`, is `Some`: so `null` can clear a setting while absent leaves it.
@@ -265,6 +283,9 @@ pub struct SettingsView {
     work_hours: Option<WorkHours>,
     reset_warning_days: u8,
     show_quiet_sessions: bool,
+    /// Only ids of accounts Warden knows now: one removed since is left out.
+    hidden_reset_accounts: Vec<String>,
+    soonest_reset_only: bool,
 }
 
 /// Present only in the desktop app.
@@ -575,6 +596,13 @@ impl App {
                 work_hours: s.work_hours.clone(),
                 reset_warning_days: s.reset_warning_days,
                 show_quiet_sessions: s.show_quiet_sessions,
+                hidden_reset_accounts: s
+                    .hidden_reset_accounts
+                    .iter()
+                    .filter(|id| known_account(s, id))
+                    .cloned()
+                    .collect(),
+                soonest_reset_only: s.soonest_reset_only,
             },
             main: s.main_account(&self.env).as_ref().map(|a| MainView {
                 account: self.account_view(&inner, a),
@@ -1778,6 +1806,14 @@ impl App {
                 "Usage can be read every 2, 5, 10 or 30 minutes.",
             ));
         }
+        if let Some(ids) = &patch.hidden_reset_accounts {
+            let inner = self.lock();
+            if !ids.iter().all(|id| known_account(&inner.settings, id)) {
+                return Err(ApiError::bad(
+                    "Only the resets of accounts Warden knows can be left out.",
+                ));
+            }
+        }
         // `Some(None)` clears the work hours; anything but a valid set of hours or `null` is refused.
         let work_hours: Option<Option<WorkHours>> = match patch.work_hours.clone() {
             None => None,
@@ -1836,6 +1872,19 @@ impl App {
         }
         if let Some(q) = patch.show_quiet_sessions {
             inner.settings.show_quiet_sessions = q;
+        }
+        if let Some(ids) = patch.hidden_reset_accounts {
+            // Checked above; an account removed since then is dropped here, under the same lock as the save, so no id
+            // is kept that names no account.
+            let mut seen = HashSet::new();
+            let ids: Vec<String> = ids
+                .into_iter()
+                .filter(|id| known_account(&inner.settings, id) && seen.insert(id.clone()))
+                .collect();
+            inner.settings.hidden_reset_accounts = ids;
+        }
+        if let Some(s) = patch.soonest_reset_only {
+            inner.settings.soonest_reset_only = s;
         }
         self.save_settings(&mut inner)?;
         drop(inner);

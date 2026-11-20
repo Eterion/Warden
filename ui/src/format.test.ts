@@ -16,8 +16,10 @@ import {
   newFolderPreview,
   readingNote,
   expiresSoon,
+  count,
   expiryText,
   resetEffect,
+  filterResets,
   resetRows,
   resetTime,
   signedInAs,
@@ -360,6 +362,10 @@ describe('limit resets', () => {
     expect(expiryText(null, NOW)).toBe('Does not expire');
   });
 
+  it('writes counts in English, grouped, whatever the region', () => {
+    expect([count(0), count(7), count(1250)]).toEqual(['0', '7', '1,250']);
+  });
+
   it("lists every account's resets soonest first, never-expiring last, leaving out expired ones", () => {
     const codex = account({
       id: 'c',
@@ -383,6 +389,27 @@ describe('limit resets', () => {
       ['Codex', 'Reset', null],
     ]);
     expect(resetRows([account({ id: 'm', label: 'Main' })], NOW, 3)).toEqual([]);
+  });
+
+  it("filters the rows: an account's left out, or only each account's soonest", () => {
+    const codex = account({
+      id: 'c',
+      label: 'Codex',
+      provider: 'codex',
+      resets: [
+        { id: 'x', title: 'Later', expiresAt: NOW + 9 * DAY },
+        { id: 'y', title: 'Never', expiresAt: null },
+        { id: 'z', title: 'Sooner', expiresAt: NOW + 2 * DAY },
+      ],
+    });
+    const other = account({ id: 'o', label: 'Other', resets: [{ id: 'w', title: 'Soon', expiresAt: NOW + DAY }] });
+    const rows = resetRows([codex, other], NOW, 3);
+    const titles = (r: ReturnType<typeof filterResets>) => r.map((x) => x.title);
+    expect(titles(filterResets(rows, [], false))).toEqual(['Soon', 'Sooner', 'Later', 'Never']);
+    expect(titles(filterResets(rows, ['o'], false))).toEqual(['Sooner', 'Later', 'Never']);
+    expect(titles(filterResets(rows, [], true))).toEqual(['Soon', 'Sooner']);
+    expect(titles(filterResets(rows, ['c'], true))).toEqual(['Soon']);
+    expect(filterResets(rows, ['c', 'o'], false)).toEqual([]);
   });
 
   it('keys each row by its reset, so using one of a grant takes away the row of the last of them', () => {

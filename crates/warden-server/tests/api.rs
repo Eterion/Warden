@@ -1745,6 +1745,67 @@ fn the_reset_warning_is_checked_and_saved() {
 }
 
 #[test]
+fn the_resets_filter_is_checked_saved_and_forgets_removed_accounts() {
+    let f = Fixture::new();
+    let folder = f.claude_folder(".claude-work", "work@example.com", "fixture-token");
+    let server = f.start();
+    let addr = server.addr;
+    let s = add(addr, "claude", &folder, "Work");
+    assert_eq!(s["settings"]["hiddenResetAccounts"], json!([]));
+    assert_eq!(s["settings"]["soonestResetOnly"], false);
+    let id = s["accounts"][0]["id"]
+        .as_str()
+        .expect("an account")
+        .to_owned();
+    for bad in [
+        json!({"hiddenResetAccounts": ["nobody"], "theme": "dark"}),
+        json!({"hiddenResetAccounts": null, "theme": "dark"}),
+        json!({"hiddenResetAccounts": "main", "theme": "dark"}),
+        json!({"hiddenResetAccounts": [1], "theme": "dark"}),
+        json!({"soonestResetOnly": null, "theme": "dark"}),
+        json!({"soonestResetOnly": "true", "theme": "dark"}),
+    ] {
+        let reply = call(addr, "PUT", "/api/settings", Some(&bad.to_string()));
+        assert_eq!(reply.status, 400, "{bad}");
+        let s = state(addr);
+        assert_eq!(s["settings"]["hiddenResetAccounts"], json!([]), "{bad}");
+        assert_eq!(s["settings"]["soonestResetOnly"], false, "{bad}");
+        assert_eq!(s["settings"]["theme"], "system", "{bad}");
+    }
+    let set = call(
+        addr,
+        "PUT",
+        "/api/settings",
+        Some(
+            &json!({"hiddenResetAccounts": ["main", id, "main"], "soonestResetOnly": true})
+                .to_string(),
+        ),
+    );
+    assert_eq!(set.status, 200, "{}", set.body);
+    assert_eq!(
+        set.json()["settings"]["hiddenResetAccounts"],
+        json!(["main", id])
+    );
+    assert_eq!(set.json()["settings"]["soonestResetOnly"], true);
+    server.stop();
+    let server = f.start();
+    let addr = server.addr;
+    assert_eq!(
+        state(addr)["settings"]["hiddenResetAccounts"],
+        json!(["main", id])
+    );
+    assert_eq!(state(addr)["settings"]["soonestResetOnly"], true);
+    // A removed account is no longer named.
+    let gone = call(addr, "DELETE", &format!("/api/accounts/{id}"), None);
+    assert_eq!(gone.status, 200, "{}", gone.body);
+    assert_eq!(
+        state(addr)["settings"]["hiddenResetAccounts"],
+        json!(["main"])
+    );
+    server.stop();
+}
+
+#[test]
 fn showing_quiet_sessions_is_checked_and_saved() {
     let f = Fixture::new();
     let server = f.start();

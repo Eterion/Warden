@@ -534,6 +534,18 @@
     "use": "pressed quiet button or link on panel"
   },
   {
+    "fg": "secondary",
+    "bg": ["modal", "chip-off"],
+    "min": 4.5,
+    "use": "a count in a highlighted menu item (the Limit resets filter)"
+  },
+  {
+    "fg": "secondary",
+    "bg": ["panel", "chip-off"],
+    "min": 4.5,
+    "use": "hovered small quiet button on panel (the Limit resets filter)"
+  },
+  {
     "fg": "icon",
     "bg": ["panel", "press"],
     "min": 3,

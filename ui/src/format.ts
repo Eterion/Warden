@@ -116,6 +116,21 @@ export function resetRows(accounts: Account[], now: number, warnDays: number): R
 }
 
 /**
+ * The reset rows the Overview's filter lets through: none of an account in `hidden`, and with `soonestOnly` only each
+ * account's first (the rows come soonest first, so that is its soonest).
+ */
+export function filterResets(rows: ResetRow[], hidden: string[], soonestOnly: boolean): ResetRow[] {
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    if (hidden.includes(r.account.id)) return false;
+    if (!soonestOnly) return true;
+    if (seen.has(r.account.id)) return false;
+    seen.add(r.account.id);
+    return true;
+  });
+}
+
+/**
  * What using a reset does, as the confirmation says it, from its short name: a full reset (Codex's "Full reset (Weekly
  * + 5 hr)" too) refills both limits; a 5-hour or weekly reset one of them; a Fable reset gives back what Fable used.
  */
@@ -158,6 +173,13 @@ export function limitView(limit: Limit, now: number): LimitView {
 }
 
 // Whole dollars without decimals ("$50"), anything else with cents ("$12.40"). The API gives no currency, so USD.
+const COUNT = new Intl.NumberFormat('en');
+
+/** A count as the UI shows it: English digits and grouping, whatever the Windows region is ("1,250"). */
+export function count(n: number): string {
+  return COUNT.format(n);
+}
+
 const WHOLE_DOLLARS = new Intl.NumberFormat('en', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const DOLLARS_AND_CENTS = new Intl.NumberFormat('en', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
 

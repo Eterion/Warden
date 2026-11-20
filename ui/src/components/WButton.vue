@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // A button with text. Primary comes first in a group; outline is the everyday one (sm: small, on a list row); quiet
-// sits among chips (md) or on the window background (sm); link is underlined text. An icon, when given, comes before the text; busy sets
-// aria-busy and turns the icon slowly.
+// sits among chips (md) or, small as the legends' text (sm), on the window background or, `on="panel"`, on the
+// content panel (the Limit resets filter), lighting with the panel's hover; link is underlined text. An icon, when
+// given, comes before the text; busy sets aria-busy and turns the icon slowly.
 import type { Component } from 'vue';
 import { vSyncSpin } from './spin';
 import WTooltip from './WTooltip.vue';
@@ -17,8 +18,18 @@ const props = withDefaults(
     busy?: boolean;
     type?: 'button' | 'submit';
     disabledReason?: string;
+    /** What a small quiet button sits on: the window background (default) or the content panel. */
+    on?: 'win' | 'panel';
   }>(),
-  { variant: 'outline', size: 'md', icon: undefined, busy: false, type: 'button', disabledReason: undefined },
+  {
+    variant: 'outline',
+    size: 'md',
+    icon: undefined,
+    busy: false,
+    type: 'button',
+    disabledReason: undefined,
+    on: 'win',
+  },
 );
 
 const BASE =
@@ -36,7 +47,7 @@ function look(): string {
     case 'quiet':
       return props.size === 'md'
         ? 'h-8 gap-1.5 rounded-lg pr-3 pl-2.5 text-14 font-medium text-secondary hov:bg-chip-off press:bg-press focus-visible:outline-offset-2'
-        : 'h-7 gap-1.5 rounded-md px-2 text-12 text-secondary hov:bg-active press:bg-press';
+        : `h-7 gap-1.5 rounded-md px-2 text-12 text-secondary press:bg-press ${props.on === 'panel' ? 'hov:bg-chip-off' : 'hov:bg-active'}`;
     case 'link':
       return 'h-6 rounded-sm px-1.5 text-12 text-secondary underline underline-offset-2 hov:text-text press:bg-press press:text-text';
   }

@@ -1,14 +1,16 @@
 <script setup lang="ts">
 // The Overview: the title, the accounts in use with their limits (main's hand-off point marked on its weekly bar), the last 2 hours of sessions and the
 // "now" chip, then every account's sessions in one table, each delegated session under the main session that started
-// it. Checking accounts shows only their sessions, under their faded ancestors; the chip in the Sessions header hides
+// it. Checking accounts shows only their sessions, under their faded ancestors; the switch in the Sessions header hides
 // ended and not-known sessions (remembered), an ancestor of a shown one staying faded. Beside them (under them in a
 // narrow window), the limit resets the accounts can use, while there are any; one expiring within the warning days set
-// in Settings › General in amber. Each has Use: confirmed in a modal, it is sent, and once used its row turns to dust
-// and the list closes the gap (only a quick fade with reduced motion).
+// in Settings › General in amber. Its filter (remembered) leaves out accounts' resets, or all but each account's
+// soonest, saying how many it hides. Each has Use: confirmed in a modal, it is sent, and once used its row turns to
+// dust and the list closes the gap (only a quick fade with reduced motion).
 import { usePreferredReducedMotion } from '@vueuse/core';
-import { Check, Hourglass } from 'lucide-vue-next';
-import { computed, nextTick, ref, shallowRef } from 'vue';
+import { Check, Hourglass, ListFilter } from 'lucide-vue-next';
+import { DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger } from 'reka-ui';
+import { computed, nextTick, reactive, ref, shallowRef, useTemplateRef } from 'vue';
 import { ApiError, api, type Account, type Session, type State } from '../api';
 import AccountIcon from '../components/AccountIcon.vue';
 import ActivitySparkline from '../components/ActivitySparkline.vue';
@@ -19,19 +21,23 @@ import StateIcon from '../components/StateIcon.vue';
 import SubagentsBadge from '../components/SubagentsBadge.vue';
 import UsageBar from '../components/UsageBar.vue';
 import UseResetModal from '../components/UseResetModal.vue';
+import WMenuCheckboxItem from '../components/WMenuCheckboxItem.vue';
+import WMenuContent from '../components/WMenuContent.vue';
+import WSwitch from '../components/WSwitch.vue';
 import WTooltip from '../components/WTooltip.vue';
 import { isGone, turnToDust, undoDust } from '../components/dust';
 import WButton from '../components/WButton.vue';
 import WTable from '../components/WTable.vue';
 import WTableRow from '../components/WTableRow.vue';
-import { vLabelState } from '../components/labels';
 import WList from '../components/WList.vue';
 import WListItem from '../components/WListItem.vue';
 import {
   IDLE_LOGIN,
   expectedSignIn,
   expiryText,
+  count,
   extraText,
+  filterResets,
   limitView,
   loginIdle,
   readingNote,
@@ -58,16 +64,106 @@ const accounts = computed(() => usedAccounts(store.state));
 
 // How many days before a reset expires its row warns: Settings › General.
 const warnDays = computed(() => store.state?.settings.resetWarningDays ?? 3);
-/** The resets the state lists now. */
-const live = computed(() => resetRows(accounts.value, store.now, warnDays.value));
+/** Every reset the state lists now, before the list's filter. */
+const every = computed(() => resetRows(accounts.value, store.now, warnDays.value));
+/**
+ * The list's filter (remembered): accounts left out (switched-off ones' choices kept too), and only each account's
+ * soonest. A choice shows at once; until every save of it has come back, the choices made here count, not the state's.
+ */
+interface ResetFilter {
+  hidden: string[];
+  soonestOnly: boolean;
+}
+const chosen = ref<ResetFilter | null>(null);
+const resetFilter = computed<ResetFilter>(
+  () =>
+    chosen.value ?? {
+      hidden: store.state?.settings.hiddenResetAccounts ?? [],
+      soonestOnly: store.state?.settings.soonestResetOnly ?? false,
+    },
+);
+const hiddenResets = computed(() => resetFilter.value.hidden);
+const soonestOnly = computed(() => resetFilter.value.soonestOnly);
+/** The resets the state lists now, after the filter. */
+const live = computed(() => filterResets(every.value, hiddenResets.value, soonestOnly.value));
+/** The accounts with a reset now, in the Overview's order: the filter's choices. */
+const resetAccounts = computed(() => accounts.value.filter((a) => every.value.some((r) => r.account.id === a.id)));
+/** How many resets the filter leaves out now. */
+const hiddenCount = computed(() => every.value.length - live.value.length);
+/** How many resets each account has now, before the filter: the filter's menu shows it beside each account. */
+const resetCounts = computed(() => {
+  const counts = new Map<string, number>();
+  for (const r of every.value) counts.set(r.account.id, (counts.get(r.account.id) ?? 0) + 1);
+  return counts;
+});
+const resetsText = (n: number) => `${count(n)} ${n === 1 ? 'reset' : 'resets'}`;
+
+/** Saves sent one after another, so the last choice is the one kept; the choices here count until they are all back. */
+let saving: Promise<unknown> = Promise.resolve();
+let saves = 0;
+
+function chooseFilter(next: ResetFilter, patch: { hiddenResetAccounts?: string[]; soonestResetOnly?: boolean }): void {
+  chosen.value = next;
+  announceFilter();
+  saves++;
+  saving = saving.then(async () => {
+    try {
+      // Never an answer older than the state shown (a reset used meanwhile stays used).
+      const state = await api.settings(patch);
+      if (!store.state || state.revision >= store.state.revision) apply(state);
+    } catch (e) {
+      if (!(e instanceof ApiError)) store.connected = false;
+    }
+    if (--saves === 0) chosen.value = null;
+  });
+}
+
+/** Says what the filter shows now, as focus stays in its menu. */
+function announceFilter(): void {
+  const shown = live.value.length;
+  const left = hiddenCount.value;
+  announced.value =
+    shown === 0
+      ? 'The filter leaves out every reset.'
+      : left
+        ? `${resetsText(shown)} shown, ${count(left)} hidden.`
+        : `All ${resetsText(shown)} shown.`;
+}
+
+function showResetsOf(id: string, shown: boolean): void {
+  const rest = hiddenResets.value.filter((x) => x !== id);
+  const hidden = shown ? rest : [...rest, id];
+  chooseFilter({ ...resetFilter.value, hidden }, { hiddenResetAccounts: hidden });
+}
+
+function setSoonestOnly(on: boolean): void {
+  chooseFilter({ ...resetFilter.value, soonestOnly: on }, { soonestResetOnly: on });
+}
+
 /**
  * The resets as listed. While a use is sent and its row goes, the rows on screen hold still (`held`), so an update that
- * arrives meanwhile cannot take a row away under its animation; the state itself is always the newest.
+ * arrives meanwhile cannot take a row away under its animation; the state itself is always the newest. The filter
+ * still applies to the held rows, all but those being used.
  */
 const held = shallowRef<ResetRow[] | null>(null);
-const resets = computed(() => held.value ?? live.value);
 /** The keys of the rows being used now (sent, or turning to dust): the list holds still while there is one. */
-const leaving = new Set<string>();
+const leaving = reactive(new Set<string>());
+const resets = computed(() => {
+  if (!held.value) return live.value;
+  const rows = held.value;
+  const kept = new Set(
+    filterResets(
+      rows.filter((r) => !leaving.has(r.key)),
+      hiddenResets.value,
+      soonestOnly.value,
+    ).map((r) => r.key),
+  );
+  return rows.filter((r) => leaving.has(r.key) || kept.has(r.key));
+});
+/** How many resets the list shows: its rows, but for one being used (turning to dust). */
+const shownCount = computed(() => resets.value.filter((r) => !leaving.has(r.key)).length);
+/** The filter's button: focus goes there when a reset is used and every one left is filtered out. */
+const filterButton = useTemplateRef<{ $el: HTMLElement }>('filterButton');
 
 const reduceMotion = usePreferredReducedMotion();
 /** The reset the confirmation is open for. */
@@ -142,7 +238,8 @@ async function letGo(key: string): Promise<void> {
 async function sendUse(): Promise<string | null> {
   const r = using.value;
   if (!r?.id || leaving.has(r.key)) return null;
-  held.value = resets.value;
+  // Every row, the filter's left-out ones too: the filter then still applies to them all while this one goes.
+  held.value ??= every.value;
   leaving.add(r.key);
   let next: State;
   try {
@@ -164,7 +261,8 @@ async function sendUse(): Promise<string | null> {
 /**
  * The used reset's row turns to dust and the gap closes, then, once no other use is under way, the list shows the state
  * as it is. Focus, already on a Use button that stays (or the heading), moves only if it was left on the heading or
- * lost: to the nearest Use button now.
+ * lost: to the nearest Use button now, else the first in the list as it is now (one the filter shows only now, say the
+ * account's next reset), else the filter's button while it leaves out every reset left, else the Overview's heading.
  */
 async function leave(r: ResetRow): Promise<void> {
   const rows = resets.value;
@@ -175,7 +273,8 @@ async function leave(r: ResetRow): Promise<void> {
   if (held.value) return;
   const focused = document.activeElement;
   if (focused && focused !== document.body && focused !== heading.value && focused !== resetsHeading.value) return;
-  (nearestUse(r.key, rows, true) ?? heading.value)?.focus();
+  const filterEl = every.value.length > 0 && resets.value.length === 0 ? (filterButton.value?.$el ?? null) : null;
+  (nearestUse(r.key, rows, true) ?? nearestUse(r.key, resets.value, false) ?? filterEl ?? heading.value)?.focus();
 }
 
 /** The Extra usage column shows only while some account has spent some. */
@@ -218,9 +317,9 @@ const filtered = computed(() =>
   liveSessions.value.filter((s) => filter.value.length === 0 || filter.value.includes(s.accountId)),
 );
 
-/** Whether ended and not-known sessions are shown: remembered, set only by the checkbox in the Sessions header. */
+/** Whether ended and not-known sessions are shown: remembered, set only by the switch in the Sessions header. */
 const showQuiet = computed(() => store.state?.settings.showQuietSessions ?? true);
-/** How many ended and not-known sessions there are now, after the filter: the checkbox shows while there is one. */
+/** How many ended and not-known sessions there are now, after the filter, shown beside that switch. */
 const quietCount = computed(() => filtered.value.filter(isQuiet).length);
 
 function toggleQuiet(): void {
@@ -472,27 +571,18 @@ function sessionAccount(s: Session): Account | undefined {
                   <strong class="font-semibold text-text tabular-nums">{{ shownTally.idle }}</strong> idle
                 </span>
               </div>
-              <!-- Checked shows ended and not-known sessions; its label (with the count) names it, and hovering or
-                 pressing the label lights the box as one control. -->
-              <span v-if="quietCount" class="inline-flex items-center gap-1.5" data-quiet-toggle>
-                <button
+              <!-- On shows ended and not-known sessions, always there (0 too); its label (with the count) names it,
+                 and hovering or pressing the label lights the switch as one control. -->
+              <span class="inline-flex items-center gap-2" data-quiet-toggle>
+                <WSwitch
                   id="quiet-sessions"
-                  v-label-state
-                  type="button"
-                  role="checkbox"
-                  :aria-checked="showQuiet"
-                  :class="[
-                    'inline-flex size-4 cursor-pointer items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator',
-                    showQuiet
-                      ? 'bg-primary text-on-primary hov:bg-primary-hover press:bg-primary-press'
-                      : 'border-2 border-control hov:bg-chip-off press:bg-press',
-                  ]"
-                  @click="toggleQuiet"
-                >
-                  <Check v-if="showQuiet" class="size-3" :stroke-width="3" aria-hidden="true" />
-                </button>
+                  :model-value="showQuiet"
+                  :label="`Ended and not known ${count(quietCount)}`"
+                  size="sm"
+                  @update:model-value="toggleQuiet"
+                />
                 <label for="quiet-sessions" class="cursor-pointer"
-                  >Ended and not known <span class="tabular-nums">{{ quietCount }}</span></label
+                  >Ended and not known <span class="tabular-nums">{{ count(quietCount) }}</span></label
                 >
               </span>
             </div>
@@ -612,20 +702,69 @@ function sessionAccount(s: Session): Account | undefined {
       </div>
 
       <section
-        v-if="resets.length"
+        v-if="resets.length || every.length"
         ref="resetList"
         aria-labelledby="resets-heading"
         class="flex min-w-0 grow basis-72 flex-col gap-3"
       >
-        <h2
-          id="resets-heading"
-          ref="resetsHeading"
-          tabindex="-1"
-          class="rounded-xs text-16 font-semibold outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator"
-        >
-          Limit resets
-        </h2>
+        <div class="flex items-center justify-between gap-3">
+          <h2
+            id="resets-heading"
+            ref="resetsHeading"
+            tabindex="-1"
+            class="rounded-xs text-16 font-semibold outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator"
+          >
+            Limit resets
+            <span class="ml-1 font-normal text-tertiary tabular-nums" data-resets-shown>{{ count(shownCount) }}</span>
+          </h2>
+          <!-- The filter: which accounts' resets show, and only each one's soonest; remembered. While it leaves some out,
+               how many sits beside it. -->
+          <div class="flex items-center gap-2">
+            <span v-if="hiddenCount" class="text-12 text-secondary tabular-nums" data-resets-hidden
+              >{{ count(hiddenCount) }} hidden</span
+            >
+            <DropdownMenuRoot :modal="false">
+              <DropdownMenuTrigger as-child>
+                <WButton
+                  ref="filterButton"
+                  variant="quiet"
+                  size="sm"
+                  on="panel"
+                  :icon="ListFilter"
+                  aria-label="Filter limit resets"
+                  class="-my-0.5"
+                  >Filter</WButton
+                >
+              </DropdownMenuTrigger>
+              <!-- Kept inside the section, so the open menu stays within it. -->
+              <DropdownMenuPortal disabled>
+                <WMenuContent>
+                  <WMenuCheckboxItem
+                    v-for="a in resetAccounts"
+                    :key="a.id"
+                    :model-value="!hiddenResets.includes(a.id)"
+                    @update:model-value="showResetsOf(a.id, $event)"
+                  >
+                    <template #mark><ProviderMark :provider="a.provider" size="sm" /></template>
+                    {{ a.label }}
+                    <template #end>
+                      <span aria-hidden="true" data-reset-count>{{ count(resetCounts.get(a.id) ?? 0) }}</span>
+                      <span class="sr-only">, {{ resetsText(resetCounts.get(a.id) ?? 0) }}</span>
+                    </template>
+                  </WMenuCheckboxItem>
+                  <DropdownMenuSeparator class="-mx-1 my-1 h-px bg-divider-strong" />
+                  <WMenuCheckboxItem :model-value="soonestOnly" @update:model-value="setSoonestOnly">
+                    Only the soonest per account
+                  </WMenuCheckboxItem>
+                </WMenuContent>
+              </DropdownMenuPortal>
+            </DropdownMenuRoot>
+          </div>
+        </div>
         <WList>
+          <WListItem v-if="!resets.length" class="text-14 text-tertiary" data-resets-all-hidden>
+            The filter leaves out every reset.
+          </WListItem>
           <WListItem v-for="r in resets" :key="r.key" :data-reset-key="r.key">
             <AccountIcon :account="r.account" />
             <span class="flex min-w-0 flex-1 flex-col">

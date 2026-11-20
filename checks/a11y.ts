@@ -53,6 +53,8 @@ type Fixture =
   | 'resets'
   | 'resetsRefused'
   | 'resetsUsed'
+  | 'resetsFiltered'
+  | 'resetsAllHidden'
   | 'hooks'
   | 'workHours'
   | 'delegated'
@@ -225,12 +227,27 @@ export const PAGES: {
     steps: [{ click: 'button[role=checkbox][aria-label$="of Codex"]' }, { waitFor: 'text=Show all' }],
   },
   {
-    // Ended and not-known sessions hidden (the checkbox off): Codex's ended session stays as the faded parent of a shown
-    // session on Second.
+    // Ended and not-known sessions hidden (the small switch off): Codex's ended session stays as the faded parent of a
+    // shown session on Second.
     name: 'overview-sessions-quiet-hidden',
     path: '/',
     fixture: 'quietHidden',
-    ready: '[data-quiet-toggle] [role=checkbox][aria-checked=false]',
+    ready: '[data-quiet-toggle] [role=switch][aria-checked=false]',
+  },
+  {
+    // The small switch, on, hovered through its label, then pressed through it (the switch shows it as its own).
+    name: 'overview-sessions-quiet-hover',
+    path: '/',
+    fixture: 'normal',
+    ready: '[data-quiet-toggle] [role=switch][aria-checked=true]',
+    steps: [{ hover: '[data-quiet-toggle] label' }],
+  },
+  {
+    name: 'overview-sessions-quiet-press',
+    path: '/',
+    fixture: 'normal',
+    ready: '[data-quiet-toggle] [role=switch][aria-checked=true]',
+    steps: [{ press: '[data-quiet-toggle] label' }, { waitFor: '[data-quiet-toggle] [role=switch][data-label-press]' }],
   },
   {
     name: 'overview-resets',
@@ -239,6 +256,35 @@ export const PAGES: {
     // Main's Claude resets and Codex's banked resets, one of main's expiring inside the warning days (amber).
     ready: '[aria-labelledby=resets-heading] [data-expires-soon]',
     // Wide enough for the resets to stand beside the accounts and sessions.
+    viewport: { width: 1600, height: 900 },
+  },
+  {
+    // The resets filter open: each account with a reset, and only each one's soonest.
+    name: 'overview-resets-filter',
+    path: '/',
+    fixture: 'resets',
+    ready: '[aria-labelledby=resets-heading] [data-expires-soon]',
+    steps: [
+      { click: '[aria-label="Filter limit resets"]' },
+      { waitFor: '[aria-labelledby=resets-heading] [role=menuitemcheckbox]' },
+      { hover: '[role=menuitemcheckbox] >> text=Only the soonest per account' },
+    ],
+    viewport: { width: 1600, height: 900 },
+  },
+  {
+    // Filtered (remembered): only each account's soonest, with how many are hidden.
+    name: 'overview-resets-filtered',
+    path: '/',
+    fixture: 'resetsFiltered',
+    ready: '[aria-labelledby=resets-heading] [data-resets-hidden]',
+    viewport: { width: 1600, height: 900 },
+  },
+  {
+    // Every account's resets left out: the list stays, its box saying so, with the filter to undo it.
+    name: 'overview-resets-all-hidden',
+    path: '/',
+    fixture: 'resetsAllHidden',
+    ready: '[aria-labelledby=resets-heading] [data-resets-all-hidden]',
     viewport: { width: 1600, height: 900 },
   },
   {
@@ -798,10 +844,19 @@ function fakeApi(current: () => Fixture): Plugin {
                   ? quietHiddenState(now)
                   : fixture === 'healthy'
                     ? healthyState(now)
-                    : fixture === 'resets' || fixture === 'resetsRefused' || fixture === 'resetsUsed'
+                    : fixture === 'resets' ||
+                        fixture === 'resetsRefused' ||
+                        fixture === 'resetsUsed' ||
+                        fixture === 'resetsFiltered' ||
+                        fixture === 'resetsAllHidden'
                       ? resetsState(now)
                       : normalState(now);
         if (fixture === 'hooksOff') state.hooksOff = true;
+        if (fixture === 'resetsAllHidden') state.settings.hiddenResetAccounts = ['main', 'a3'];
+        if (fixture === 'resetsFiltered') {
+          state.settings.hiddenResetAccounts = [];
+          state.settings.soonestResetOnly = true;
+        }
         if (fixture === 'desktopDownloading') state.update = { version: '0.2.0', downloaded: 45, ready: false };
         if (fixture === 'desktopUpdate') state.update = { version: '0.2.0', downloaded: 100, ready: true };
         if (fixture === 'setupSignedOut' && state.main) {

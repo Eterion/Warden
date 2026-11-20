@@ -115,11 +115,32 @@ pub struct Settings {
     /// of the wrong type or out of range loads as [`DEFAULT_RESET_WARNING_DAYS`], never failing the file.
     #[serde(deserialize_with = "lenient_reset_warning_days")]
     pub reset_warning_days: u8,
-    /// Whether the Overview's sessions table shows ended and not-known sessions. Its only control is the checkbox in the
+    /// Whether the Overview's sessions table shows ended and not-known sessions. Its only control is the switch in the
     /// Sessions header; it is not in Settings › General. A value of the wrong type loads as `true`, never failing the
     /// file.
     #[serde(deserialize_with = "lenient_show_quiet_sessions")]
     pub show_quiet_sessions: bool,
+    /// The accounts whose limit resets the Overview's list leaves out (its filter, the only control). An id no account
+    /// has any more is harmless (ids are never reused) and is left out of the state. A value of the wrong shape loads
+    /// as none left out, never failing the file.
+    #[serde(deserialize_with = "lenient_ids")]
+    pub hidden_reset_accounts: Vec<String>,
+    /// Whether the Overview's limit resets list shows only each account's soonest reset (its filter). A value of the
+    /// wrong type loads as `false`, never failing the file.
+    #[serde(deserialize_with = "lenient_false")]
+    pub soonest_reset_only: bool,
+}
+
+fn lenient_ids<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(value
+        .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
+        .unwrap_or_default())
+}
+
+fn lenient_false<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(value.and_then(|v| v.as_bool()).unwrap_or(false))
 }
 
 fn lenient_show_quiet_sessions<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
@@ -211,6 +232,8 @@ impl Default for Settings {
             work_hours: None,
             reset_warning_days: DEFAULT_RESET_WARNING_DAYS,
             show_quiet_sessions: true,
+            hidden_reset_accounts: Vec::new(),
+            soonest_reset_only: false,
         }
     }
 }
@@ -942,6 +965,35 @@ mod tests {
         let s: Settings =
             serde_json::from_str(r#"{"version":2,"showQuietSessions":false}"#).expect("loads");
         assert!(!s.show_quiet_sessions);
+    }
+
+    #[test]
+    fn the_resets_filter_shows_all_by_default_and_a_bad_value_never_breaks_the_file() {
+        let d = Settings::default();
+        assert!(d.hidden_reset_accounts.is_empty() && !d.soonest_reset_only);
+        let s = Settings {
+            hidden_reset_accounts: vec!["a3".into()],
+            soonest_reset_only: true,
+            ..Settings::default()
+        };
+        let json = serde_json::to_value(&s).expect("json");
+        assert_eq!(json["hiddenResetAccounts"], serde_json::json!(["a3"]));
+        assert_eq!(json["soonestResetOnly"], true);
+        let back: Settings = serde_json::from_value(json).expect("back");
+        assert_eq!(back.hidden_reset_accounts, vec!["a3".to_owned()]);
+        assert!(back.soonest_reset_only);
+        // Missing or of the wrong shape: nothing left out, every reset, and the rest of the file loads.
+        for raw in [
+            r#"{"version":2,"reserve":30}"#,
+            r#"{"version":2,"reserve":30,"hiddenResetAccounts":null,"soonestResetOnly":null}"#,
+            r#"{"version":2,"reserve":30,"hiddenResetAccounts":"a3","soonestResetOnly":"true"}"#,
+            r#"{"version":2,"reserve":30,"hiddenResetAccounts":[1,2],"soonestResetOnly":1}"#,
+            r#"{"version":2,"reserve":30,"hiddenResetAccounts":{},"soonestResetOnly":{}}"#,
+        ] {
+            let s: Settings = serde_json::from_str(raw).expect(raw);
+            assert!(s.hidden_reset_accounts.is_empty(), "{raw}");
+            assert_eq!((s.soonest_reset_only, s.reserve), (false, 30), "{raw}");
+        }
     }
 
     #[test]

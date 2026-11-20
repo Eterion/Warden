@@ -395,7 +395,7 @@ describe('OverviewPage', () => {
     expect(rows[0]!.text()).toContain('Asks to run a command');
     expect(rows[1]!.find('button[aria-label*=subagents]').attributes('aria-label')).toBe('2 subagents: Explore, Plan');
     expect(rows[1]!.text()).toContain('30m');
-    expect(page.get('[aria-label="Sessions shown by state"]').text().replace(/s+/g, ' ')).toBe(
+    expect(page.get('[aria-label="Sessions shown by state"]').text().replace(/\s+/g, ' ')).toBe(
       '1 working 1 waiting for you 1 idle',
     );
     expect(page.text()).not.toContain('Session off');
@@ -586,15 +586,16 @@ describe('OverviewPage', () => {
       return st;
     }
     const toggle = (page: ReturnType<typeof mount>) => page.find('[data-quiet-toggle]');
-    const box = (page: ReturnType<typeof mount>) => toggle(page).get('[role=checkbox]');
+    const box = (page: ReturnType<typeof mount>) => toggle(page).get('[role=switch]');
     const names = (page: ReturnType<typeof mount>) => sessionRows(page).map((r) => r.findAll('[role=cell]')[1]!.text());
 
-    it('shows only while there is such a session, with how many after the account filter', async () => {
+    it('is a small switch that always shows, with how many after the account filter, 0 too', async () => {
       store.state = quietState();
       const page = mount(OverviewPage);
       expect(toggle(page).text().replace(/\s+/g, ' ')).toBe('Ended and not known 3');
       expect(box(page).attributes('aria-checked')).toBe('true');
-      // A labelled checkbox at the right end, after the counts.
+      expect(box(page).classes()).toContain('h-4');
+      // A labelled switch at the right end, after the counts.
       const right = page.get('#sessions-heading').element.parentElement!.lastElementChild!;
       expect(right.firstElementChild!.getAttribute('aria-label')).toBe('Sessions shown by state');
       expect(right.lastElementChild).toBe(toggle(page).element);
@@ -605,7 +606,9 @@ describe('OverviewPage', () => {
       const st = quietState();
       st.sessions = st.sessions.filter((s) => s.state !== 'done' && s.source !== 'list');
       store.state = st;
-      expect(toggle(mount(OverviewPage)).exists()).toBe(false);
+      const none = mount(OverviewPage);
+      expect(toggle(none).text().replace(/\s+/g, ' ')).toBe('Ended and not known 0');
+      expect(box(none).attributes('aria-checked')).toBe('true');
     });
 
     it('hides ended and not-known rows while off, keeping a faded parent of a shown one, and the counts', () => {
@@ -731,7 +734,8 @@ describe('OverviewPage', () => {
       }),
     ]);
     const list = mount(OverviewPage).get('[aria-labelledby=resets-heading]');
-    expect(list.get('h2').text()).toBe('Limit resets');
+    // The heading counts the resets shown.
+    expect(list.get('h2').text().replace(/\s+/g, ' ')).toBe('Limit resets 1');
     const items = list.findAll('li');
     expect(items).toHaveLength(1);
     expect(items[0]!.text()).toContain('Codex');
@@ -769,6 +773,197 @@ describe('OverviewPage', () => {
     store.state = { ...st, settings: { ...st.settings, resetWarningDays: 1 } };
     items = list().findAll('li');
     expect(items.some((i) => i.find('[data-expires-soon]').exists())).toBe(false);
+  });
+
+  describe('the limit resets filter', () => {
+    const DAY = 24 * HOUR;
+    function filterState(hidden: string[] = [], soonestOnly = false) {
+      store.now = NOW;
+      const st = state([
+        account({
+          id: 'main',
+          label: 'Main',
+          resets: [
+            { id: 'm1', title: 'Full reset', expiresAt: NOW + 2 * DAY },
+            { id: 'm2', title: '5-hour reset', expiresAt: NOW + 9 * DAY },
+          ],
+        }),
+        account({
+          id: 'c',
+          label: 'Codex',
+          provider: 'codex',
+          resets: [
+            { id: 'c1', title: 'Full reset (Weekly + 5 hr)', expiresAt: NOW + 5 * DAY },
+            { id: 'c2', title: 'Full reset (Weekly + 5 hr)', expiresAt: NOW + 12 * DAY },
+          ],
+        }),
+        account({ id: 'n', label: 'No resets' }),
+      ]);
+      st.settings = { ...st.settings, hiddenResetAccounts: hidden, soonestResetOnly: soonestOnly };
+      return st;
+    }
+    const list = (page: ReturnType<typeof mount>) => page.get('[aria-labelledby=resets-heading]');
+    const titles = (page: ReturnType<typeof mount>) =>
+      list(page)
+        .findAll('li')
+        .map((i) => i.text());
+    const hidden = (page: ReturnType<typeof mount>) => list(page).find('[data-resets-hidden]');
+    async function openFilter(page: ReturnType<typeof mount>) {
+      await page.get('button[aria-label="Filter limit resets"]').trigger('keydown', { key: 'Enter' });
+      await flushPromises();
+      return page.findAll('[role=menuitemcheckbox]');
+    }
+
+    it("counts each account's resets in the menu whatever the filter leaves out", async () => {
+      const st = filterState(['c'], true);
+      st.accounts = st.accounts.map((a) =>
+        a.id === 'c'
+          ? { ...a, resets: [...a.resets, { id: 'c3', title: 'Full reset', expiresAt: NOW + 20 * DAY }] }
+          : a,
+      );
+      store.state = st;
+      const page = mount(OverviewPage, { attachTo: document.body });
+      // Only Main's soonest shows, and the heading counts just it.
+      expect(list(page).get('[data-resets-shown]').text()).toBe('1');
+      const items = await openFilter(page);
+      expect(items.slice(0, 2).map((i) => i.get('[data-reset-count]').text())).toEqual(['2', '3']);
+      page.unmount();
+    });
+
+    it("offers each account with a reset, and only each one's soonest, all shown at first", async () => {
+      store.state = filterState();
+      const page = mount(OverviewPage, { attachTo: document.body });
+      expect(titles(page)).toHaveLength(4);
+      expect(hidden(page).exists()).toBe(false);
+      const items = await openFilter(page);
+      // Each account with how many resets it has (said in full to a screen reader).
+      expect(items.map((i) => i.text().replace(/\s+/g, ' '))).toEqual([
+        'Main 2, 2 resets',
+        'Codex 2, 2 resets',
+        'Only the soonest per account',
+      ]);
+      expect(items[0]!.get('[data-reset-count]').text()).toBe('2');
+      expect(items.map((i) => i.attributes('aria-checked'))).toEqual(['true', 'true', 'false']);
+      // The menu sits inside the list's section.
+      expect(list(page).find('[role=menu]').exists()).toBe(true);
+      page.unmount();
+    });
+
+    it('saves a choice and stays open for the next', async () => {
+      store.state = filterState(['n']);
+      const calls = fakeServer(() => store.state!);
+      const page = mount(OverviewPage, { attachTo: document.body });
+      let items = await openFilter(page);
+      await items[1]!.trigger('click');
+      await flushPromises();
+      // An id no account with a reset has (here one without resets) stays as it was.
+      expect(calls.at(-1)).toEqual({
+        method: 'PUT',
+        path: '/api/settings',
+        body: { hiddenResetAccounts: ['n', 'c'] },
+      });
+      // Focus stays in the menu: what the list shows now is said aloud.
+      expect(page.get('[role=status]').text()).toBe('2 resets shown, 2 hidden.');
+      items = page.findAll('[role=menuitemcheckbox]');
+      expect(items).toHaveLength(3);
+      await items[2]!.trigger('click');
+      await flushPromises();
+      expect(calls.at(-1)!.body).toEqual({ soonestResetOnly: true });
+
+      store.state = filterState(['main', 'c']);
+      await flushPromises();
+      await page.findAll('[role=menuitemcheckbox]')[0]!.trigger('click');
+      await flushPromises();
+      expect(calls.at(-1)!.body).toEqual({ hiddenResetAccounts: ['c'] });
+      page.unmount();
+    });
+
+    it('leaves out the hidden accounts and all but the soonest, saying how many', () => {
+      store.state = filterState(['main']);
+      let page = mount(OverviewPage);
+      expect(titles(page).every((t) => t.includes('Codex'))).toBe(true);
+      expect(titles(page)).toHaveLength(2);
+      expect(hidden(page).text()).toBe('2 hidden');
+      expect(list(page).get('[data-resets-shown]').text()).toBe('2');
+
+      store.state = filterState([], true);
+      page = mount(OverviewPage);
+      expect(titles(page).map((t) => (t.includes('Codex') ? 'Codex' : 'Main'))).toEqual(['Main', 'Codex']);
+      expect(titles(page)[1]).toContain('Expires');
+      expect(hidden(page).text()).toBe('2 hidden');
+    });
+
+    it('keeps the list and its filter while the filter leaves out every reset, saying so in the list', async () => {
+      store.state = filterState(['main', 'c']);
+      const page = mount(OverviewPage, { attachTo: document.body });
+      const rows = list(page).findAll('li');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.attributes('data-resets-all-hidden')).toBeDefined();
+      expect(rows[0]!.text()).toBe('The filter leaves out every reset.');
+      expect(hidden(page).text()).toBe('4 hidden');
+      expect(list(page).get('[data-resets-shown]').text()).toBe('0');
+      const items = await openFilter(page);
+      expect(items.map((i) => i.attributes('aria-checked'))).toEqual(['false', 'false', 'false']);
+      page.unmount();
+    });
+
+    /** Answers each PUT only when the test says so, echoing the settings it was sent; the rest at once. */
+    function slowSettings() {
+      const sent: unknown[] = [];
+      const answers: (() => void)[] = [];
+      vi.stubGlobal('fetch', async (_path: string, init: RequestInit = {}) => {
+        const ok = (body: unknown) =>
+          new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        if ((init.method ?? 'GET') !== 'PUT') return ok(store.state);
+        const patch = JSON.parse(init.body as string) as Record<string, unknown>;
+        sent.push(patch);
+        return new Promise<Response>((resolve) =>
+          answers.push(() => resolve(ok({ ...store.state!, settings: { ...store.state!.settings, ...patch } }))),
+        );
+      });
+      return { sent, answers };
+    }
+
+    it('keeps two quick choices, saving them one after another', async () => {
+      store.state = filterState();
+      const { sent, answers } = slowSettings();
+      const page = mount(OverviewPage, { attachTo: document.body });
+      await openFilter(page);
+      await page.findAll('[role=menuitemcheckbox]')[0]!.trigger('click');
+      await page.findAll('[role=menuitemcheckbox]')[1]!.trigger('click');
+      await flushPromises();
+      // Both show at once; the second waits for the first's answer.
+      expect(page.findAll('[role=menuitemcheckbox]').map((i) => i.attributes('aria-checked'))).toEqual([
+        'false',
+        'false',
+        'false',
+      ]);
+      expect(sent).toEqual([{ hiddenResetAccounts: ['main'] }]);
+      answers.shift()!();
+      await flushPromises();
+      expect(sent).toEqual([{ hiddenResetAccounts: ['main'] }, { hiddenResetAccounts: ['main', 'c'] }]);
+      // The first answer (Codex still shown) never undoes the second choice meanwhile.
+      expect(page.findAll('[role=menuitemcheckbox]')[1]!.attributes('aria-checked')).toBe('false');
+      answers.shift()!();
+      await flushPromises();
+      expect(store.state!.settings.hiddenResetAccounts).toEqual(['main', 'c']);
+      expect(list(page).text()).toContain('The filter leaves out every reset.');
+      expect(page.get('[role=status]').text()).toBe('The filter leaves out every reset.');
+      page.unmount();
+    });
+
+    it("keeps a switched-off account's choice when another changes", async () => {
+      const st = filterState(['p']);
+      st.accounts = [...st.accounts, account({ id: 'p', label: 'Personal', enabled: false })];
+      store.state = st;
+      const calls = fakeServer(() => store.state!);
+      const page = mount(OverviewPage, { attachTo: document.body });
+      await openFilter(page);
+      await page.findAll('[role=menuitemcheckbox]')[0]!.trigger('click');
+      await flushPromises();
+      expect(calls.at(-1)!.body).toEqual({ hiddenResetAccounts: ['p', 'main'] });
+      page.unmount();
+    });
   });
 
   describe('using a limit reset', () => {
@@ -1065,6 +1260,125 @@ describe('OverviewPage', () => {
       await flushPromises();
       await flushPromises();
     }
+
+    it('applies the filter to the other rows while a used one turns to dust', async () => {
+      let finish: () => void = () => {};
+      stubMotion(true, new Promise<void>((r) => (finish = r)));
+      store.state = withResets();
+      const after = withResets([FULL, FULL, { id: null, title: 'Old', expiresAt: NOW + 4 * DAY }]);
+      fakeServer(() => after);
+      const page = mount(OverviewPage, { attachTo: document.body });
+      await useWithKeyboard(page, 'Use 5-hour reset on Main');
+      // Still going: Codex is left out now, and its row with its Use button goes at once; the used row stays.
+      after.settings = { ...after.settings, hiddenResetAccounts: ['c'] };
+      await page.get('button[aria-label="Filter limit resets"]').trigger('keydown', { key: 'Enter' });
+      await flushPromises();
+      await page.findAll('[role=menuitemcheckbox]')[1]!.trigger('click');
+      await flushPromises();
+      expect(page.find('[aria-label="Use Full reset (Weekly + 5 hr) on Codex"]').exists()).toBe(false);
+      expect(page.findAll('[data-reset-key]').some((r) => r.text().includes('5-hour reset'))).toBe(true);
+      // The heading counts the rows shown, not the one going.
+      expect(page.get('[data-resets-shown]').text()).toBe('3');
+      finish();
+      await flushPromises();
+      await flushPromises();
+      expect(page.findAll('[data-reset-key]').some((r) => r.text().includes('Codex'))).toBe(false);
+      page.unmount();
+    });
+
+    it('shows at once, while a used row turns to dust, rows the filter left out before the use', async () => {
+      let finish: () => void = () => {};
+      stubMotion(true, new Promise<void>((r) => (finish = r)));
+      const before = withResets();
+      before.settings = { ...before.settings, hiddenResetAccounts: ['c'], soonestResetOnly: true };
+      store.state = before;
+      const after = withResets([FULL, FULL, { id: null, title: 'Old', expiresAt: NOW + 4 * DAY }]);
+      after.settings = { ...before.settings };
+      fakeServer(() => after);
+      const page = mount(OverviewPage, { attachTo: document.body });
+      expect(page.findAll('[data-reset-key]')).toHaveLength(1);
+      await useWithKeyboard(page, 'Use Full reset on Main');
+      // Still going: Codex ticked again, and all of each account's resets, show now beside the used row.
+      after.settings = { ...after.settings, hiddenResetAccounts: [] };
+      await page.get('button[aria-label="Filter limit resets"]').trigger('keydown', { key: 'Enter' });
+      await flushPromises();
+      await page.findAll('[role=menuitemcheckbox]')[1]!.trigger('click');
+      await flushPromises();
+      expect(page.find('[aria-label="Use Full reset (Weekly + 5 hr) on Codex"]').exists()).toBe(true);
+      after.settings = { ...after.settings, soonestResetOnly: false };
+      await page.findAll('[role=menuitemcheckbox]')[2]!.trigger('click');
+      await flushPromises();
+      expect(page.findAll('[aria-label="Use 5-hour reset on Main"]')).toHaveLength(1);
+      finish();
+      await flushPromises();
+      await flushPromises();
+      page.unmount();
+    });
+
+    it("never takes a filter save's answer older than a reset used meanwhile", async () => {
+      stubMotion(false);
+      store.state = withResets([SESSION]);
+      const used = { ...withResets([]), revision: 5 };
+      let answerSave: () => void = () => {};
+      vi.stubGlobal('fetch', async (path: string) => {
+        const ok = (body: unknown) =>
+          new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        if (path === '/api/settings') {
+          // Answered late, by the state as it was then: the reset still there.
+          const then = { ...withResets([SESSION]), revision: 4 };
+          then.settings = { ...then.settings, soonestResetOnly: true };
+          return new Promise<Response>((r) => (answerSave = () => r(ok(then))));
+        }
+        return ok(used);
+      });
+      const page = mount(OverviewPage, { attachTo: document.body });
+      await page.get('button[aria-label="Filter limit resets"]').trigger('keydown', { key: 'Enter' });
+      await flushPromises();
+      await page.findAll('[role=menuitemcheckbox]')[2]!.trigger('click');
+      await flushPromises();
+      await page.get('button[aria-label="Filter limit resets"]').trigger('keydown', { key: 'Escape' });
+      await useWithKeyboard(page, 'Use 5-hour reset on Main');
+      await flushPromises();
+      answerSave();
+      await flushPromises();
+      expect(store.state!.revision).toBe(5);
+      expect(page.find('[aria-label="Use 5-hour reset on Main"]').exists()).toBe(false);
+      page.unmount();
+    });
+
+    it("gives focus to the account's next reset when the filter shows it only once the used one goes", async () => {
+      stubMotion(false);
+      const one = withResets([FULL, SESSION]);
+      one.accounts = one.accounts.map((a) => (a.id === 'c' ? { ...a, resets: [] } : a));
+      one.settings = { ...one.settings, soonestResetOnly: true };
+      store.state = one;
+      const next = withResets([SESSION]);
+      next.accounts = next.accounts.map((a) => (a.id === 'c' ? { ...a, resets: [] } : a));
+      next.settings = { ...next.settings, soonestResetOnly: true };
+      fakeServer(() => next);
+      const page = mount(OverviewPage, { attachTo: document.body });
+      expect(useButtons(page)).toHaveLength(1);
+      await useWithKeyboard(page, 'Use Full reset on Main');
+      await flushPromises();
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Use 5-hour reset on Main');
+      page.unmount();
+    });
+
+    it('gives focus to the filter when every reset left is filtered out', async () => {
+      stubMotion(false);
+      const one = withResets([FULL]);
+      one.settings = { ...one.settings, hiddenResetAccounts: ['c'] };
+      store.state = one;
+      const next = withResets([]);
+      next.settings = { ...next.settings, hiddenResetAccounts: ['c'] };
+      fakeServer(() => next);
+      const page = mount(OverviewPage, { attachTo: document.body });
+      await useWithKeyboard(page, 'Use Full reset on Main');
+      await flushPromises();
+      expect(page.find('[data-resets-all-hidden]').exists()).toBe(true);
+      expect(document.activeElement).toBe(page.get('button[aria-label="Filter limit resets"]').element);
+      page.unmount();
+    });
 
     it('takes the answer at once, and an update during the animation is not undone when it ends', async () => {
       let finish: () => void = () => {};

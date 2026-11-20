@@ -423,9 +423,13 @@ body {
   }
 }
 
-/* Menus hug their items, within the window. */
+/* Menus hug their items, within the window; a menu taller than the room left scrolls. */
 @utility max-w-menu {
   max-width: var(--reka-dropdown-menu-content-available-width, 100vw);
+}
+
+@utility max-h-menu {
+  max-height: var(--reka-dropdown-menu-content-available-height, 100vh);
 }
 
 @utility origin-menu {

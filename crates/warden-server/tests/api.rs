@@ -892,6 +892,12 @@ fn an_update_shows_in_the_state_and_installs_only_when_ready_in_the_desktop_app(
     let desktop = std::sync::Arc::new(FakeDesktop::default());
     let server = f.start_with(Some(desktop.clone()));
     let addr = server.addr;
+    // The usage loop's first reading bumps the revision as it lands (its `lastRead` set under the same lock as its last
+    // bump), and the loop then waits its interval: the revision checks below start once it has, so only the update
+    // changes it.
+    eventually("the first usage reading", || {
+        !state(addr)["lastRead"].is_null()
+    });
     let installs = || desktop.installs.load(std::sync::atomic::Ordering::SeqCst);
     assert_eq!(state(addr)["update"], Value::Null);
     assert_eq!(call(addr, "POST", "/api/update/install", None).status, 409);

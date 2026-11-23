@@ -76,10 +76,10 @@ const CELL =
     <PopoverTrigger ref="trigger" as-child>
       <button
         type="button"
-        class="inline-flex h-9 min-w-60 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-lg px-3 text-16 font-semibold text-text hov:bg-chip-off press:bg-press focus-visible:outline-2 focus-visible:outline-indicator data-[state=open]:bg-chip-off data-[state=open]:press:bg-press"
+        class="inline-flex h-9 min-w-60 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-lg px-3 text-14 font-semibold text-text hov:bg-chip-off press:bg-press focus-visible:outline-2 focus-visible:outline-indicator data-[state=open]:bg-chip-off data-[state=open]:press:bg-press"
         data-day-picker
       >
-        <CalendarDays class="size-4.5 text-icon" aria-hidden="true" />
+        <CalendarDays class="size-4 text-icon" aria-hidden="true" />
         <span data-day>{{ dayTitle(props.day, props.today) }}</span>
         <ChevronDown class="size-3.5 text-icon" aria-hidden="true" />
       </button>

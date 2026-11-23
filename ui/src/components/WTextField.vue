@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // A one-line text field. Text is a name in medium weight; path is a folder or program path in mono; search adds the
 // magnifier and a hidden label, and takes the caller's classes on that label. The caller sets the width.
-import { Search } from 'lucide-vue-next';
+import { Search } from '@lucide/vue';
 import { vLabelState } from './labels';
 
 defineOptions({ inheritAttrs: false });

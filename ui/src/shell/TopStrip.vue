@@ -4,7 +4,7 @@
 // it), Warden's order of the accounts, and what main keeps for the user and why.
 // Then "Usage read N min ago", which reads usage again on click. In the desktop app the strip also moves the window
 // (there is no classic title bar) and ends with the window's own controls, Close in red on hover.
-import { CloudOff, Copy, Hourglass, Minus, RefreshCw, Square, X } from 'lucide-vue-next';
+import { CloudOff, Copy, Hourglass, Minus, RefreshCw, Square, X } from '@lucide/vue';
 import { computed } from 'vue';
 import ProviderMark from '../components/ProviderMark.vue';
 import WButton from '../components/WButton.vue';

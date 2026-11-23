@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // The Settings modal: its own sidebar with the sections (General and Accounts) and a search box.
-import { ChevronRight, CircleUserRound, Plus, Settings, X } from 'lucide-vue-next';
+import { ChevronRight, CircleUserRound, Plus, Settings, X } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
 import AppModal from '../components/AppModal.vue';
 import NavItem from '../components/NavItem.vue';

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // A chip that a click removes; the label names that action. md is an item the user added, shown on like a pressed
 // toggle chip; sm is a filter in force, beside a heading.
-import { Check, X } from 'lucide-vue-next';
+import { Check, X } from '@lucide/vue';
 
 const props = withDefaults(defineProps<{ label: string; size?: 'md' | 'sm' }>(), { size: 'md' });
 </script>

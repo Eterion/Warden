@@ -4,7 +4,7 @@
 // the desktop app, Warden's name opens the app menu (Settings, Accounts, Quit) and the row around it moves the window.
 // In a window too short for all of it, the sidebar scrolls on its own (`relative`, so nothing positioned inside reaches
 // past it).
-import { ChevronDown, CircleUserRound, LayoutDashboard, MemoryStick, Plus, Power, Settings } from 'lucide-vue-next';
+import { ChevronDown, CircleUserRound, LayoutDashboard, MemoryStick, Plus, Power, Settings } from '@lucide/vue';
 import { DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger } from 'reka-ui';
 import { computed, useTemplateRef } from 'vue';
 import NavItem from '../components/NavItem.vue';

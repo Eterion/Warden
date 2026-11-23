@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // First-run setup, one screen: main (the Claude app's account, where Warden installs its hooks), Warden's own sign-in
 // for main's usage (now or later), the other account folders found, ticked, then Start. Skip, or Escape, installs nothing.
-import { Check } from 'lucide-vue-next';
+import { Check } from '@lucide/vue';
 import { useElementSize, useScroll } from '@vueuse/core';
 import { computed, ref, useTemplateRef, watch } from 'vue';
 import { api, type Candidate } from '../api';

@@ -3,7 +3,7 @@
 // account's status hook. The Hooks column always says how each account's hooks are; the sign-in, usage and CLI say
 // something only when something is wrong, in amber, with the fix beside it. Under the table, main's reserve and the
 // work hours it shrinks with.
-import { Check, Pencil, Trash2 } from 'lucide-vue-next';
+import { Check, Pencil, Trash2 } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
 import { api, type Account, type WorkHours } from '../api';
 import AccountIcon from '../components/AccountIcon.vue';

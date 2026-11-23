@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // A chip that is on or off (aria-pressed). Filled shows a check when on, for a set of options that each count;
 // outline is a quieter pick from a list, its text cut short to fit.
-import { Check } from 'lucide-vue-next';
+import { Check } from '@lucide/vue';
 
 const props = withDefaults(defineProps<{ pressed: boolean; look?: 'filled' | 'outline' }>(), { look: 'filled' });
 </script>

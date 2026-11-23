@@ -3,7 +3,7 @@
 // account checkboxes), an optional mark after it (`mark` slot, an account's provider mark), its label, which wraps
 // within the menu when it is long, and an optional count at the end (`end` slot, small, secondary). Choosing it keeps the menu open, so several can be ticked in a row. Keyboard focus
 // shows the focus outline inside the row.
-import { Check } from 'lucide-vue-next';
+import { Check } from '@lucide/vue';
 import { DropdownMenuCheckboxItem } from 'reka-ui';
 
 const checked = defineModel<boolean>({ required: true });

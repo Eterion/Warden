@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // A session's subagents: the robot and their count. Hovering or focusing it lists their types.
-import { Bot } from 'lucide-vue-next';
+import { Bot } from '@lucide/vue';
 import { TooltipContent, TooltipPortal, TooltipProvider, TooltipRoot, TooltipTrigger } from 'reka-ui';
 
 const props = defineProps<{ label: string; count: number }>();

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // The "more actions" menu on a row. Each item has a Lucide icon; destructive ones (`danger`) are red. Inside a
 // modal the menu is drawn into it.
-import { Ellipsis } from 'lucide-vue-next';
+import { Ellipsis } from '@lucide/vue';
 import { DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from 'reka-ui';
 import { useTemplateRef, type Component } from 'vue';
 import { usePortalTarget } from './portal';

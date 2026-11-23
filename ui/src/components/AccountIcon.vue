@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // An account's provider mark; only fixed main has a crown.
-import { Crown } from 'lucide-vue-next';
+import { Crown } from '@lucide/vue';
 import type { Account } from '../api';
 import { badgeLabel } from '../format';
 import ProviderMark from './ProviderMark.vue';

@@ -3,7 +3,7 @@
 // Warden downloads, then one "Install and restart" button. It asks first; on yes the same modal blocks the app while
 // the update installs, until Warden closes for the installer and starts again. If the installer cannot start, the
 // modal says why and asks again. Nothing while there is no update.
-import { CircleFadingArrowUp } from 'lucide-vue-next';
+import { CircleFadingArrowUp } from '@lucide/vue';
 import { computed, nextTick, ref } from 'vue';
 import { ApiError, api } from '../api';
 import AppModal from '../components/AppModal.vue';

@@ -8,7 +8,7 @@
 // soonest, saying how many it hides. Each has Use: confirmed in a modal, it is sent, and once used its row turns to
 // dust and the list closes the gap (only a quick fade with reduced motion).
 import { usePreferredReducedMotion } from '@vueuse/core';
-import { Check, Hourglass, ListFilter } from 'lucide-vue-next';
+import { Check, Hourglass, ListFilter } from '@lucide/vue';
 import { DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger } from 'reka-ui';
 import { computed, nextTick, reactive, ref, shallowRef, useTemplateRef } from 'vue';
 import { ApiError, api, type Account, type Session, type State } from '../api';

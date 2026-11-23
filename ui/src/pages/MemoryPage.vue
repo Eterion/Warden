@@ -7,7 +7,7 @@
 // panel without a box, and the table: the chart's legend and accessible equivalent, a checkbox per row leaving its band out (on this page only),
 // hovering a row darkening its band. Today's page follows each new sample through its own long poll, paused while the
 // window is hidden; a past day is read once.
-import { Check, ChevronLeft, ChevronRight } from 'lucide-vue-next';
+import { Check, ChevronLeft, ChevronRight } from '@lucide/vue';
 import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue';
 import { ApiError, api, type MemoryDay } from '../api';
 import AccountIcon from '../components/AccountIcon.vue';

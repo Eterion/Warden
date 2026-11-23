@@ -1,6 +1,6 @@
 // Behaviour of the shared components: keyboard, aria-*, focusable disabled controls and what a click does.
 import { flushPromises, mount } from '@vue/test-utils';
-import { Folder } from 'lucide-vue-next';
+import { Folder } from '@lucide/vue';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defineComponent, h, nextTick, ref, type VNodeChild } from 'vue';
 import AppModal from './AppModal.vue';

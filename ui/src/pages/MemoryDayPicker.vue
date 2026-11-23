@@ -5,7 +5,7 @@
 // no further than this one. Picking a day goes to its address and closes the popover, and focus goes back to the
 // button. The keyboard is Reka's: arrows between days, Page Up and Page Down between months, Enter to pick.
 import { parseDate, type DateValue } from '@internationalized/date';
-import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-vue-next';
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight } from '@lucide/vue';
 import {
   CalendarCell,
   CalendarCellTrigger,

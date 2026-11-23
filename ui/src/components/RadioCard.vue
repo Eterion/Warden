@@ -5,7 +5,7 @@
 // A card that cannot be chosen says why (`disabledReason`): it stays focusable (and in the arrow-key order) with
 // `aria-disabled`, shows the reason in the shared tooltip on hover and keyboard focus, and choosing it does nothing.
 // Only its content fades, never its focus ring, and it has no hover or pressed state.
-import { Check } from 'lucide-vue-next';
+import { Check } from '@lucide/vue';
 import { createReusableTemplate } from '@vueuse/core';
 import { RadioGroupItem } from 'reka-ui';
 import { computed } from 'vue';

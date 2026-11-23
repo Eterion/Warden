@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Add a new account through its official sign-in, or an existing Warden folder.
-import { FolderOpen } from 'lucide-vue-next';
+import { FolderOpen } from '@lucide/vue';
 import { RadioGroupRoot } from 'reka-ui';
 import { computed, ref, watch } from 'vue';
 import { api, type Candidate, type Provider } from '../api';

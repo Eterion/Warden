@@ -3,7 +3,7 @@
 // "Cancel". While it is sent, "Use reset" shows busy and the modal stays open (neither Escape nor a click beside it
 // closes it); the server's refusal shows in the modal and the reset stays; once it is used, the modal closes and its row
 // goes. Sending is the caller's (`send`, answering an error sentence or null), so the row's exit can follow.
-import { RotateCw } from 'lucide-vue-next';
+import { RotateCw } from '@lucide/vue';
 import { ref, watch } from 'vue';
 import type { ResetRow } from '../format';
 import { resetEffect } from '../format';

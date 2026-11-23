@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils';
-import { MemoryStick } from 'lucide-vue-next';
+import { MemoryStick } from '@lucide/vue';
 import { describe, expect, it } from 'vitest';
 import OwlIcon from './OwlIcon.vue';
 
@@ -33,9 +33,9 @@ describe('OwlIcon', () => {
       'stroke-linejoin': 'round',
       width: '24',
     });
-    // Only the pupils are filled, in the same colour.
-    const filled = svg.findAll('[fill]');
-    expect(filled.map((e) => e.attributes('fill'))).toEqual(['currentColor', 'currentColor']);
-    expect(svg.findAll('path')).toHaveLength(4);
+    // Only the outline: one path, nothing filled inside it.
+    expect(svg.findAll('path')).toHaveLength(1);
+    expect(svg.findAll('circle')).toHaveLength(0);
+    expect(svg.findAll('path [fill], path[fill]')).toHaveLength(0);
   });
 });

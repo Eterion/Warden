@@ -4,7 +4,7 @@
 // small label, the number and a muted detail: the AI sessions now (today) and their share of the computer, the peak
 // and its time, the computer's memory in use of its total with a slim meter (the AI sessions' part of it marked in the
 // text colour; the bar, the number and the share amber above 90% in use), and Warden itself.
-import { ArrowUpToLine, MemoryStick, Monitor } from 'lucide-vue-next';
+import { CpuAi, Monitor, Mountain } from '@lucide/vue';
 import { computed } from 'vue';
 import OwlIcon from '../components/OwlIcon.vue';
 import WTooltip from '../components/WTooltip.vue';
@@ -26,7 +26,7 @@ const ICON = 'absolute top-1/2 left-4 size-8 -translate-y-1/2 text-secondary';
     <dl class="-mt-px -ml-px grid grid-cols-figures" data-figures>
       <div v-if="props.today" class="relative border-t border-l border-divider py-3 pr-4 pl-16" data-figure="now">
         <dt class="text-12 text-secondary">
-          <MemoryStick :class="ICON" :stroke-width="1.5" aria-hidden="true" />AI sessions now
+          <CpuAi :class="ICON" :stroke-width="1.5" aria-hidden="true" />AI sessions now
         </dt>
         <dd class="text-16 font-semibold tabular-nums">{{ size(props.figures.now ?? 0) }}</dd>
         <dd v-if="props.total" class="text-12 text-tertiary tabular-nums">
@@ -38,9 +38,7 @@ const ICON = 'absolute top-1/2 left-4 size-8 -translate-y-1/2 text-secondary';
       </div>
       <div class="relative border-t border-l border-divider py-3 pr-4 pl-16" data-figure="peak">
         <dt class="text-12 text-secondary">
-          <ArrowUpToLine :class="ICON" :stroke-width="1.5" aria-hidden="true" />{{
-            props.today ? 'Peak today' : 'Peak'
-          }}
+          <Mountain :class="ICON" :stroke-width="1.5" aria-hidden="true" />{{ props.today ? 'Peak today' : 'Peak' }}
         </dt>
         <dd class="text-16 font-semibold tabular-nums">{{ size(props.figures.peak ?? 0) }}</dd>
         <dd v-if="props.figures.peakAt !== null && props.figures.peak" class="text-12 text-tertiary tabular-nums">

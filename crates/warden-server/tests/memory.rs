@@ -195,7 +195,8 @@ fn todays_memory_is_followed_through_its_wait() {
     let last = minutes.last().expect("a minute")["m"].as_u64().expect("m");
     assert!(next["summary"]["computerTotal"].as_u64().expect("total") > 0);
 
-    // Only the minutes from `after` on come back; the figures stay the whole day's.
+    // Only the minutes from `after` on come back, and the minute being gathered (still `last` here, or a later one);
+    // the figures stay the whole day's.
     let later = call(
         addr,
         "GET",
@@ -203,13 +204,15 @@ fn todays_memory_is_followed_through_its_wait() {
         None,
     )
     .json();
-    assert!(
-        later["minutes"]
-            .as_array()
-            .expect("minutes")
-            .iter()
-            .all(|m| m["m"].as_u64().expect("m") > last)
-    );
+    let ms: Vec<u64> = later["minutes"]
+        .as_array()
+        .expect("minutes")
+        .iter()
+        .map(|m| m["m"].as_u64().expect("m"))
+        .collect();
+    assert!(ms.iter().all(|&m| m >= last), "{ms:?}");
+    assert!(ms.iter().filter(|&&m| m == last).count() <= 1, "{ms:?}");
+    assert!(!ms.is_empty(), "the minute being gathered comes");
     assert_eq!(later["summary"]["first"], next["summary"]["first"]);
     assert!(
         later["days"]

@@ -3,7 +3,8 @@
 // "now" chip, then every account's sessions in one table, each delegated session under the main session that started
 // it. Checking accounts shows only their sessions, under their faded ancestors; the switch in the Sessions header hides
 // ended and not-known sessions (remembered), an ancestor of a shown one staying faded. Beside them (under them in a
-// narrow window), the limit resets the accounts can use, while there are any; one expiring within the warning days set
+// narrow window), today's memory (MemoryCard, a link to the Memory page), then the limit resets the accounts can use,
+// while there are any; one expiring within the warning days set
 // in Settings › General in amber. Its filter (remembered) leaves out accounts' resets, or all but each account's
 // soonest, saying how many it hides. Each has Use: confirmed in a modal, it is sent, and once used its row turns to
 // dust and the list closes the gap (only a quick fade with reduced motion).
@@ -61,6 +62,7 @@ import {
   type Point,
 } from '../sessions';
 import { act, apply, store, usedAccounts } from '../store';
+import MemoryCard from './MemoryCard.vue';
 
 const accounts = computed(() => usedAccounts(store.state));
 
@@ -728,95 +730,99 @@ function sessionAccount(s: Session): Account | undefined {
         </section>
       </div>
 
-      <section
-        v-if="resets.length || every.length"
-        ref="resetList"
-        aria-labelledby="resets-heading"
-        class="flex min-w-0 grow basis-72 flex-col gap-3"
-      >
-        <div class="flex items-center justify-between gap-3">
-          <h2
-            id="resets-heading"
-            ref="resetsHeading"
-            tabindex="-1"
-            class="rounded-xs text-16 font-semibold outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator"
-          >
-            Limit resets
-            <span class="ml-1 font-normal text-tertiary tabular-nums" data-resets-shown>{{ count(shownCount) }}</span>
-          </h2>
-          <!-- The filter: which accounts' resets show, and only each one's soonest; remembered. While it leaves some out,
+      <!-- The right column (under the rest in a narrow window): today's memory, then the limit resets while there are any. -->
+      <div class="flex min-w-0 grow basis-72 flex-col gap-4.5">
+        <MemoryCard />
+        <section
+          v-if="resets.length || every.length"
+          ref="resetList"
+          aria-labelledby="resets-heading"
+          class="flex flex-col gap-3"
+        >
+          <div class="flex items-center justify-between gap-3">
+            <h2
+              id="resets-heading"
+              ref="resetsHeading"
+              tabindex="-1"
+              class="rounded-xs text-16 font-semibold outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator"
+            >
+              Limit resets
+              <span class="ml-1 font-normal text-tertiary tabular-nums" data-resets-shown>{{ count(shownCount) }}</span>
+            </h2>
+            <!-- The filter: which accounts' resets show, and only each one's soonest; remembered. While it leaves some out,
                how many sits beside it. -->
-          <div class="flex items-center gap-2">
-            <span v-if="hiddenCount" class="text-12 text-secondary tabular-nums" data-resets-hidden
-              >{{ count(hiddenCount) }} hidden</span
-            >
-            <DropdownMenuRoot :modal="false">
-              <DropdownMenuTrigger as-child>
-                <WButton
-                  ref="filterButton"
-                  variant="quiet"
-                  size="sm"
-                  on="panel"
-                  :icon="ListFilter"
-                  aria-label="Filter limit resets"
-                  class="-my-0.5"
-                  >Filter</WButton
-                >
-              </DropdownMenuTrigger>
-              <!-- Kept inside the section, so the open menu stays within it. -->
-              <DropdownMenuPortal disabled>
-                <WMenuContent>
-                  <WMenuCheckboxItem
-                    v-for="a in resetAccounts"
-                    :key="a.id"
-                    :model-value="!hiddenResets.includes(a.id)"
-                    @update:model-value="showResetsOf(a.id, $event)"
+            <div class="flex items-center gap-2">
+              <span v-if="hiddenCount" class="text-12 text-secondary tabular-nums" data-resets-hidden
+                >{{ count(hiddenCount) }} hidden</span
+              >
+              <DropdownMenuRoot :modal="false">
+                <DropdownMenuTrigger as-child>
+                  <WButton
+                    ref="filterButton"
+                    variant="quiet"
+                    size="sm"
+                    on="panel"
+                    :icon="ListFilter"
+                    aria-label="Filter limit resets"
+                    class="-my-0.5"
+                    >Filter</WButton
                   >
-                    <template #mark><ProviderMark :provider="a.provider" size="sm" /></template>
-                    {{ a.label }}
-                    <template #end>
-                      <span aria-hidden="true" data-reset-count>{{ count(resetCounts.get(a.id) ?? 0) }}</span>
-                      <span class="sr-only">, {{ resetsText(resetCounts.get(a.id) ?? 0) }}</span>
-                    </template>
-                  </WMenuCheckboxItem>
-                  <DropdownMenuSeparator class="-mx-1 my-1 h-px bg-divider-strong" />
-                  <WMenuCheckboxItem :model-value="soonestOnly" @update:model-value="setSoonestOnly">
-                    Only the soonest per account
-                  </WMenuCheckboxItem>
-                </WMenuContent>
-              </DropdownMenuPortal>
-            </DropdownMenuRoot>
+                </DropdownMenuTrigger>
+                <!-- Kept inside the section, so the open menu stays within it. -->
+                <DropdownMenuPortal disabled>
+                  <WMenuContent>
+                    <WMenuCheckboxItem
+                      v-for="a in resetAccounts"
+                      :key="a.id"
+                      :model-value="!hiddenResets.includes(a.id)"
+                      @update:model-value="showResetsOf(a.id, $event)"
+                    >
+                      <template #mark><ProviderMark :provider="a.provider" size="sm" /></template>
+                      {{ a.label }}
+                      <template #end>
+                        <span aria-hidden="true" data-reset-count>{{ count(resetCounts.get(a.id) ?? 0) }}</span>
+                        <span class="sr-only">, {{ resetsText(resetCounts.get(a.id) ?? 0) }}</span>
+                      </template>
+                    </WMenuCheckboxItem>
+                    <DropdownMenuSeparator class="-mx-1 my-1 h-px bg-divider-strong" />
+                    <WMenuCheckboxItem :model-value="soonestOnly" @update:model-value="setSoonestOnly">
+                      Only the soonest per account
+                    </WMenuCheckboxItem>
+                  </WMenuContent>
+                </DropdownMenuPortal>
+              </DropdownMenuRoot>
+            </div>
           </div>
-        </div>
-        <WList>
-          <WListItem v-if="!resets.length" class="text-14 text-tertiary" data-resets-all-hidden>
-            The filter leaves out every reset.
-          </WListItem>
-          <WListItem v-for="r in resets" :key="r.key" :data-reset-key="r.key">
-            <AccountIcon :account="r.account" />
-            <span class="flex min-w-0 flex-1 flex-col">
-              <span class="truncate font-semibold">{{ r.account.label }}</span>
-              <span class="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                <span class="text-12 text-secondary">{{ r.title }}</span>
-                <WTag v-if="r.key === suggestedKey" data-suggested>Warden's suggestion</WTag>
+          <WList>
+            <WListItem v-if="!resets.length" class="text-14 text-tertiary" data-resets-all-hidden>
+              The filter leaves out every reset.
+            </WListItem>
+            <WListItem v-for="r in resets" :key="r.key" :data-reset-key="r.key">
+              <AccountIcon :account="r.account" />
+              <span class="flex min-w-0 flex-1 flex-col">
+                <span class="truncate font-semibold">{{ r.account.label }}</span>
+                <span class="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                  <span class="text-12 text-secondary">{{ r.title }}</span>
+                  <WTag v-if="r.key === suggestedKey" data-suggested>Warden's suggestion</WTag>
+                </span>
+                <span v-if="r.soon" class="flex items-center gap-1 text-12 font-medium text-attn" data-expires-soon>
+                  <Hourglass aria-hidden="true" class="size-3.5 shrink-0 text-attn-icon" />
+                  {{ expiryText(r.expiresAt, store.now, warnDays) }}
+                </span>
+                <span v-else class="text-12 text-tertiary">{{ expiryText(r.expiresAt, store.now, warnDays) }}</span>
               </span>
-              <span v-if="r.soon" class="flex items-center gap-1 text-12 font-medium text-attn" data-expires-soon>
-                <Hourglass aria-hidden="true" class="size-3.5 shrink-0 text-attn-icon" />
-                {{ expiryText(r.expiresAt, store.now, warnDays) }}
-              </span>
-              <span v-else class="text-12 text-tertiary">{{ expiryText(r.expiresAt, store.now, warnDays) }}</span>
-            </span>
-            <WButton
-              v-if="r.id"
-              size="sm"
-              data-use-reset
-              :aria-label="`Use ${r.title} on ${r.account.label}`"
-              @click="askToUse(r)"
-              >Use</WButton
-            >
-          </WListItem>
-        </WList>
-      </section>
+              <WButton
+                v-if="r.id"
+                size="sm"
+                data-use-reset
+                :aria-label="`Use ${r.title} on ${r.account.label}`"
+                @click="askToUse(r)"
+                >Use</WButton
+              >
+            </WListItem>
+          </WList>
+        </section>
+      </div>
       <p role="status" class="sr-only">{{ announced }}</p>
     </div>
     <UseResetModal v-model:open="confirming" :reset="using" :send="sendUse" :return-to="returnTo" />

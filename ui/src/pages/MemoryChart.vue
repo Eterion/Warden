@@ -1,24 +1,15 @@
 <script setup lang="ts">
-// The Memory page's chart, drawn by hand in SVG (no chart library), on the panel itself with no box around it: the
-// minutes across the day's recorded span along a baseline with ticks and time labels (`timeAxis`), memory up with three
-// faint gridlines labelled in GB, a stacked band per account (coloured by provider, greys for the groups,
+// The Memory page's chart, drawn by hand in SVG (MemoryPlot, no chart library), on the panel itself with no box around
+// it: the minutes across the day's recorded span along a baseline with ticks and time labels (`timeAxis`), memory up
+// with three faint gridlines labelled in GB, a stacked band per account (coloured by provider, greys for the groups,
 // the band of the hovered table row in chart-hover), each divided from the next by a thin line in the panel's colour,
 // and the minutes Warden was not running as an empty band, named on one line or two where that fits. A guide follows the pointer with a tooltip of the shown bands and their total at that minute; the chart
 // is a slider for the keyboard (the arrow keys move the guide a minute, Page Up and Page Down an hour, Home and End to
 // the first and last recording), its value the same words, so it works without a mouse; Escape hides the tooltip. The table under it is its accessible equivalent.
 import { useElementSize } from '@vueuse/core';
 import { computed, ref, useTemplateRef, watch } from 'vue';
-import {
-  CHART,
-  MISSING_TEXT,
-  bandPaths,
-  guideAt,
-  guideText,
-  timeAxis,
-  size,
-  type BandColour,
-  type ChartModel,
-} from '../memory';
+import { CHART, MISSING_TEXT, guideAt, guideText, timeAxis, size, type ChartModel } from '../memory';
+import MemoryPlot from './MemoryPlot.vue';
 
 const props = defineProps<{
   model: ChartModel;
@@ -30,41 +21,13 @@ const props = defineProps<{
   day: string;
 }>();
 
-const FILL: Record<BandColour, string> = {
-  'claude-1': 'fill-chart-claude-1',
-  'claude-2': 'fill-chart-claude-2',
-  'claude-3': 'fill-chart-claude-3',
-  'codex-1': 'fill-chart-codex-1',
-  'codex-2': 'fill-chart-codex-2',
-  'codex-3': 'fill-chart-codex-3',
-  'other-sign-in': 'fill-chart-other-sign-in',
-  left: 'fill-chart-left',
-};
-
 const box = useTemplateRef<HTMLElement>('box');
 const { width: boxWidth } = useElementSize(box);
 const width = computed(() => Math.max(0, Math.floor(boxWidth.value) - CHART.gutter));
 const span = computed(() => props.model.to - props.model.from);
 const x = (m: number) => CHART.gutter + ((m - props.model.from) / span.value) * width.value;
-const y = (kib: number) => CHART.top + (1 - kib / props.model.top) * (CHART.height - CHART.top);
 
-const paths = computed(() => bandPaths(props.model, width.value));
 const axis = computed(() => timeAxis(props.model, width.value));
-/** A gap's label: on one line where it fits, on two ("Warden", "not running") in a narrower gap, none in a sliver. */
-const GAP_ONE_LINE = 120;
-const GAP_TWO_LINES = 76;
-const gaps = computed(() =>
-  props.model.gaps
-    .map((g) => {
-      const w = x(g.to) - x(g.from);
-      const lines =
-        w >= GAP_ONE_LINE ? [MISSING_TEXT['not-running']] : w >= GAP_TWO_LINES ? ['Warden', 'not running'] : [];
-      return { ...g, x: x(g.from), w, lines };
-    })
-    .filter((g) => g.w > 0),
-);
-/** The plot's middle, where a gap's label sits. */
-const middle = CHART.top + (CHART.height - CHART.top) / 2;
 
 /** The guide's minute, any minute of the span: in a gap the guide says Warden was not running. */
 const at = ref<number | null>(null);
@@ -154,103 +117,14 @@ function onKey(e: KeyboardEvent): void {
     @blur="onBlur"
     @keydown="onKey"
   >
-    <svg
-      :width="CHART.gutter + width"
-      :height="CHART.height + CHART.axis"
-      class="block overflow-visible text-12"
-      aria-hidden="true"
-    >
-      <!-- Hours Warden was not running: an empty band, named where it fits. -->
-      <g v-for="g in gaps" :key="g.from">
-        <rect :x="g.x" :y="CHART.top" :width="g.w" :height="CHART.height - CHART.top" class="fill-chart-gap" />
-        <text
-          v-if="g.lines.length"
-          :x="g.x + g.w / 2"
-          :y="middle"
-          text-anchor="middle"
-          dominant-baseline="middle"
-          class="fill-tertiary"
-          data-not-running
-        >
-          <tspan
-            v-for="(line, i) in g.lines"
-            :key="line"
-            :x="g.x + g.w / 2"
-            :dy="i === 0 ? (-(g.lines.length - 1) * CHART.line) / 2 : CHART.line"
-          >
-            {{ line }}
-          </tspan>
-        </text>
-      </g>
-      <!-- Three faint gridlines, labelled in GB. -->
-      <g v-for="line in props.model.grid" :key="line.kib">
-        <line
-          :x1="CHART.gutter"
-          :x2="CHART.gutter + width"
-          :y1="y(line.kib)"
-          :y2="y(line.kib)"
-          class="stroke-divider-strong"
-          stroke-dasharray="2 3"
-        />
-        <text :x="CHART.gutter - 8" :y="y(line.kib)" text-anchor="end" dominant-baseline="middle" class="fill-tertiary">
-          {{ line.label }}
-        </text>
-      </g>
-      <!-- The bands, bottom first, each edged on top by a thin line in the panel's colour. -->
-      <g :transform="`translate(${CHART.gutter} 0)`">
-        <path
-          v-for="p in paths"
-          :key="p.key"
-          :d="p.area"
-          :class="props.hovered === p.key ? 'fill-chart-hover' : FILL[p.colour]"
-          :data-band="p.key"
-        />
-        <path
-          v-for="p in paths"
-          :key="`${p.key}-edge`"
-          :d="p.edge"
-          class="fill-none stroke-panel"
-          stroke-width="1"
-          stroke-linejoin="round"
-        />
-      </g>
-      <!-- The baseline over the bands' feet, its ticks (longer under a label) and the times. -->
-      <g data-axis>
-        <line
-          :x1="CHART.gutter"
-          :x2="CHART.gutter + width"
-          :y1="CHART.height + 0.5"
-          :y2="CHART.height + 0.5"
-          class="stroke-axis"
-        />
-        <line
-          v-for="t in axis.ticks"
-          :key="`tick-${t.m}`"
-          :x1="CHART.gutter + t.x"
-          :x2="CHART.gutter + t.x"
-          :y1="CHART.height + 0.5"
-          :y2="CHART.height + (t.major ? CHART.tick : CHART.tick / 2)"
-          class="stroke-axis"
-          :data-tick="t.major ? 'major' : 'minor'"
-        />
-        <text
-          v-for="t in axis.labels"
-          :key="t.m"
-          :x="CHART.gutter + t.x"
-          :y="CHART.height + CHART.axis - 2"
-          text-anchor="middle"
-          class="fill-tertiary"
-          data-axis-label
-        >
-          {{ t.label }}
-        </text>
-      </g>
-      <!-- The guide: a line in the text colour on a wider one in the panel's, so it stands out on every band. -->
-      <g v-if="guideX !== null" data-guide>
-        <line :x1="guideX" :x2="guideX" :y1="CHART.top" :y2="CHART.height" class="stroke-panel" stroke-width="3" />
-        <line :x1="guideX" :x2="guideX" :y1="CHART.top" :y2="CHART.height" class="stroke-text" stroke-width="1" />
-      </g>
-    </svg>
+    <MemoryPlot
+      :model="props.model"
+      :width="width"
+      :chart="CHART"
+      :axis="axis"
+      :hovered="props.hovered"
+      :guide-x="guideX"
+    />
     <div
       v-if="guide && guideX !== null && !dismissed"
       aria-hidden="true"

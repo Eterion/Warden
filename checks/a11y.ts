@@ -359,8 +359,10 @@ export const PAGES: {
     name: 'overview-resets',
     path: '/',
     fixture: 'resets',
-    // Main's Claude resets and Codex's banked resets, one of main's expiring inside the warning days (amber).
+    // Main's Claude resets and Codex's banked resets, one of main's expiring inside the warning days (amber), under the
+    // Memory card.
     ready: '[aria-labelledby=resets-heading] [data-expires-soon]',
+    steps: [{ waitFor: '[data-memory-card-chart] [data-band]' }],
     // Wide enough for the resets to stand beside the accounts and sessions.
     viewport: { width: 1600, height: 900 },
   },
@@ -391,6 +393,48 @@ export const PAGES: {
     path: '/',
     fixture: 'resetsAllHidden',
     ready: '[aria-labelledby=resets-heading] [data-resets-all-hidden]',
+    viewport: { width: 1600, height: 900 },
+  },
+  {
+    // The Memory card on its own in the right column (no limit resets): today's figures and the small chart.
+    name: 'overview-memory',
+    path: '/',
+    fixture: 'normal',
+    ready: '[data-memory-card-chart] [data-band]',
+    viewport: { width: 1600, height: 900 },
+  },
+  {
+    // A narrow window: the card under the accounts and sessions.
+    name: 'overview-memory-narrow',
+    path: '/',
+    fixture: 'normal',
+    ready: '[data-memory-card-chart] [data-band]',
+    viewport: { width: 800, height: 900 },
+  },
+  {
+    // No AI session ran today: the line in the chart's place.
+    name: 'overview-memory-none',
+    path: '/',
+    fixture: 'memoryQuiet',
+    ready: '[data-card-none]',
+    viewport: { width: 1600, height: 900 },
+  },
+  {
+    // The pointer on the small chart: the link lit as a row that acts.
+    name: 'overview-memory-hover',
+    path: '/',
+    fixture: 'resets',
+    ready: '[data-memory-card-chart] [data-band]',
+    steps: [{ hover: '[data-memory-card-chart]' }],
+    viewport: { width: 1600, height: 900 },
+  },
+  {
+    // The small chart from the keyboard: one link, its focus ring.
+    name: 'overview-memory-focus',
+    path: '/',
+    fixture: 'resets',
+    ready: '[data-memory-card-chart] [data-band]',
+    steps: [{ focus: '[data-memory-card-chart]' }],
     viewport: { width: 1600, height: 900 },
   },
   {

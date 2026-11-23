@@ -517,9 +517,9 @@ function alive(pid: number): boolean {
 /**
  * The desktop app, in a throwaway data and home folder (WebView2's profile goes into the data folder too), with
  * setup already done and no accounts. Also checks the window's lifecycle, since the budgets depend on it:
- * - Keep running in the tray off: the window open on the Memory page with a full day (the app and its WebView2
- *   processes, after the page loaded and sat
- *   idle) is measured; closing the window then quits Warden.
+ * - Keep running in the tray off: the window open on the Overview, then on the Memory page, with a full day (the app
+ *   and its WebView2 processes, after each page loaded and sat idle; the higher counts) is measured; closing the
+ *   window then quits Warden.
  * - On: closing the window leaves the app running alone (no WebView2 process: the window's memory is freed); that
  *   idle app is measured. Started as Windows would at sign-in, it opens no window.
  * Each window must load its page through the app's own scheme: the page, its styles and its first API answer, which
@@ -563,15 +563,20 @@ async function measureDesktop(): Promise<{ window: number; tray: number; trayCpu
       PAGE_LOADED.every((line) => log().includes(line)),
     );
   };
-  // With the Memory page open on a full day (1,440 minutes, 20 series), the heaviest page.
+  // With the Overview open on a full day (1,440 minutes, 20 series; its Memory card draws it small and follows it), then
+  // the Memory page on that day, the heaviest page: the higher of the two counts.
   await launch(
     { setupDone: true },
     [],
     async (pid, log) => {
       await opened(pid, log);
+      await sleep((WINDOW_LOAD_SECONDS + IDLE_SECONDS) * 1000);
+      const overview = sample(pid, true).privateMB;
       openMemoryPage(pid);
       await sleep((WINDOW_LOAD_SECONDS + IDLE_SECONDS) * 1000);
-      window = sample(pid, true).privateMB;
+      const memory = sample(pid, true).privateMB;
+      window = Math.max(overview, memory);
+      console.log(`window: Overview ${overview.toFixed(1)} MB, Memory page ${memory.toFixed(1)} MB`);
       closeWindow(pid);
       await sleep(CLOSE_SECONDS * 1000);
       if (alive(pid)) throw new Error('with Keep running in the tray off, closing the window should quit Warden');

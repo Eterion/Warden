@@ -10,6 +10,13 @@ import OverviewPage from './OverviewPage.vue';
 
 const HOUR = 3_600_000;
 
+// The Memory card's own requests are left out here, so each test's stand-in server sees only the Overview's own (the
+// card, its data and its requests are tested in MemoryCard.test.ts).
+vi.mock('../memoryDay', async () => {
+  const { ref, shallowRef } = await import('vue');
+  return { useMemoryDay: () => ({ data: shallowRef(null), days: ref([]), error: ref(null) }) };
+});
+
 afterEach(() => {
   store.state = null;
   store.connected = true;

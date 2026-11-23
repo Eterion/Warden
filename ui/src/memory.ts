@@ -284,8 +284,20 @@ export function anyRan(rows: BandRow[]): boolean {
 
 // ---- The chart ----
 
-/** The chart's size: its plot height, the gutter for the gridlines' labels, the room under it for the time axis, a tick's length, and a line of its 12 px text. */
-export const CHART = { height: 200, gutter: 52, axis: 24, top: 8, tick: 6, line: 18 };
+/** A chart's size: its plot height, the gutter for the gridlines' labels, the room under it for the time axis, a tick's length, and a line of its 12 px text. */
+export interface ChartSize {
+  height: number;
+  gutter: number;
+  axis: number;
+  top: number;
+  tick: number;
+  line: number;
+}
+
+/** The Memory page's chart. */
+export const CHART: ChartSize = { height: 200, gutter: 52, axis: 24, top: 8, tick: 6, line: 18 };
+/** The Overview's small chart (its Memory card): shorter, its ticks shorter. */
+export const CHART_SMALL: ChartSize = { height: 84, gutter: 52, axis: 20, top: 6, tick: 4, line: 16 };
 
 export interface ChartModel {
   /** The minutes across, from the day's first recording to its last (at least an hour): [from, to). */
@@ -295,16 +307,16 @@ export interface ChartModel {
   minutes: MemoryMinute[];
   /** The shown bands, bottom first. */
   bands: Band[];
-  /** The top of the scale (KiB) and the three gridlines. */
+  /** The top of the scale (KiB) and its gridlines (three; two on the Overview's small chart). */
   top: number;
   grid: { kib: number; label: string }[];
   gaps: { from: number; to: number }[];
 }
 
-/** Gridline steps in GB: three of the smallest that reaches the peak make the scale. */
+/** Gridline steps in GB: `lines` of the smallest that reaches the peak make the scale. */
 const STEPS = [0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100];
 
-export function chartModel(day: MemoryDay, bands: Band[], shown: Set<string>): ChartModel | null {
+export function chartModel(day: MemoryDay, bands: Band[], shown: Set<string>, lines: 2 | 3 = 3): ChartModel | null {
   const first = day.minutes[0];
   const last = day.minutes[day.minutes.length - 1];
   if (!first || !last) return null;
@@ -322,15 +334,18 @@ export function chartModel(day: MemoryDay, bands: Band[], shown: Set<string>): C
       visible.reduce((sum, b) => sum + bandAt(b, m), 0),
     );
   const peakGb = peak / GIB;
-  const step = STEPS.find((s) => s * 3 >= peakGb) ?? Math.ceil(peakGb / 3);
-  const top = step * 3 * GIB;
+  const step = STEPS.find((s) => s * lines >= peakGb) ?? Math.ceil(peakGb / lines);
+  const top = step * lines * GIB;
   return {
     from,
     to,
     minutes: day.minutes,
     bands: visible,
     top,
-    grid: [1, 2, 3].map((i) => ({ kib: step * i * GIB, label: `${GRID.format(step * i)} GB` })),
+    grid: Array.from({ length: lines }, (_, i) => i + 1).map((i) => ({
+      kib: step * i * GIB,
+      label: `${GRID.format(step * i)} GB`,
+    })),
     gaps: day.gaps,
   };
 }
@@ -339,10 +354,11 @@ export function chartModel(day: MemoryDay, bands: Band[], shown: Set<string>): C
 export function bandPaths(
   model: ChartModel,
   width: number,
+  chart: ChartSize = CHART,
 ): { key: string; colour: BandColour; area: string; edge: string }[] {
   const span = model.to - model.from;
   const x = (m: number) => ((m - model.from) / span) * width;
-  const y = (kib: number) => CHART.top + (1 - Math.min(kib, model.top) / model.top) * (CHART.height - CHART.top);
+  const y = (kib: number) => chart.top + (1 - Math.min(kib, model.top) / model.top) * (chart.height - chart.top);
   // Runs of consecutive minutes.
   const runs: MemoryMinute[][] = [];
   for (const m of model.minutes) {
@@ -386,8 +402,11 @@ const LABEL_APART = 2 * LABEL_HALF + 4;
 export interface Axis {
   /** The label step in minutes; ticks fall at half of it. */
   step: number;
-  /** Each label's minute and middle (`x`; the last moved inward from its tick when it would be cut). */
-  labels: { m: number; x: number; label: string }[];
+  /**
+   * Each label's minute and where it sits (`x`): its middle, the last moved inward from its tick when it would be cut;
+   * with `anchor`, its start or its end (the small chart's two ends).
+   */
+  labels: { m: number; x: number; label: string; anchor?: 'start' | 'end' }[];
   /** Every tick along the baseline, `major` under a label's step. */
   ticks: { m: number; x: number; major: boolean }[];
 }
@@ -421,6 +440,25 @@ export function timeAxis(model: ChartModel, width: number): Axis {
     labels.push({ m, x: at, label: clock(m) });
   }
   return { step, labels, ticks };
+}
+
+/**
+ * The Overview's small chart's time axis, over a plot `width` wide: only its two ends, each ticked and labelled inside
+ * the plot, the span's first minute at the left and its last at the right (today, the latest sample's).
+ */
+export function endAxis(model: ChartModel, width: number): Axis {
+  const last = model.to - 1;
+  return {
+    step: model.to - model.from,
+    labels: [
+      { m: model.from, x: 0, label: clock(model.from), anchor: 'start' },
+      { m: last, x: width, label: clock(last), anchor: 'end' },
+    ],
+    ticks: [
+      { m: model.from, x: 0, major: true },
+      { m: model.to, x: width, major: true },
+    ],
+  };
 }
 
 export interface Guide {

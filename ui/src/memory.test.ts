@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { MemoryDay, MemoryMinute, MemorySeries } from './api';
 import {
+  CHART_SMALL,
   bandColours,
   bandPaths,
   bandsOf,
   chartModel,
   dayTitle,
+  endAxis,
   figures,
   guideAt,
   guideText,
@@ -315,6 +317,23 @@ describe('the chart', () => {
     // Left out, a band is not drawn and the others close up.
     const alone = bandPaths(chartModel(d, bands, new Set(['account:a1']))!, 101);
     expect(alone.map((p) => p.key)).toEqual(['account:a1']);
+  });
+
+  it("draws the Overview's small chart on the same model: two gridlines, its own height, the times at its ends", () => {
+    const small = chartModel(d, bands, both, 2)!;
+    expect([small.from, small.to]).toEqual([600, 701]);
+    expect(small.top).toBe(2 * GIB);
+    expect(small.grid.map((g) => g.label)).toEqual(['1 GB', '2 GB']);
+    // The same bands, on the small chart's plot: from y 6 (2 GB) to 84 (0).
+    const [mainPath] = bandPaths(small, 101, CHART_SMALL);
+    expect(mainPath!.area.startsWith('M0,45L1,45L1,45L2,45L2,84')).toBe(true);
+    // Only the two ends, labelled inside the plot: the first minute and the last recorded one.
+    const axis = endAxis(small, 300);
+    expect(axis.labels).toEqual([
+      { m: 600, x: 0, label: '10:00', anchor: 'start' },
+      { m: 700, x: 300, label: '11:40', anchor: 'end' },
+    ]);
+    expect(axis.ticks.map((t) => t.x)).toEqual([0, 300]);
   });
 
   it('labels the axis at a step giving four to eight labels, with ticks at half the step', () => {

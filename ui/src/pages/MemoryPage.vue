@@ -5,28 +5,17 @@
 // the AI sessions now and their share of the computer, today only; the peak and its time; the computer's memory in use
 // with its meter, amber above 90%; Warden itself), then the chart of the AI sessions' memory stacked by account, on the
 // panel without a box, and the table: the chart's legend and accessible equivalent, a checkbox per row leaving its band out (on this page only),
-// hovering a row darkening its band. Today's page follows each new sample through its own long poll, paused while the
-// window is hidden; a past day is read once.
+// hovering a row darkening its band. Today's page follows each new sample through the long poll (useMemoryDay, which
+// the Overview's Memory card shares), paused while the window is hidden; a past day is read once.
 import { Check, ChevronLeft, ChevronRight } from '@lucide/vue';
-import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue';
-import { ApiError, api, type MemoryDay } from '../api';
+import { computed, ref } from 'vue';
 import ProviderMark from '../components/ProviderMark.vue';
 import WButton from '../components/WButton.vue';
 import WIconButton from '../components/WIconButton.vue';
 import WTable from '../components/WTable.vue';
 import WTableRow from '../components/WTableRow.vue';
-import {
-  anyRan,
-  bandsOf,
-  chartModel,
-  figures,
-  isoDay,
-  mergeToday,
-  shareText,
-  size,
-  stepDays,
-  type BandColour,
-} from '../memory';
+import { anyRan, bandsOf, chartModel, figures, isoDay, shareText, size, stepDays, type BandColour } from '../memory';
+import { useMemoryDay } from '../memoryDay';
 import { go, route } from '../route';
 import { store, usedAccounts } from '../store';
 import MemoryChart from './MemoryChart.vue';
@@ -47,81 +36,11 @@ function show(d: string): void {
 
 // ---- The day, from the server ----
 
-const data = shallowRef<MemoryDay | null>(null);
-const error = ref<string | null>(null);
-let controller: AbortController | null = null;
-const RETRY_MS = 5000;
-/** Waits before trying again; leaving the page or the day ends the wait at once. */
-const sleep = (ms: number, signal: AbortSignal) =>
-  new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener('abort', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
-/** The days with recordings, kept while another day loads so Previous and Next stay as they were. */
-const days = ref<string[]>([]);
-
-/** Reads the day shown, then (today, while the window is in sight) follows each new sample. */
-async function read(): Promise<void> {
-  controller?.abort();
-  const mine = new AbortController();
-  controller = mine;
-  const d = day.value;
-  // The last day's figures are never shown as this one's.
-  if (data.value?.date !== d) data.value = null;
-  while (!mine.signal.aborted) {
-    try {
-      const answer = await api.memoryDay(d, mine.signal);
-      if (mine.signal.aborted) return;
-      data.value = answer;
-      days.value = answer.days;
-      error.value = null;
-      break;
-    } catch (e) {
-      if (mine.signal.aborted) return;
-      error.value = e instanceof ApiError ? e.message : 'Warden could not be reached.';
-      if (e instanceof ApiError) return;
-      await sleep(RETRY_MS, mine.signal);
-    }
-  }
-  if (d !== today.value) return;
-  let sample: number | null = null;
-  while (!mine.signal.aborted) {
-    const held = data.value;
-    const after = held?.minutes[held.minutes.length - 1]?.m ?? 0;
-    try {
-      const later = await api.memoryAfter(after, sample, mine.signal);
-      if (mine.signal.aborted) return;
-      sample = later.sample;
-      if (later.date !== d) {
-        // Midnight: today is a new day; the address follows it (#/memory) and it is read whole.
-        store.now = Date.now();
-        if (route.day.value === null) void read();
-        return;
-      }
-      data.value = held && held.date === d ? mergeToday(held, later) : later;
-      days.value = later.days;
-      error.value = null;
-    } catch (e) {
-      if (mine.signal.aborted) return;
-      if (!(e instanceof ApiError)) error.value = 'Warden could not be reached.';
-      await sleep(RETRY_MS, mine.signal);
-    }
-  }
-}
-
-watch(
-  [day, () => store.away],
-  ([, away]) => {
-    if (away) controller?.abort();
-    else void read();
-  },
-  { immediate: true },
-);
-// Leaving the page ends its requests and waits.
-onScopeDispose(() => controller?.abort());
+/**
+ * The day shown, then (today, while the window is in sight) each new sample; ended when the page is left. The days
+ * with recordings stay while another day loads, so Previous and Next stay as they were.
+ */
+const { data, days, error } = useMemoryDay(day);
 
 // ---- What is shown ----
 

@@ -1450,5 +1450,23 @@
     "bg": ["primary"],
     "min": 3,
     "use": "today ring on the filled day shown in the Memory calendar"
+  },
+  {
+    "fg": "axis",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "the Overview's small Memory chart baseline and ticks, its link hovered"
+  },
+  {
+    "fg": "axis",
+    "bg": ["panel", "row-press"],
+    "min": 3,
+    "use": "the Overview's small Memory chart baseline and ticks, its link pressed"
+  },
+  {
+    "fg": "icon-hover",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "the chevron of the Overview's Memory heading link, hovered"
   }
 ]

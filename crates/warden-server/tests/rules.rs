@@ -830,6 +830,15 @@ fn memory_history_keeps_only_what_is_allowed() {
     let marker = path.rsplit(' ').next().expect("marker").to_owned();
     let project = f.home.path().join("Warden");
     std::fs::create_dir_all(&project).expect("project");
+    // The session's own title names a folder: the history keeps the title, never the path in it.
+    let titled = claude.join("projects").join("p").join("s1.jsonl");
+    common::write(
+        &titled,
+        &format!(
+            "{}\n",
+            serde_json::json!({ "type": "custom-title", "customTitle": format!("Investigate {} now", project.display()), "sessionId": "s1" })
+        ),
+    );
     let tree = common::StandIn::start(&common::StandInSpec {
         folder: &f.home.path().join(format!("programs {marker}")),
         data_dir: f.data.path(),
@@ -839,6 +848,7 @@ fn memory_history_keeps_only_what_is_allowed() {
         mib: 8,
         extra_arg: &command_line,
         extra_env: &environment,
+        transcript: Some(&titled),
     });
     for e in [
         serde_json::json!({ "session_id": "s1", "hook_event_name": "UserPromptSubmit", "prompt": prompt }),
@@ -862,6 +872,10 @@ fn memory_history_keeps_only_what_is_allowed() {
     for (name, text) in &files {
         memory_history::assert_only_allowed(name, text);
         assert!(text.contains("\"project\":\"Warden\""), "{name}: {text}");
+        assert!(
+            text.contains("\"name\":\"Investigate … now\""),
+            "{name}: {text}"
+        );
         for kept in [text].into_iter().chain(answers.iter()) {
             for canary in [&command_line, &environment, &path, &prompt, &input] {
                 assert_not_kept(name, kept, canary);

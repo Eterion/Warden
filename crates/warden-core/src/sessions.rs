@@ -708,12 +708,13 @@ impl Sessions {
             .collect()
     }
 
-    /// Sessions not ended whose CLI process is known, each with it: what memory is sampled for.
-    pub fn with_processes(&self) -> impl Iterator<Item = (&Session, u32)> {
+    /// Sessions the status hook reports that have not ended, each with its CLI process when known: what memory is
+    /// sampled for.
+    pub fn hooked_live(&self) -> impl Iterator<Item = (&Session, Option<u32>)> {
         self.list
             .iter()
-            .filter(|s| s.ended_at.is_none())
-            .filter_map(|s| s.process.map(|p| (s, p)))
+            .filter(|s| s.source == Source::Hook && s.ended_at.is_none())
+            .map(|s| (s, s.process))
     }
 
     pub fn activity(&self) -> &HashMap<String, Activity> {

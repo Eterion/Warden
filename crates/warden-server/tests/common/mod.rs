@@ -583,6 +583,8 @@ pub struct StandInSpec<'a> {
     /// More words on the processes' command line, and one more variable in their environment (canaries).
     pub extra_arg: &'a str,
     pub extra_env: &'a str,
+    /// The session's transcript, sent with its SessionStart.
+    pub transcript: Option<&'a Path>,
 }
 
 impl StandIn {
@@ -605,6 +607,10 @@ impl StandIn {
             .env("WARDEN_TEST_CWD", spec.cwd)
             .env("WARDEN_TEST_MIB", spec.mib.to_string())
             .env("WARDEN_TEST_CANARY", spec.extra_env)
+            .env(
+                "WARDEN_TEST_TRANSCRIPT",
+                spec.transcript.unwrap_or(Path::new("")),
+            )
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -678,13 +684,15 @@ pub fn memory_helper() {
         }
         "helper" => {
             let mib: usize = var("WARDEN_TEST_MIB").parse().expect("MiB");
-            // Written to, so every page is committed private memory.
-            let held = vec![7u8; mib * 1024 * 1024];
+            // Committed but never touched: it counts in private memory (what Warden reads), not in the working set,
+            // so a reading of the working set would fall short.
+            let held: Vec<u8> = Vec::with_capacity(mib * 1024 * 1024);
             std::hint::black_box(&held);
             let event = serde_json::json!({
                 "session_id": var("WARDEN_TEST_SESSION"),
                 "hook_event_name": "SessionStart",
                 "cwd": var("WARDEN_TEST_CWD"),
+                "transcript_path": std::env::var("WARDEN_TEST_TRANSCRIPT").ok().filter(|t| !t.is_empty()),
             });
             assert!(hook_event(
                 Path::new(&var("WARDEN_TEST_DATA")),

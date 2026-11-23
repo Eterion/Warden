@@ -5,8 +5,8 @@
 //! hooks). Warden then holds a handle on that process and a small thread waits on it (no polling): when it exits,
 //! the session ends. Nothing is started and nothing is read beyond the process list.
 //!
-//! Memory samples ([`MemorySource`]) read the same list (parents and start times) and the private memory of the
-//! sessions' processes and Warden's own: never another process's command line, environment, executable path or
+//! Memory samples ([`MemorySource`]) read the same list with each process's private memory, and keep the memory of
+//! the sessions' processes and Warden's own: never another process's command line, environment, executable path or
 //! working folder.
 
 use std::collections::{HashMap, HashSet};
@@ -104,6 +104,11 @@ pub trait MemorySource: Send + Sync {
     fn every(&self) -> Duration {
         Duration::from_millis(memory::SAMPLE_EVERY_MS)
     }
+    /// A made-up CLI process for a session, in place of the one found above its hook (the demo, whose made-up
+    /// sessions all send their events from one process). This computer's source has none.
+    fn stand_in_cli(&self, _provider: Provider, _session_id: &str) -> Option<u32> {
+        None
+    }
 }
 
 /// This computer's memory, through `sysinfo`: for other processes only their parents, start times and private
@@ -144,40 +149,33 @@ impl MemorySource for SystemMemory {
         _own: u32,
         pick: &mut dyn FnMut(&[memory::Proc]) -> Vec<u32>,
     ) -> Vec<memory::Proc> {
+        // One snapshot (Windows' process list), each process's memory read with its start time through the handle
+        // opened for that: a second pass for the chosen ones alone would take a whole second snapshot, which costs
+        // more than the memory reads it saves. Only the chosen processes' memory is kept.
         let mut sys = System::new();
         sys.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
-            ProcessRefreshKind::nothing(),
+            ProcessRefreshKind::nothing().with_memory(),
         );
+        let mut memory: HashMap<u32, u64> = HashMap::new();
         let mut list: Vec<memory::Proc> = sys
             .processes()
             .iter()
-            .map(|(pid, p)| memory::Proc {
-                pid: pid.as_u32(),
-                parent: p.parent().map(Pid::as_u32),
-                started: p.start_time(),
-                private: None,
+            .map(|(pid, p)| {
+                memory.insert(pid.as_u32(), p.virtual_memory());
+                memory::Proc {
+                    pid: pid.as_u32(),
+                    parent: p.parent().map(Pid::as_u32),
+                    started: p.start_time(),
+                    private: None,
+                }
             })
             .collect();
-        let wanted: Vec<Pid> = pick(&list).into_iter().map(Pid::from_u32).collect();
-        if wanted.is_empty() {
-            return list;
-        }
-        // Only the processes asked for are opened again, for their memory alone.
-        sys.refresh_processes_specifics(
-            ProcessesToUpdate::Some(&wanted),
-            false,
-            ProcessRefreshKind::nothing().with_memory(),
-        );
-        let wanted: HashSet<Pid> = wanted.into_iter().collect();
+        let wanted: HashSet<u32> = pick(&list).into_iter().collect();
         for p in &mut list {
-            let pid = Pid::from_u32(p.pid);
-            if wanted.contains(&pid) {
-                p.private = sys
-                    .process(pid)
-                    .filter(|q| q.start_time() == p.started)
-                    .map(sysinfo::Process::virtual_memory);
+            if wanted.contains(&p.pid) {
+                p.private = memory.get(&p.pid).copied();
             }
         }
         list

@@ -2,7 +2,7 @@
 //!
 //! Every [`SAMPLE_EVERY_MS`] the server reads the computer's total and available memory and, only while something
 //! runs (a hooked session with a known CLI process, or a process one left running), one list of processes with their
-//! parents and start times, then the private memory of the processes in the sessions' trees and of Warden's own
+//! parents, start times and private memory, of which only the processes in the sessions' trees and Warden's own count
 //! ([`plan`]). Each process counts for the session whose CLI started it: a delegated run's CLI starts a tree of its
 //! own, which counts for that run and never twice. A process seen in a session's tree is remembered by its id and
 //! start time ([`LeftRunning`]): once it falls out of the tree (its session ended, its parent exited) it counts as
@@ -12,7 +12,8 @@
 //! folder, `memory/memory-<YYYY-MM-DD>.jsonl` (local days): one series line when a series first appears that day (or
 //! its names change), one minute line a minute. Kept 30 days and 20 MB in all; at most 200 series and 1,440 minutes a
 //! day. Today's minutes are also kept in memory, so today's answer reads no file. Never a prompt, command line, path
-//! or process name: only memory figures, account ids and labels, session ids, and session and project names.
+//! or process name: only memory figures, account ids and labels, session ids, and session and project names (a word
+//! in a name that reads like a path or a program becomes `…`). Nothing is read, written or removed through a link.
 
 use crate::model::Provider;
 use crate::time::{date_text, local_offset_s, parse_date};
@@ -136,8 +137,8 @@ impl SeriesInfo {
             account: own.then(|| live.account_label.clone()).flatten(),
             session_id: Some(live.session_id.clone()),
             parent_session_id: live.parent_session_id.clone(),
-            name: live.name.as_deref().map(short),
-            project: live.project.as_deref().map(short),
+            name: live.name.as_deref().map(masked),
+            project: live.project.as_deref().map(masked),
         }
     }
 
@@ -155,6 +156,11 @@ impl SeriesInfo {
                 *t = short(t);
             }
         }
+        for text in [&mut self.name, &mut self.project] {
+            if let Some(t) = text.as_mut() {
+                *t = masked(t);
+            }
+        }
         self
     }
 }
@@ -165,6 +171,50 @@ fn short(text: &str) -> String {
         .filter(|c| !c.is_control())
         .take(MAX_NAME)
         .collect()
+}
+
+/// A word that reads like a path or a program: a folder separator, a drive, an environment variable or `.exe`.
+fn path_like(word: &str) -> bool {
+    let lower = word.to_ascii_lowercase();
+    word.contains('\\')
+        || word.contains(":/")
+        || word.starts_with('/')
+        || word.starts_with("~/")
+        || word.contains('%')
+        || lower.contains(".exe")
+}
+
+/// A session's or project's name as the history keeps it: each word that reads like a path or a program replaced by
+/// `…` (a title can name a folder), on one line, at most [`MAX_NAME`] characters.
+fn masked(text: &str) -> String {
+    let words: Vec<&str> = text
+        .split(|c: char| c.is_whitespace() || c.is_control())
+        .filter(|w| !w.is_empty())
+        .map(|w| if path_like(w) { "…" } else { w })
+        .collect();
+    short(&words.join(" "))
+}
+
+/// Whether a path is a link or another reparse point (a junction): the history never reads, writes or removes
+/// through one.
+fn linked(path: &Path) -> bool {
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    meta.file_type().is_symlink()
+}
+
+/// Refused: the memory folder or a day file is a link.
+fn linked_error() -> io::Error {
+    io::Error::other("the memory history is behind a link, so it is left alone")
 }
 
 /// A series line: its number in the day and what it counts.
@@ -450,18 +500,13 @@ impl Day {
 /// empty day.
 pub fn read_day(dir: &Path, date: &str) -> Day {
     let mut day = Day::default();
-    let Ok(file) = fs::File::open(day_file(dir, date)) else {
-        return day;
-    };
-    let mut text = String::new();
-    if file
-        .take(MAX_DAY_BYTES + 64 * KIB)
-        .read_to_string(&mut text)
-        .is_err()
-    {
+    let path = day_file(dir, date);
+    if linked(dir) || linked(&path) {
         return day;
     }
-    for line in text.lines() {
+    let bytes = read_bounded(&path);
+    // Line by line: a line cut inside a character spoils only itself.
+    for line in String::from_utf8_lossy(&bytes).lines() {
         if let Ok(m) = serde_json::from_str::<Minute>(line) {
             day.add_minute(m);
         } else if let Ok(s) = serde_json::from_str::<Series>(line) {
@@ -472,8 +517,22 @@ pub fn read_day(dir: &Path, date: &str) -> Day {
     day
 }
 
+/// A day file's bytes, at most a full day's and a little more; none when it cannot be read.
+fn read_bounded(path: &Path) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let read = fs::File::open(path)
+        .and_then(|file| file.take(MAX_DAY_BYTES + 64 * KIB).read_to_end(&mut bytes));
+    match read {
+        Ok(_) => bytes,
+        Err(_) => Vec::new(),
+    }
+}
+
 /// Writes a whole day's file, unless it already exists (the demo's made-up past days).
 pub fn write_day(dir: &Path, date: &str, day: &Day) -> io::Result<()> {
+    if linked(dir) {
+        return Err(linked_error());
+    }
     fs::create_dir_all(dir)?;
     let mut file = OpenOptions::new()
         .write(true)
@@ -493,6 +552,9 @@ pub fn write_day(dir: &Path, date: &str, day: &Day) -> io::Result<()> {
 
 /// The dates of the day files in the memory folder, oldest first.
 pub fn days(dir: &Path) -> Vec<String> {
+    if linked(dir) {
+        return Vec::new();
+    }
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -519,6 +581,7 @@ pub fn prune(dir: &Path, today: &str) {
     let mut others: Vec<(String, u64)> = days(dir)
         .into_iter()
         .filter(|d| d.as_str() != today)
+        .filter(|d| !linked(&day_file(dir, d)))
         .filter_map(|d| {
             let len = fs::metadata(day_file(dir, &d)).ok()?.len();
             Some((d, len))
@@ -544,7 +607,6 @@ struct Today {
     day: Day,
     numbers: HashMap<Key, u16>,
     series_lines: usize,
-    minute_lines: usize,
     bytes: u64,
     /// The file does not end with a whole line (a cut last line): the next line starts on a new one.
     cut: bool,
@@ -596,15 +658,17 @@ impl Recorder {
     fn open_day(&mut self, date: &str) {
         prune(&self.dir, date);
         let path = day_file(&self.dir, date);
-        let bytes = fs::metadata(&path).map_or(0, |m| m.len());
-        let text = fs::read(&path).unwrap_or_default();
-        let cut = text.last().is_some_and(|b| *b != b'\n');
-        let lines = |pred: fn(&str) -> bool| {
-            String::from_utf8_lossy(&text)
-                .lines()
-                .filter(|l| pred(l))
-                .count()
+        let text = if linked(&self.dir) || linked(&path) {
+            Vec::new()
+        } else {
+            read_bounded(&path)
         };
+        let bytes = text.len() as u64;
+        let cut = text.last().is_some_and(|b| *b != b'\n');
+        let series_lines = String::from_utf8_lossy(&text)
+            .lines()
+            .filter(|l| l.starts_with("{\"series\":"))
+            .count();
         let day = read_day(&self.dir, date);
         let numbers = day
             .series
@@ -613,8 +677,7 @@ impl Recorder {
             .collect();
         self.today = Some(Today {
             date: date.to_owned(),
-            minute_lines: lines(|l| l.starts_with("{\"m\":")),
-            series_lines: lines(|l| l.starts_with("{\"series\":")),
+            series_lines,
             day,
             numbers,
             bytes,
@@ -724,9 +787,10 @@ impl Recorder {
             sum: g.sum,
             s: pairs,
         };
-        if t.minute_lines < MAX_MINUTES {
+        // One line per minute of the day: a minute already written (Warden started again within it, or the hour that
+        // repeats when daylight saving ends) is merged in memory only, so the file never holds more than 1,440.
+        if !known {
             lines.push_str(&line(&minute)?);
-            t.minute_lines += 1;
         }
         t.day.add_minute(minute);
         if lines.is_empty() {
@@ -740,15 +804,31 @@ impl Recorder {
         if t.cut {
             lines.insert(0, '\n');
         }
-        fs::create_dir_all(&self.dir)?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(day_file(&self.dir, &t.date))?;
-        file.write_all(lines.as_bytes())?;
-        t.bytes += lines.len() as u64;
-        t.cut = false;
-        Ok(())
+        let path = day_file(&self.dir, &t.date);
+        let written = (|| {
+            if linked(&self.dir) || linked(&path) {
+                return Err(linked_error());
+            }
+            fs::create_dir_all(&self.dir)?;
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)?
+                .write_all(lines.as_bytes())
+        })();
+        match written {
+            Ok(()) => {
+                t.bytes += lines.len() as u64;
+                t.cut = false;
+                Ok(())
+            }
+            Err(e) => {
+                // What was taken as written is not: today is read back from its file at the next minute (its
+                // series numbers, its lines, a cut last line), so no minute names a series the file lacks.
+                self.today = None;
+                Err(e)
+            }
+        }
     }
 
     /// Today's day as recorded, with the minute being gathered (its new series numbered as they will be). Empty when
@@ -1415,6 +1495,123 @@ mod tests {
         let empty = MemoryDay::new("2026-11-21", false, Vec::new(), Day::default());
         assert_eq!(empty.summary.peak, None);
         assert!(empty.minutes.is_empty() && empty.gaps.is_empty());
+    }
+
+    fn minute_lines(r: &Recorder, date: &str) -> usize {
+        fs::read_to_string(day_file(r.dir(), date))
+            .expect("file")
+            .lines()
+            .filter(|l| l.starts_with("{\"m\":"))
+            .count()
+    }
+
+    #[test]
+    fn a_minute_is_written_once_however_often_it_comes() {
+        let dir = Dir::new("memory-once");
+        let at = T0 - T0 % DAY_MS + 10 * 3_600_000;
+        let (date, _) = local_minute(at, 0);
+        // Warden starts again within the same minute: one line, the higher values kept in memory.
+        let mut r = Recorder::new_in(dir.path(), at, 0);
+        r.record_in(&reading(at, vec![(info("a"), MIB)]), 0)
+            .expect("record");
+        r.finish().expect("finish");
+        let mut again = Recorder::new_in(dir.path(), at + 20_000, 0);
+        again
+            .record_in(&reading(at + 20_000, vec![(info("a"), 5 * MIB)]), 0)
+            .expect("record");
+        again.finish().expect("finish");
+        assert_eq!(minute_lines(&again, &date), 1);
+        assert_eq!(again.today_day(&date).minutes[0].s, vec![(1, 5 * 1024)]);
+        // Daylight saving ends: 02:00 to 03:00 comes twice. The repeated hour adds no line.
+        let dst = Dir::new("memory-dst");
+        let two = T0 - T0 % DAY_MS + 2 * 3_600_000;
+        let mut r = Recorder::new_in(dst.path(), two, 0);
+        for minute in 0..60 {
+            r.record_in(&reading(two + minute * 60_000, vec![]), 0)
+                .expect("record");
+        }
+        // The clock goes back an hour: the same local minutes, an hour later in UTC.
+        for minute in 0..61 {
+            r.record_in(
+                &reading(two + (60 + minute) * 60_000, vec![(info("b"), MIB)]),
+                -3600,
+            )
+            .expect("record");
+        }
+        r.finish().expect("finish");
+        let (date, _) = local_minute(two, 0);
+        assert_eq!(minute_lines(&r, &date), 61);
+        let day = read_day(r.dir(), &date);
+        assert_eq!(day.minutes.len(), 61);
+        // A series first seen in the repeated hour is still defined in the file.
+        assert!(
+            day.series
+                .iter()
+                .any(|s| s.info.session_id.as_deref() == Some("b"))
+        );
+    }
+
+    #[test]
+    fn a_line_cut_inside_a_character_spoils_only_itself() {
+        let dir = Dir::new("memory-utf8");
+        let mem = dir.path().join(DIR);
+        fs::create_dir_all(&mem).expect("mkdir");
+        let (date, _) = local_minute(T0, 0);
+        let mut text = b"{\"m\":1,\"total\":10,\"used\":5,\"sum\":1,\"s\":[]}\n".to_vec();
+        let series = "{\"series\":1,\"kind\":\"session\",\"name\":\"Caf\u{e9}\u{1f600}";
+        // Cut in the middle of the emoji.
+        text.extend_from_slice(&series.as_bytes()[..series.len() - 2]);
+        fs::write(day_file(&mem, &date), &text).expect("write");
+        let mut r = Recorder::new_in(dir.path(), T0, 0);
+        assert_eq!(r.today_day(&date).minutes.len(), 1);
+        r.record_in(&reading(T0, vec![(info("a"), MIB)]), 0)
+            .expect("record");
+        r.finish().expect("finish");
+        let day = read_day(&mem, &date);
+        assert_eq!(day.minutes.len(), 2);
+        assert_eq!(day.series.len(), 1);
+    }
+
+    #[test]
+    fn after_a_failed_write_the_file_is_the_truth() {
+        let dir = Dir::new("memory-fail");
+        let mem = dir.path().join(DIR);
+        let at = T0 - T0 % DAY_MS + 10 * 3_600_000;
+        let (date, _) = local_minute(at, 0);
+        // The day file cannot be opened for writing (a folder stands in its place).
+        fs::create_dir_all(day_file(&mem, &date)).expect("in the way");
+        let mut r = Recorder::new_in(dir.path(), at, 0);
+        r.record_in(&reading(at, vec![(info("a"), MIB)]), 0)
+            .expect("record");
+        assert!(r.finish().is_err());
+        fs::remove_dir(day_file(&mem, &date)).expect("out of the way");
+        // The next minute names series "a" again, and its line is written with it.
+        r.record_in(&reading(at + 60_000, vec![(info("a"), MIB)]), 0)
+            .expect("record");
+        r.finish().expect("finish");
+        let day = read_day(&mem, &date);
+        assert_eq!(day.series.len(), 1);
+        assert_eq!(day.minutes.len(), 1);
+        assert_eq!(day.minutes[0].s, vec![(1, 1024)]);
+    }
+
+    #[test]
+    fn names_never_keep_a_path_or_a_program() {
+        assert_eq!(
+            masked(r"Investigate %USERPROFILE%\work\app and /srv/x then ..\app ~/notes"),
+            "Investigate … and … then … …"
+        );
+        assert_eq!(masked("Fix warden.exe crash"), "Fix … crash");
+        assert_eq!(
+            masked("Fix the A/B test\non two lines"),
+            "Fix the A/B test on two lines"
+        );
+        let mut s = live("s", "main", 1);
+        s.name = Some(r"Look at data\payroll.csv".into());
+        assert_eq!(
+            SeriesInfo::of(&s, Kind::Session).name.as_deref(),
+            Some("Look at …")
+        );
     }
 
     #[test]

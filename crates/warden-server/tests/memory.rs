@@ -38,6 +38,7 @@ fn a_sessions_tree_is_measured_and_what_it_leaves_running_too() {
         mib: HELD_MIB,
         extra_arg: "",
         extra_env: "",
+        transcript: None,
     });
     // Within two samples (and the time the event takes), the session counts the helper's memory.
     let found = std::time::Instant::now();
@@ -162,4 +163,38 @@ fn a_day_is_asked_for_by_its_date() {
         revision
     );
     server.stop();
+}
+
+#[test]
+fn a_linked_memory_folder_is_left_alone() {
+    let f = Fixture::new();
+    // The memory folder is a junction to a folder outside the data folder, holding an old day Warden would prune.
+    let outside = warden_core::testdir::Dir::new("memory-outside");
+    let today = warden_core::memory::today(warden_core::time::now_ms());
+    let today_n = warden_core::time::parse_date(&today).expect("today");
+    let old =
+        warden_core::memory::day_file(outside.path(), &warden_core::time::date_text(today_n - 40));
+    common::write(
+        &old,
+        "{\"m\":1,\"total\":1,\"used\":1,\"sum\":1,\"s\":[]}\n",
+    );
+    std::fs::create_dir_all(f.data.path()).expect("data");
+    junction::create(outside.path(), f.data.path().join("memory")).expect("junction");
+    let before = common::folder_bytes(outside.path());
+
+    let server = f.start();
+    let addr = server.addr;
+    // Samples go on (and are answered from memory); nothing is read, written or removed through the link.
+    eventually("today's first sample", || {
+        memory_today(addr)["minutes"]
+            .as_array()
+            .is_some_and(|m| !m.is_empty())
+    });
+    let past = warden_core::time::date_text(today_n - 40);
+    let day = call(addr, "GET", &format!("/api/memory/day?date={past}"), None).json();
+    assert_eq!(day["minutes"], serde_json::json!([]));
+    assert_eq!(day["days"], serde_json::json!([today]));
+    server.stop();
+    assert_eq!(common::folder_bytes(outside.path()), before);
+    assert!(f.log_text().contains("could not write the memory history"));
 }

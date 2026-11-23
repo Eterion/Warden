@@ -1403,12 +1403,14 @@ impl App {
         !inner.stop
     }
 
-    /// The sessions memory is sampled for: those not ended whose CLI process is known.
-    fn live_sessions(&self) -> Vec<memory::Live> {
+    /// The sessions memory is sampled for: the hooked ones not ended whose CLI process is known (or made up, in the
+    /// demo).
+    fn live_sessions(&self, source: &dyn crate::procs::MemorySource) -> Vec<memory::Live> {
         let inner = self.lock();
         inner
             .sessions
-            .with_processes()
+            .hooked_live()
+            .filter_map(|(s, cli)| Some((s, source.stand_in_cli(s.provider, &s.id).or(cli)?)))
             .map(|(s, cli)| memory::Live {
                 provider: s.provider,
                 session_id: s.id.clone(),
@@ -1439,7 +1441,7 @@ impl App {
         source: &dyn crate::procs::MemorySource,
         left: &mut memory::LeftRunning,
     ) -> io::Result<()> {
-        let live = self.live_sessions();
+        let live = self.live_sessions(source);
         let (total, available) = source.computer().unwrap_or((0, 0));
         let mut values = Vec::new();
         if !live.is_empty() || !left.is_empty() {

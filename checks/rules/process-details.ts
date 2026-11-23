@@ -6,7 +6,7 @@
 import { matches, type Rule, type Violation } from './types.ts';
 
 const READS_DETAILS =
-  /\bwith_(?:cmd|environ|exe|cwd|root)\b|\.(?:cmd|environ|exe|cwd|root)\(\)|\b(?:Process)?RefreshKind::everything\b|\bSystem::new_all\b|\.refresh_all\(/g;
+  /\bwith_(?:cmd|environ|exe|cwd|root)\b|\.(?:cmd|environ|exe|cwd|root)\(\)|\b(?:Process)?RefreshKind::everything\b|\bSystem::new_all\b|\.refresh_all\(|\.refresh_processes\(/g;
 
 /** Drops `//` comments so doc comments may name what is never read. Strings containing `//` are cut too, harmlessly. */
 function stripLineComments(text: string): string {

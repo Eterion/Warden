@@ -417,6 +417,8 @@ describe('process-details', () => {
       'let all = ProcessRefreshKind::everything();',
       'let sys = System::new_all();',
       'sys.refresh_all();',
+      // Its default refresh reads each process's executable path.
+      'sys.refresh_processes(ProcessesToUpdate::All, true);',
       'System::new_with_specifics(RefreshKind::everything())',
     ]) {
       assert.ok(caught(processDetails, rs, planted).length > 0, `planted violation not caught: ${planted}`);

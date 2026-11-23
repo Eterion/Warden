@@ -15,8 +15,9 @@
 //! the demo again brings it back. Nothing leaves this computer, and no program is started: the CLIs on the demo's PATH
 //! (the home's `bin`) are stand-ins the driver writes, and the sign-in only prints.
 //!
-//! Memory comes from made-up processes (three under each session's CLI, one beside the demo for its window), and a
-//! few made-up past days are written to the data folder at start: no real process is read. Only the budgets pass
+//! Memory comes from made-up processes (each hooked session a made-up CLI of its own with three processes under it,
+//! one beside the demo for its window), and a few made-up past days are written to the data folder at start: no real
+//! process is read. Only the budgets pass
 //! `--real-memory-every-ms`, to measure what sampling this computer costs with a stand-in tree they start themselves.
 
 use std::collections::HashMap;
@@ -68,6 +69,19 @@ impl MadeUpMemory {
 }
 
 impl warden_server::procs::MemorySource for MadeUpMemory {
+    /// Every made-up session gets its own made-up CLI: the demo driver sends all their events from one process.
+    fn stand_in_cli(
+        &self,
+        provider: warden_core::model::Provider,
+        session_id: &str,
+    ) -> Option<u32> {
+        let mut hash: u32 = 2_166_136_261;
+        for b in format!("{provider:?}/{session_id}").bytes() {
+            hash = (hash ^ u32::from(b)).wrapping_mul(16_777_619);
+        }
+        Some(0x4000_0000 | (hash & 0x3FFF_FFFF))
+    }
+
     fn computer(&self) -> Option<(u64, u64)> {
         let used = 14 * GIB + (wave(self.seconds(), 600.0, 0.0) * 4.0 * GIB as f64) as u64;
         Some((32 * GIB, 32 * GIB - used))

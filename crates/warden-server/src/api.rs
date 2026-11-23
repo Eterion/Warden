@@ -125,7 +125,8 @@ pub fn path_of(url: &str) -> &str {
 }
 
 /// Answers one request the transport has let through: `method` in capitals, `url` the path and query, `body` as
-/// sent (more than [`MAX_BODY`] is refused). The long poll (`GET /api/state/wait`) holds the calling thread.
+/// sent (more than [`MAX_BODY`] is refused). The long polls (`GET /api/state/wait`, `GET /api/memory/today/wait`)
+/// hold the calling thread.
 pub fn answer(app: &App, ui_dir: Option<&Path>, method: &str, url: &str, body: &[u8]) -> Answer {
     let path = path_of(url);
     if !path.starts_with("/api/") {
@@ -145,6 +146,11 @@ pub fn answer(app: &App, ui_dir: Option<&Path>, method: &str, url: &str, body: &
     if method == "GET" && segments == ["state", "wait"] {
         let since = query_u64(url, "since").unwrap_or(0);
         return Answer::json(200, &app.state_after(since, LONG_POLL));
+    }
+    if method == "GET" && segments == ["memory", "today", "wait"] {
+        let after = query_u64(url, "after").unwrap_or(0);
+        let since = query_u64(url, "sample");
+        return Answer::json(200, &app.memory_today_after(since, after, LONG_POLL));
     }
     let result: ApiResult<Option<serde_json::Value>> = (|| {
         match (method, segments.as_slice()) {

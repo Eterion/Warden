@@ -238,4 +238,25 @@ describe('AppSidebar', () => {
     expect(bar.find('img').attributes('alt')).toBe('');
     bar.unmount();
   });
+
+  it('links Overview and Memory, marking the page shown, which stays marked under Settings', async () => {
+    const bar = mount(AppSidebar);
+    const current = () => bar.findAll('nav a[aria-current=page]').map((a) => a.text());
+    expect(bar.findAll('nav a').map((a) => [a.text(), a.attributes('href')])).toEqual([
+      ['Overview', '#'],
+      ['Memory', '#/memory'],
+    ]);
+    go('memory');
+    await flushPromises();
+    expect(current()).toEqual(['Memory']);
+    openSettings();
+    await flushPromises();
+    expect(current()).toEqual(['Memory']);
+    closeModal();
+    expect(location.hash).toBe('#/memory');
+    go('');
+    await flushPromises();
+    expect(current()).toEqual(['Overview']);
+    bar.unmount();
+  });
 });

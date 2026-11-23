@@ -166,6 +166,73 @@ fn a_day_is_asked_for_by_its_date() {
 }
 
 #[test]
+fn todays_memory_is_followed_through_its_wait() {
+    let f = Fixture::new();
+    let server = f.start();
+    let addr = server.addr;
+    // Without a sample number it answers at once, with the sample it holds.
+    let first = call(addr, "GET", "/api/memory/today/wait?after=0", None);
+    assert_eq!(first.status, 200, "{}", first.body);
+    let first = first.json();
+    let today = warden_core::memory::today(warden_core::time::now_ms());
+    assert_eq!(first["date"], today.as_str());
+    assert_eq!(first["today"], true);
+    let sample = first["sample"].as_u64().expect("sample");
+
+    // With it, it waits for the next sample (one every MEMORY_EVERY here), and answers with that one.
+    let asked = std::time::Instant::now();
+    let next = call(
+        addr,
+        "GET",
+        &format!("/api/memory/today/wait?after=0&sample={sample}"),
+        None,
+    )
+    .json();
+    assert!(next["sample"].as_u64().expect("sample") > sample);
+    assert!(asked.elapsed() < MEMORY_EVERY * 4);
+    let minutes = next["minutes"].as_array().expect("minutes");
+    assert!(!minutes.is_empty(), "today has its first minute");
+    let last = minutes.last().expect("a minute")["m"].as_u64().expect("m");
+    assert!(next["summary"]["computerTotal"].as_u64().expect("total") > 0);
+
+    // Only the minutes from `after` on come back; the figures stay the whole day's.
+    let later = call(
+        addr,
+        "GET",
+        &format!("/api/memory/today/wait?after={}", last + 1),
+        None,
+    )
+    .json();
+    assert!(
+        later["minutes"]
+            .as_array()
+            .expect("minutes")
+            .iter()
+            .all(|m| m["m"].as_u64().expect("m") > last)
+    );
+    assert_eq!(later["summary"]["first"], next["summary"]["first"]);
+    assert!(
+        later["days"]
+            .as_array()
+            .expect("days")
+            .contains(&serde_json::json!(today))
+    );
+
+    // A sample number it does not hold (the server started again since) is answered at once too.
+    let asked = std::time::Instant::now();
+    let other = later["sample"].as_u64().expect("sample") + 1_000;
+    let reply = call(
+        addr,
+        "GET",
+        &format!("/api/memory/today/wait?after=0&sample={other}"),
+        None,
+    );
+    assert_eq!(reply.status, 200);
+    assert!(asked.elapsed() < MEMORY_EVERY);
+    server.stop();
+}
+
+#[test]
 fn a_linked_memory_folder_is_left_alone() {
     let f = Fixture::new();
     // The memory folder is a junction to a folder outside the data folder, holding an old day Warden would prune.

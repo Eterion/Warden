@@ -74,6 +74,7 @@ export const API_TYPES: ApiType[] = [
   e(SESSIONS, 'Source', 'Session'),
   s(SESSIONS, 'Bin', 'Bin'),
   s(MEMORY, 'MemoryDay', 'MemoryDay'),
+  s(APP, 'MemoryWait', 'MemoryWait'),
   s(MEMORY, 'Summary', 'MemoryDay'),
   s(MEMORY, 'SeriesSummary', 'MemoryDay'),
   s(MEMORY, 'Gap', 'MemoryDay'),

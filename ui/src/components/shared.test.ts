@@ -10,6 +10,7 @@ import SegmentedControl from './SegmentedControl.vue';
 import ToggleChip from './ToggleChip.vue';
 import UsageBar from './UsageBar.vue';
 import WButton from './WButton.vue';
+import WIconButton from './WIconButton.vue';
 import WListItem from './WListItem.vue';
 import WSwitch from './WSwitch.vue';
 import WTextField from './WTextField.vue';
@@ -151,6 +152,28 @@ describe('WButton', () => {
     expect(busy.get('button').attributes('aria-busy')).toBe('true');
     expect(busy.get('svg').attributes('aria-hidden')).toBe('true');
     expect(busy.get('svg').classes()).toContain('animate-spin-slow');
+  });
+});
+
+describe('WIconButton', () => {
+  it('is named by its label; with a reason it stays focusable and aria-disabled, and a click does nothing', async () => {
+    let clicks = 0;
+    const onClick = () => clicks++;
+    const live = mount(WIconButton, { props: { label: 'Next day', icon: Folder }, attrs: { onClick } });
+    expect(live.get('button').attributes('aria-label')).toBe('Next day');
+    await live.get('button').trigger('click');
+    expect(clicks).toBe(1);
+    const off = mount(WIconButton, {
+      props: { label: 'Next day', icon: Folder, disabledReason: 'This is today.' },
+      attrs: { onClick },
+    });
+    const button = off.get('button');
+    expect(button.attributes('aria-disabled')).toBe('true');
+    expect(button.attributes('disabled')).toBeUndefined();
+    expect(button.attributes('aria-label')).toBe('Next day');
+    expect(button.classes().some((c) => c.startsWith('hov:'))).toBe(false);
+    await button.trigger('click');
+    expect(clicks).toBe(1);
   });
 });
 

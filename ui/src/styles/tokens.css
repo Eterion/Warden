@@ -120,6 +120,18 @@
   /* Main's hand-off point on its weekly bar: a tick taller than the bar, 3:1 on the panel, the track and the rows. */
   --color-bar-mark: light-dark(#18181b, #f4f4f5);
 
+  /* The Memory page's chart: a band per account (and Left running, Other sign-in) in greys, the most prominent first
+     (darkest in light, lightest in dark), each 3:1 against the panel; after the fifth they start again. The band of the
+     table row under the pointer takes chart-hover, a step past the first. Hours Warden was not running are an empty
+     band in chart-gap, labelled in tertiary text. */
+  --color-chart-1: light-dark(#3f3f46, #d4d4d8);
+  --color-chart-2: light-dark(#56565f, #b1b1b8);
+  --color-chart-3: light-dark(#6b6b74, #93939c);
+  --color-chart-4: light-dark(#7e7e87, #7d7d86);
+  --color-chart-5: light-dark(#8e8e97, #6b6b74);
+  --color-chart-hover: light-dark(#09090b, #fafafa);
+  --color-chart-gap: light-dark(#fafafa, rgba(255, 255, 255, 0.035));
+
   /* Status: session states */
   --color-act-working: light-dark(#27272a, #e4e4e7);
   --color-act-waiting: light-dark(#d97706, #fbbf24);
@@ -296,6 +308,15 @@ body {
 
 @utility min-w-sessions {
   min-width: 900px;
+}
+
+@utility grid-cols-memory {
+  /* The Memory table: checkbox, account (its grey, icon and name), now, peak, share. */
+  grid-template-columns: 20px minmax(180px, 1fr) minmax(80px, 120px) minmax(80px, 120px) minmax(88px, 120px);
+}
+
+@utility min-w-memory {
+  min-width: 560px;
 }
 
 @utility dust-hole {

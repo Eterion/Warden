@@ -1,10 +1,10 @@
 <script setup lang="ts">
-// The full-height sidebar: Warden, Overview, the accounts in use with their weekly bars (and Add account beside their
+// The full-height sidebar: Warden, Overview and Memory, the accounts in use with their weekly bars (and Add account beside their
 // heading), a newer Warden's download or "Install and restart", and Settings at the bottom. In
 // the desktop app, Warden's name opens the app menu (Settings, Accounts, Quit) and the row around it moves the window.
 // In a window too short for all of it, the sidebar scrolls on its own (`relative`, so nothing positioned inside reaches
 // past it).
-import { ChevronDown, CircleUserRound, LayoutDashboard, Plus, Power, Settings } from 'lucide-vue-next';
+import { ChevronDown, CircleUserRound, LayoutDashboard, MemoryStick, Plus, Power, Settings } from 'lucide-vue-next';
 import { DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger } from 'reka-ui';
 import { computed, useTemplateRef } from 'vue';
 import NavItem from '../components/NavItem.vue';
@@ -106,7 +106,8 @@ function onMenuClosed(): void {
     </div>
 
     <nav aria-label="Main" class="flex flex-col gap-0.5 pt-2">
-      <NavItem href="#" :icon="LayoutDashboard" current>Overview</NavItem>
+      <NavItem href="#" :icon="LayoutDashboard" :current="route.page.value === 'overview'">Overview</NavItem>
+      <NavItem href="#/memory" :icon="MemoryStick" :current="route.page.value === 'memory'">Memory</NavItem>
     </nav>
 
     <div class="flex items-center justify-between gap-2 pt-4 pb-0.5 pl-2">

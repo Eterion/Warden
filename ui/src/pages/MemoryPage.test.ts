@@ -1,0 +1,262 @@
+import { flushPromises, mount } from '@vue/test-utils';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { nextTick } from 'vue';
+import type { MemoryDay, MemoryMinute, MemorySeries, MemoryWait } from '../api';
+import { isoDay } from '../memory';
+import { go, route } from '../route';
+import { store } from '../store';
+import { NOW, account, state } from '../test/state';
+import MemoryPage from './MemoryPage.vue';
+
+const GIB = 1024 * 1024;
+const TODAY = isoDay(new Date(NOW));
+const PAST = '2026-11-05';
+
+function series(n: number, kind: MemorySeries['kind'], accountId: string | null): MemorySeries {
+  return {
+    series: n,
+    kind,
+    provider: kind === 'warden' ? null : 'claude',
+    accountId,
+    account: accountId,
+    sessionId: kind === 'warden' ? null : `s${n}`,
+    parentSessionId: null,
+    name: null,
+    project: null,
+  };
+}
+
+function minute(m: number, s: [number, number][], used = 16 * GIB): MemoryMinute {
+  return { m, total: 32 * GIB, used, sum: s.reduce((a, [, v]) => a + v, 0), s };
+}
+
+function day(date: string, minutes: MemoryMinute[], extra: Partial<MemoryDay> = {}): MemoryDay {
+  return {
+    date,
+    today: date === TODAY,
+    days: [PAST, TODAY],
+    series: [series(1, 'session', 'main'), series(2, 'session', 'a1'), series(3, 'warden', null)],
+    minutes,
+    gaps: [],
+    summary: {
+      first: minutes[0]?.m ?? null,
+      last: minutes[minutes.length - 1]?.m ?? null,
+      computerTotal: minutes.length ? 32 * GIB : null,
+      now: null,
+      nowShare: null,
+      peak: null,
+      peakAt: null,
+      peakShare: null,
+      series: [],
+    },
+    ...extra,
+  };
+}
+
+const busyDay = (date: string) =>
+  day(date, [
+    minute(540, [
+      [1, 2 * GIB],
+      [2, GIB],
+      [3, 9 * 1024],
+    ]),
+    minute(541, [
+      [1, GIB],
+      [2, GIB],
+      [3, 9 * 1024],
+    ]),
+    minute(
+      542,
+      [
+        [1, GIB],
+        [3, 9 * 1024],
+      ],
+      30 * GIB,
+    ),
+  ]);
+
+/** A stand-in server: the day asked for, and today's waits answered from a queue (or held open). */
+function server(days: Record<string, MemoryDay>, waits: MemoryWait[] = []) {
+  const asked: string[] = [];
+  vi.stubGlobal('fetch', (path: string, init: RequestInit = {}) => {
+    asked.push(path);
+    const date = /date=([\d-]+)/.exec(path)?.[1];
+    if (date) {
+      const d = days[date] ?? day(date, []);
+      return Promise.resolve(new Response(JSON.stringify(d), { status: 200 }));
+    }
+    const next = waits.shift();
+    if (next) return Promise.resolve(new Response(JSON.stringify(next), { status: 200 }));
+    return new Promise((_resolve, reject) =>
+      init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))),
+    );
+  });
+  return asked;
+}
+
+beforeEach(() => {
+  store.now = NOW;
+  store.away = false;
+  store.state = state([account({ id: 'main', label: 'Main' }), account({ id: 'a1', label: 'Work' })]);
+  go('memory');
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  store.state = null;
+  go('');
+});
+
+describe('the address', () => {
+  it('names the Memory page and its day, and keeps the page under a modal', () => {
+    go('memory');
+    expect(route.page.value).toBe('memory');
+    expect(route.day.value).toBeNull();
+    go(`memory/${PAST}`);
+    expect(route.day.value).toBe(PAST);
+    go('settings/general');
+    expect(route.page.value).toBe('memory');
+    expect(route.day.value).toBe(PAST);
+    go('memory/not-a-day');
+    expect(route.day.value).toBeNull();
+    go('');
+    expect(route.page.value).toBe('overview');
+  });
+});
+
+describe('MemoryPage', () => {
+  it('shows today: the figures, the chart and the table, Next and Today saying why they do nothing', async () => {
+    server({ [TODAY]: busyDay(TODAY) });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    expect(page.get('[data-day]').text()).toBe('Monday, 9 November');
+    const figures = page.get('[data-figures]').text();
+    expect(figures).toContain('Now1 GB3% of 32 GB');
+    expect(figures).toContain('Peak3 GB at 09:00');
+    // The computer above 90% in use: amber.
+    expect(page.get('[data-computer] dd').classes()).toContain('text-attn');
+    expect(figures).toContain('Warden itself9 MB');
+    const rows = page.findAll('[data-memory-table] [role=row]');
+    expect(rows.map((r) => r.text())).toEqual([
+      'Shown in the chartAccountNowPeakShare now',
+      'Main1 GB2 GB3%',
+      'Work0 MB1 GB0%',
+    ]);
+    expect(page.find('[data-band="account:main"]').exists()).toBe(true);
+    expect(page.get('button[aria-label="Next day"]').attributes('aria-disabled')).toBe('true');
+    expect(page.get('button[aria-disabled]:not([aria-label])').text()).toBe('Today');
+    page.unmount();
+  });
+
+  it('steps to the nearest recorded day and back to today', async () => {
+    server({ [TODAY]: busyDay(TODAY), [PAST]: busyDay(PAST) });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    await page.get('button[aria-label="Previous day"]').trigger('click');
+    await flushPromises();
+    expect(location.hash).toBe(`#/memory/${PAST}`);
+    expect(page.get('[data-day]').text()).toBe('Thursday, 5 November');
+    // A past day: no Now, its peak and the computer at its highest.
+    expect(page.get('[data-figures]').text()).not.toContain('Now');
+    expect(page.get('[data-figures]').text()).toContain('Computer at its highest');
+    expect(page.get('button[aria-label="Previous day"]').attributes('aria-disabled')).toBe('true');
+    await page.get('button[aria-label="Next day"]').trigger('click');
+    await flushPromises();
+    expect(location.hash).toBe('#/memory');
+    page.unmount();
+  });
+
+  it("leaves a band out of the chart and the figures with its checkbox, and darkens the hovered row's band", async () => {
+    server({ [TODAY]: busyDay(TODAY) });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    const box = page.get('[role=checkbox][aria-label="Show Work in the chart"]');
+    expect(box.attributes('aria-checked')).toBe('true');
+    await box.trigger('click');
+    expect(page.get('[role=checkbox][aria-label="Show Work in the chart"]').attributes('aria-checked')).toBe('false');
+    expect(page.find('[data-band="account:a1"]').exists()).toBe(false);
+    expect(page.get('[data-figures]').text()).toContain('Peak2 GB');
+    // The row stays, with its own figures.
+    expect(page.get('[data-band-row="account:a1"]').text()).toContain('1 GB');
+    await page.get('[data-band-row="account:main"]').trigger('pointerenter');
+    expect(page.get('[data-band="account:main"]').classes()).toContain('fill-chart-hover');
+    await page.get('[data-band-row="account:main"]').trigger('pointerleave');
+    expect(page.get('[data-band="account:main"]').classes()).toContain('fill-chart-1');
+    page.unmount();
+  });
+
+  it('moves the guide with the keyboard, saying what it shows', async () => {
+    server({ [TODAY]: busyDay(TODAY) });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    const chart = page.get('[data-memory-chart]');
+    expect(chart.attributes('role')).toBe('slider');
+    await chart.trigger('focus');
+    expect(chart.attributes('aria-valuetext')).toBe('09:02: Work 0 MB, Main 1 GB, total 1 GB');
+    await chart.trigger('keydown', { key: 'Home' });
+    expect(chart.attributes('aria-valuetext')).toBe('09:00: Work 1 GB, Main 2 GB, total 3 GB');
+    expect(page.get('[data-guide-tip]').text()).toContain('Total3 GB');
+    await chart.trigger('keydown', { key: 'ArrowRight' });
+    expect(chart.attributes('aria-valuenow')).toBe('541');
+    await chart.trigger('keydown', { key: 'End' });
+    expect(chart.attributes('aria-valuenow')).toBe('542');
+    await chart.trigger('keydown', { key: 'ArrowRight' });
+    expect(chart.attributes('aria-valuenow')).toBe('542');
+    await chart.trigger('blur');
+    expect(page.find('[data-guide]').exists()).toBe(false);
+    page.unmount();
+  });
+
+  it('follows today through the wait, and stops while the window is away', async () => {
+    const later: MemoryWait = {
+      ...busyDay(TODAY),
+      minutes: [minute(542, [[1, GIB]]), minute(543, [[1, 4 * GIB]])],
+      sample: 7,
+    };
+    const asked = server({ [TODAY]: busyDay(TODAY) }, [later]);
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    await flushPromises();
+    // Asked from the last minute it held, without a sample first; then with the sample the answer named.
+    const waits = asked.filter((p) => p.includes('/today/wait'));
+    expect(waits[0]).toBe('/api/memory/today/wait?after=542');
+    expect(waits[1]).toBe('/api/memory/today/wait?after=543&sample=7');
+    expect(page.get('[data-figures]').text()).toContain('Now4 GB');
+    expect(page.get('[data-figures]').text()).toContain('Peak4 GB at 09:03');
+    store.away = true;
+    await nextTick();
+    const count = asked.length;
+    await flushPromises();
+    expect(asked.length).toBe(count);
+    page.unmount();
+  });
+
+  it('reads a past day once, without waiting for samples', async () => {
+    const asked = server({ [PAST]: busyDay(PAST) });
+    go(`memory/${PAST}`);
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    expect(asked.filter((p) => p.includes('/today/wait'))).toEqual([]);
+    page.unmount();
+  });
+
+  it('says when nothing was recorded on a past day', async () => {
+    server({});
+    go('memory/2026-11-01');
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    expect(page.get('[data-memory-empty]').text()).toBe('Nothing recorded on this day.');
+    expect(page.find('[data-memory-table]').exists()).toBe(false);
+    page.unmount();
+  });
+
+  it('today with no AI sessions running shows the computer and says so in place of the bands', async () => {
+    server({ [TODAY]: day(TODAY, [minute(540, [[3, 9 * 1024]], 12 * GIB)]) });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    expect(page.get('[data-memory-none]').text()).toBe('No AI sessions are running.');
+    expect(page.get('[data-computer]').text()).toContain('12 GB of 32 GB');
+    expect(page.find('[data-memory-chart]').exists()).toBe(false);
+    page.unmount();
+  });
+});

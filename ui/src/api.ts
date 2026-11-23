@@ -231,6 +231,16 @@ export const api = {
     request<State>('POST', '/api/accounts/' + encodeURIComponent(id) + '/resets/use', { resetId }),
   openLogFolder: () => request<State>('POST', '/api/logs/open'),
   installUpdate: () => request<State>('POST', '/api/update/install'),
+  memoryDay: (date: string, signal?: AbortSignal) =>
+    request<MemoryDay>('GET', `/api/memory/day?date=${encodeURIComponent(date)}`, undefined, signal),
+  /** Today's memory from minute `after` on, once a sample newer than `sample` lands (at once without one). */
+  memoryAfter: (after: number, sample: number | null, signal: AbortSignal) =>
+    request<MemoryWait>(
+      'GET',
+      `/api/memory/today/wait?after=${after}${sample === null ? '' : `&sample=${sample}`}`,
+      undefined,
+      signal,
+    ),
 };
 
 export type SessionState = 'working' | 'waiting' | 'idle' | 'done';
@@ -261,4 +271,60 @@ export interface Bin {
   working: number;
   last: number;
   waited: boolean;
+}
+
+/**
+ * What a memory series counts: a session's CLI and everything under it; processes a session started that outlived it
+ * ('left', while they run); a session in a folder signed in as someone else (no account); Warden itself.
+ */
+export type MemoryKind = 'session' | 'left' | 'other-sign-in' | 'warden';
+
+/** One series of a day, numbered from 1 in the day; for a session's, whose it is, named as at the time. */
+export interface MemorySeries {
+  series: number;
+  kind: MemoryKind;
+  provider: Provider | null;
+  accountId: string | null;
+  /** The account's label at the time. */
+  account: string | null;
+  sessionId: string | null;
+  parentSessionId: string | null;
+  name: string | null;
+  project: string | null;
+}
+
+/** One minute of the local day (0 to 1439): the computer's total and in use, the AI sessions' total, and [series, KiB]. */
+export interface MemoryMinute {
+  m: number;
+  total: number;
+  used: number;
+  sum: number;
+  s: [number, number][];
+}
+
+/** One day's memory (docs/api.md). Memory in KiB; shares in percent of the computer's total. */
+export interface MemoryDay {
+  date: string;
+  today: boolean;
+  /** The days with recordings, oldest first. */
+  days: string[];
+  series: MemorySeries[];
+  minutes: MemoryMinute[];
+  gaps: { from: number; to: number }[];
+  summary: {
+    first: number | null;
+    last: number | null;
+    computerTotal: number | null;
+    now: number | null;
+    nowShare: number | null;
+    peak: number | null;
+    peakAt: number | null;
+    peakShare: number | null;
+    series: { series: number; now: number | null; peak: number; peakAt: number }[];
+  };
+}
+
+/** Today's memory from a minute on, and the number of the sample it holds. */
+export interface MemoryWait extends MemoryDay {
+  sample: number;
 }

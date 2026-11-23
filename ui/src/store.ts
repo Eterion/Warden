@@ -14,6 +14,8 @@ export const store = reactive({
   /** The clock the relative times use; ticks while visible. */
   now: Date.now(),
   refreshing: false,
+  /** Out of sight: the page hidden or the desktop app's window minimized. Updates pause while it is. */
+  away: false,
 });
 
 let live = false;
@@ -78,6 +80,7 @@ export function startStore(): void {
     watch(
       away,
       (hidden) => {
+        store.away = hidden;
         pauseSpinners(hidden);
         if (hidden) {
           controller?.abort();

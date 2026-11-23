@@ -1276,5 +1276,95 @@
     "bg": ["modal"],
     "min": 3,
     "use": "scrollbar thumb in a modal's body (no track of its own)"
+  },
+  {
+    "fg": "chart-1",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "the Memory chart's band 1, against the panel"
+  },
+  {
+    "fg": "chart-1",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "its swatch in the Memory table, on a hovered row"
+  },
+  {
+    "fg": "chart-2",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "the Memory chart's band 2, against the panel"
+  },
+  {
+    "fg": "chart-2",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "its swatch in the Memory table, on a hovered row"
+  },
+  {
+    "fg": "chart-3",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "the Memory chart's band 3, against the panel"
+  },
+  {
+    "fg": "chart-3",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "its swatch in the Memory table, on a hovered row"
+  },
+  {
+    "fg": "chart-4",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "the Memory chart's band 4, against the panel"
+  },
+  {
+    "fg": "chart-4",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "its swatch in the Memory table, on a hovered row"
+  },
+  {
+    "fg": "chart-5",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "the Memory chart's band 5, against the panel"
+  },
+  {
+    "fg": "chart-5",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "its swatch in the Memory table, on a hovered row"
+  },
+  {
+    "fg": "chart-hover",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "the Memory chart's band of the hovered table row, against the panel"
+  },
+  {
+    "fg": "chart-hover",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "its swatch in the Memory table"
+  },
+  {
+    "fg": "chart-hover",
+    "bg": ["panel", "row-press"],
+    "min": 3,
+    "use": "the swatch of a pressed Memory table row"
+  },
+  {
+    "fg": "tertiary",
+    "bg": ["panel", "chart-gap"],
+    "min": 4.5,
+    "use": "\"Warden not running\" on the Memory chart's empty band"
+  },
+  {
+    "fg": "text",
+    "bg": ["panel", "chart-gap"],
+    "min": 3,
+    "use": "the Memory chart's guide line across the empty band"
   }
 ]

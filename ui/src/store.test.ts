@@ -43,11 +43,13 @@ describe('store in the desktop app', () => {
     expect(signals[0]!.aborted).toBe(true);
     expect(signals).toHaveLength(1);
     expect(document.documentElement.hasAttribute('data-away')).toBe(true);
+    expect(store.away).toBe(true);
 
     desktop.minimized = false;
     await settle();
     expect(signals).toHaveLength(2);
     expect(signals[1]!.aborted).toBe(false);
+    expect(store.away).toBe(false);
     expect(document.documentElement.hasAttribute('data-away')).toBe(false);
   });
 });

@@ -221,9 +221,21 @@ pub struct App {
     memory: Mutex<memory::Recorder>,
     /// Wakes the memory sampler when the server stops.
     memory_wake: Condvar,
+    /// How many samples have landed, and whether the server stops: the open Memory page waits on it.
+    memory_sample: Mutex<(u64, bool)>,
+    /// Wakes the Memory page's long poll when a sample lands or the server stops.
+    memory_changed: Condvar,
 }
 
 type CodexSender = std::sync::mpsc::Sender<notify::Result<notify::Event>>;
+
+/// What `GET /api/memory/today/wait` answers: today's memory from a minute on, with the number of the sample it holds.
+#[derive(Debug, Serialize)]
+pub struct MemoryWait {
+    pub sample: u64,
+    #[serde(flatten)]
+    pub day: MemoryDay,
+}
 
 /// Wakes a watcher waiting on its channel.
 fn poke(wake: &Mutex<Option<CodexSender>>) {
@@ -513,6 +525,8 @@ impl App {
             desktop,
             memory: Mutex::new(recorder),
             memory_wake: Condvar::new(),
+            memory_sample: Mutex::new((0, false)),
+            memory_changed: Condvar::new(),
         };
         // The sessions the CLIs' own lists hold, before the hooks' pipe opens and before the first usage reading: the
         // first answer already has every session Warden can know about at start, each under its main session again
@@ -1378,6 +1392,8 @@ impl App {
         self.lock().stop = true;
         self.wake.notify_all();
         self.memory_wake.notify_all();
+        self.memory_sample_lock().1 = true;
+        self.memory_changed.notify_all();
         self.changed.notify_all();
         self.poke_codex();
         self.poke_hooks();
@@ -1469,12 +1485,51 @@ impl App {
                 left.update(&plan, &procs);
             }
         }
-        self.memory_lock().record(&memory::Reading {
+        let recorded = self.memory_lock().record(&memory::Reading {
             at_ms: now_ms(),
             total,
             available,
             values,
-        })
+        });
+        // Kept in memory even when the day file failed: the open Memory page follows it either way.
+        self.memory_sample_lock().0 += 1;
+        self.memory_changed.notify_all();
+        recorded
+    }
+
+    fn memory_sample_lock(&self) -> MutexGuard<'_, (u64, bool)> {
+        self.memory_sample
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Today's memory from minute `after` on, once a sample newer than `since` has landed (at once without `since`),
+    /// or after `timeout` either way (a long poll: the Memory page asks again). The figures are the whole day's.
+    pub fn memory_today_after(
+        &self,
+        since: Option<u64>,
+        after: u64,
+        timeout: Duration,
+    ) -> MemoryWait {
+        let sample = {
+            let guard = self.memory_sample_lock();
+            let guard = match since {
+                Some(since) => {
+                    self.memory_changed
+                        .wait_timeout_while(guard, timeout, |(n, stop)| *n == since && !*stop)
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .0
+                }
+                None => guard,
+            };
+            guard.0
+        };
+        let today = memory::today(now_ms());
+        let mut day = self
+            .memory_day(Some(&today))
+            .unwrap_or_else(|_| MemoryDay::new(&today, true, Vec::new(), memory::Day::default()));
+        day.minutes.retain(|m| u64::from(m.m) >= after);
+        MemoryWait { sample, day }
     }
 
     /// Writes the minute being gathered (the server stops).

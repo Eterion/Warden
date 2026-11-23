@@ -51,6 +51,7 @@ export const API_TYPES: ApiType[] = [
   e(ROUTING, 'Why', 'Delegation'),
   s(ROUTING, 'Ranked', 'Delegation'),
   s(ROUTING, 'Suggested', 'Delegation'),
+  s(ROUTING, 'Reserve', 'Delegation'),
   s(APP, 'ActivityView', 'State'),
   s(APP, 'Candidate', 'Candidate'),
   s(ROUTES_FILE, 'AddBody', 'POST /api/accounts'),

@@ -36,6 +36,7 @@ import {
   IDLE_LOGIN,
   expectedSignIn,
   expiryText,
+  markText,
   count,
   extraText,
   filterResets,
@@ -287,6 +288,12 @@ const suggestedKey = computed(() => {
 /** The Extra usage column shows only while some account has spent some. */
 const showExtra = computed(() => accounts.value.some((a) => extraText(a.provider, a.usage) !== null));
 
+/** What main's mark says: up to where it takes work, what it keeps and why. */
+function markLabel(a: Account, at: number): string {
+  const d = store.state?.delegation;
+  return d ? markText(d.reserve, at, a.label, store.now) : '';
+}
+
 /** Main's hand-off point on its weekly bar, while it is below 100%. */
 function mark(a: Account, k: number): number | undefined {
   const at = store.state?.delegation.handOffAt;
@@ -506,15 +513,26 @@ function sessionAccount(s: Session): Account | undefined {
                 <span v-if="k === 0 && row(a).note && !row(a).note!.idle" class="sr-only"
                   >{{ [row(a).note!.problem, row(a).note!.age].filter(Boolean).join('. ') }}.</span
                 >
-                <span v-if="mark(a, k) !== undefined" class="sr-only"
-                  >{{ a.label }} takes delegated work only up to {{ mark(a, k) }}% now.</span
-                >
                 <template v-if="limit">
                   <span class="flex flex-wrap justify-between gap-x-2 text-12">
                     <span class="font-semibold whitespace-nowrap tabular-nums">{{ limit.used }}</span>
                     <span :class="['whitespace-nowrap', muted(a)]">{{ limit.reset }}</span>
                   </span>
-                  <UsageBar :percent="limit.percent" :level="loginIdle(a) ? 'idle' : limit.level" :mark="mark(a, k)" />
+                  <!-- Main's weekly bar with its hand-off mark explains the mark on hover and keyboard focus. -->
+                  <WTooltip
+                    v-if="mark(a, k) !== undefined"
+                    :text="markLabel(a, mark(a, k)!)"
+                    :aria-label="markLabel(a, mark(a, k)!)"
+                    class="block w-full py-1"
+                    data-hand-off-mark
+                  >
+                    <UsageBar
+                      :percent="limit.percent"
+                      :level="loginIdle(a) ? 'idle' : limit.level"
+                      :mark="mark(a, k)"
+                    />
+                  </WTooltip>
+                  <UsageBar v-else :percent="limit.percent" :level="loginIdle(a) ? 'idle' : limit.level" />
                 </template>
                 <span v-else :class="['text-12', muted(a)]">
                   {{ k === 0 && row(a).noFive ? 'No 5-hour limit' : 'Not read yet' }}

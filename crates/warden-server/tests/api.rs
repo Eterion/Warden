@@ -1552,10 +1552,29 @@ fn using_a_claude_reset_claims_it_with_the_accounts_own_login_then_reads_it_agai
 fn using_a_codex_reset_redeems_it_with_the_accounts_own_login() {
     let f = Fixture::new();
     let folder = f.codex_folder(".codex-work", "me@acme.example", "codex-token");
+    // Its week used up, as its last log says.
+    common::write(
+        &folder.join("sessions/2026/11/07/rollout-a.jsonl"),
+        &format!(
+            "{}
+",
+            common::codex_token_count("2026-11-07T09:00:00Z", 40.0, 100.0)
+        ),
+    );
     *f.resets.answer.lock().expect("lock") = Some((200, common::RESETS_ANSWER.into()));
     let server = f.start();
     let addr = server.addr;
     add(addr, "codex", &folder, "Codex");
+    let used = |s: &Value| {
+        let u = &s["accounts"][0]["usage"];
+        (
+            u["fiveHour"]["usedPercent"].as_f64(),
+            u["weekly"]["usedPercent"].as_f64(),
+        )
+    };
+    eventually("the log's reading", || {
+        used(&state(addr)) == (Some(40.0), Some(100.0))
+    });
     call(addr, "POST", "/api/usage/refresh", None);
     assert!(f.resets.redeemed.lock().expect("lock").is_empty());
 
@@ -1567,6 +1586,7 @@ fn using_a_codex_reset_redeems_it_with_the_accounts_own_login() {
     assert_eq!(reply.json()["error"], "This reset was already used.");
     assert!(f.log_text().contains("Codex: reset refused (already used)"));
     assert_eq!(state(addr)["accounts"][0]["resets"][0]["id"], "credit-1");
+    assert_eq!(used(&state(addr)), (Some(40.0), Some(100.0)));
 
     // Redeemed: the list read again has none left.
     *f.resets.redeem_answer.lock().expect("lock") = None;
@@ -1576,6 +1596,8 @@ fn using_a_codex_reset_redeems_it_with_the_accounts_own_login() {
     let reply = use_reset(addr, "a1", "credit-1");
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert_eq!(reply.json()["accounts"][0]["resets"], json!([]));
+    // A full reset refilled both limits: its reading says so at once, as its logs would only after its next run.
+    assert_eq!(used(&reply.json()), (Some(0.0), Some(0.0)));
     let redeemed = f.resets.redeemed.lock().expect("lock").clone();
     assert_eq!(redeemed.len(), 2);
     let (token, account, credit, request) = &redeemed[1];

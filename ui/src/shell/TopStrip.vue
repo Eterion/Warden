@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // The thin top strip. The status bar names the account that gets the work now and why ("Work goes to Claude 2: its week
-// resets in 15 h"), or, in amber, a limit reset to use first; Warden's order of the accounts shows on hover and focus.
+// resets in 15 h"), or, in amber, a limit reset to use first. On hover and focus: the whole item (a narrow window cuts
+// it), Warden's order of the accounts, and what main keeps for the user and why.
 // Then "Usage read N min ago", which reads usage again on click. In the desktop app the strip also moves the window
 // (there is no classic title bar) and ends with the window's own controls, Close in red on hover.
 import { CloudOff, Copy, Hourglass, Minus, RefreshCw, Square, X } from 'lucide-vue-next';
@@ -38,12 +39,12 @@ const closeControl = 'hov:bg-close-hover hov:text-on-close press:bg-close-press 
       </template>
       <WTooltip
         v-else-if="work"
-        :text="work.order"
+        :text="work.tooltip"
         :class="['inline-flex min-w-0 items-center gap-1.5', work.attn ? 'text-attn' : '']"
         data-work
       >
         <Hourglass v-if="work.attn" class="size-3.5 shrink-0 text-attn-icon" aria-hidden="true" />
-        {{ work.lead }}
+        <span class="shrink-0 whitespace-nowrap">{{ `${work.lead} ` }}</span>
         <ProviderMark :provider="work.account.provider" size="xs" />
         <!-- One flex item, so the text after the name stays with it when read out. -->
         <span class="min-w-0 truncate"

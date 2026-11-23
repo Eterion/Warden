@@ -480,15 +480,96 @@ function whenText(at: number, now: number): string {
   return days <= 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`;
 }
 
+type Reserve = State['delegation']['reserve'];
+
+/**
+ * The time that counts left before main's weekly reset, out of a week's, from the core's figures: "34 of 45 work
+ * hours" with work hours, otherwise "4 of 7 days" (hours within the last day, "15 of 168 hours"). `your` reads "34 of
+ * your 45 work hours". With it, the number left, for the verb.
+ */
+function counted(r: Reserve, your = false): { text: string; left: number } {
+  const of = your ? 'of your' : 'of';
+  if (r.workHours) {
+    const left = Math.round(r.leftMin / 60);
+    return { text: `${left} ${of} ${Math.round(r.weekMin / 60)} work hours`, left };
+  }
+  if (r.leftMin >= 24 * 60) {
+    const left = Math.round(r.leftMin / (24 * 60));
+    return { text: `${left} of 7 days`, left };
+  }
+  const left = Math.ceil(r.leftMin / 60);
+  return { text: `${left} of 168 hours`, left };
+}
+
+/**
+ * What main keeps for the user now and why, in one short line (the status bar's tooltip): "Claude keeps 19% for you
+ * now: 25% × 34 of 45 work hours left before Fri 05:00".
+ */
+export function keepsLine(r: Reserve, label: string, now: number): string {
+  if (r.configured === 0) return `${label} keeps none of its week for you`;
+  if (r.resetsAt === null) return `${label} keeps ${r.kept}% for you: its weekly reset is not known yet`;
+  const before = `left before ${resetTime(r.resetsAt, now)}`;
+  return `${label} keeps ${r.kept === 0 ? 'none' : `${r.kept}%`} for you now: ${r.configured}% × ${counted(r).text} ${before}`;
+}
+
+/**
+ * Settings › Accounts, under "Keep for my own work": up to where main takes work and what it keeps, then why, with the
+ * figures. `configured` and `handOffAt` follow the slider while it is dragged; the time counted is the core's.
+ */
+export function reserveText(
+  r: Reserve,
+  configured: number,
+  handOffAt: number,
+  label: string,
+  now: number,
+): { point: string; why: string } {
+  const kept = 100 - handOffAt;
+  const point =
+    kept === 0
+      ? `${label} takes delegated work up to 100% now: it keeps none of its week for you.`
+      : `${label} takes delegated work only up to ${handOffAt}% now: it keeps ${kept}% of its week for you.`;
+  if (configured === 0) return { point, why: `You keep none of ${label}'s week, so it takes work up to its limit.` };
+  if (r.resetsAt === null)
+    return { point, why: `All of your ${configured}% is kept until Warden reads when ${label}'s week ends.` };
+  const ends = `${label}'s week ends (${resetTime(r.resetsAt, now)})`;
+  const only = r.workHours ? ', counting only your work hours' : '';
+  if (kept === 0)
+    return {
+      point,
+      why: `None of your ${configured}% is kept now: ${r.workHours ? 'no work hours are' : 'no time is'} left before ${ends}, so none of it goes unused.`,
+    };
+  const c = counted(r, true);
+  const left = `${c.text} ${c.left === 1 ? 'is' : 'are'} left`;
+  if (kept >= configured)
+    return {
+      point,
+      why: `All of your ${configured}% is kept now: ${left} before ${ends}. It shrinks as they pass${only}, so by the reset none is kept and none of it goes unused.`,
+    };
+  return {
+    point,
+    why: `Your ${configured}% shrinks as ${ends}${only}: ${left}, so ${kept}% now. By the reset none is kept, so none of it goes unused.`,
+  };
+}
+
+/** Main's mark on its weekly bar, for its tooltip and screen readers: the point, what is kept, and why. */
+export function markText(r: Reserve, handOffAt: number, label: string, now: number): string {
+  const why =
+    r.configured === 0 || r.resetsAt === null || r.kept === 0
+      ? ''
+      : `, shrinking with the ${counted(r).text} left before ${resetTime(r.resetsAt, now)}`;
+  return `${label} takes delegated work only up to ${handOffAt}% now: it keeps ${r.kept}% for you${why}.`;
+}
+
 /**
  * The status bar's one item: who gets the work now and why ("Work goes to Claude 2: its week resets in 15 h"), or, in
- * amber, a limit reset to use first. `lead` comes before the account's mark and name, `rest` after them; `order` is
- * the tooltip: the accounts that can take work, as Warden ranks them.
+ * amber, a limit reset to use first. `lead` comes before the account's mark and name, `rest` after them. `order` is
+ * the accounts as Warden ranks them, then what main keeps and why (for screen readers); `tooltip` the whole item, as
+ * a narrow window may cut it, then the same.
  */
 export function workGoesTo(
   state: Pick<State, 'delegation' | 'main' | 'accounts'>,
   now: number,
-): { account: Account; lead: string; rest: string; attn: boolean; order: string } | null {
+): { account: Account; lead: string; rest: string; attn: boolean; order: string; tooltip: string } | null {
   const d = state.delegation;
   const byId = (id: string): Account | null =>
     id === 'main' ? state.main : (state.accounts.find((a) => a.id === id) ?? null);
@@ -505,16 +586,25 @@ export function workGoesTo(
       const title = s?.accountId === r.accountId ? `its ${s.title}` : 'a limit reset';
       when = r.deadline === null ? title : `${title} expires ${whenText(r.deadline, now)}`;
     } else if (r.deadline === null) when = 'no weekly limit';
+    else if (r.estimated) when = 'reset not known yet';
     else when = `${k === 0 ? 'resets in ' : ''}${distance(r.deadline, now)}`;
-    const keeps =
-      r.accountId === 'main' && !r.reset && d.handOffAt < 100 ? `; keeps ${100 - d.handOffAt}% for you` : '';
-    return `${r.account.label} (${when}${keeps})`;
+    return `${r.account.label} (${when})`;
   });
   let order = parts.join(', then ');
-  if (d.why === 'mainKeeps' && main) order = `${main.label} keeps the rest of its week for you. ${order}`;
   if (d.why === 'mainUnknown' && main)
     order = `${main.label}'s usage is unknown until Warden is signed in to it. ${order}`;
-  order = order.trim() || 'No account has room in its week and 5-hour window now.';
+  order = order.trim() || 'No account has room in its week and 5-hour window now';
+  if (main) order = `${order}. ${keepsLine(d.reserve, main.label, now)}.`;
+  const item = (
+    account: Account,
+    lead: string,
+    rest: string,
+    attn = false,
+    before = '',
+  ): ReturnType<typeof workGoesTo> => {
+    const full = `${before}${order}`;
+    return { account, lead, rest, attn, order: full, tooltip: `${lead} ${account.label}${rest}. ${full}` };
+  };
 
   const s = d.suggestedReset;
   const resetAccount = s ? byId(s.accountId) : null;
@@ -522,29 +612,26 @@ export function workGoesTo(
     const meanwhile = working
       ? `Until then, work ${working.id === 'main' ? 'stays on' : 'goes to'} ${working.label}. `
       : '';
-    return {
-      account: resetAccount,
-      lead: 'Use',
-      rest: `'s ${s.title} (expires ${whenText(s.expiresAt, now)}) to give it the work`,
-      attn: true,
-      order: `${meanwhile}${order}`,
-    };
+    const rest = `'s ${s.title} (expires ${whenText(s.expiresAt, now)}) to give it the work`;
+    return item(resetAccount, 'Use', rest, true, meanwhile);
   }
   if (!working) return null;
   if (working.id === 'main')
-    return {
-      account: working,
-      lead: 'Work stays on',
-      rest: d.why === 'noOther' ? ': no other account has room' : ': its week resets soonest',
-      attn: false,
-      order,
-    };
-  const deadline = ranked.find((r) => r.accountId === working.id && !r.reset)?.deadline ?? null;
+    return item(
+      working,
+      'Work stays on',
+      d.why === 'noOther' ? ': no other account has room' : ': its week resets soonest',
+    );
+  const entry = ranked.find((r) => r.accountId === working.id && r.canWork);
   const rest =
     d.why === 'mainFiveHourFull' && main
       ? ` while ${main.label}'s 5-hour window is full`
-      : deadline === null
+      : !entry || entry.deadline === null
         ? ': it has no weekly limit'
-        : `: its week resets in ${distance(deadline, now)}`;
-  return { account: working, lead: 'Work goes to', rest, attn: false, order };
+        : entry.reset
+          ? `: its limit reset expires in ${distance(entry.deadline, now)}, so it spends its own room first`
+          : entry.estimated
+            ? ': its weekly reset is not known yet'
+            : `: its week resets in ${distance(entry.deadline, now)}`;
+  return item(working, 'Work goes to', rest);
 }

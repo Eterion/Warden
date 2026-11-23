@@ -48,6 +48,7 @@ export function state(accounts: Account[]): State {
         : null,
       why: 'mainSoonest',
       handOffAt: 75,
+      reserve: { configured: 25, kept: 25, resetsAt: null, workHours: false, leftMin: 10_080, weekMin: 10_080 },
       order: [],
       suggestedReset: null,
     },

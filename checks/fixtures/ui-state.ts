@@ -107,10 +107,19 @@ export function normalState(now: number): State {
       mainWorksItself: false,
       delegated: { accountId: 'a2' },
       why: 'soonest',
-      handOffAt: 84,
+      // 25% kept shrinks with 3 of 7 days left before main's reset: 11% (main takes work up to 89%).
+      handOffAt: 89,
+      reserve: {
+        configured: 25,
+        kept: 11,
+        resetsAt: now + 3 * 24 * HOUR,
+        workHours: false,
+        leftMin: 3 * 24 * 60,
+        weekMin: 7 * 24 * 60,
+      },
       order: [
-        { accountId: 'a2', deadline: now + 26 * HOUR, reset: false },
-        { accountId: 'main', deadline: now + 3 * 24 * HOUR, reset: false },
+        { accountId: 'a2', deadline: now + 26 * HOUR, estimated: false, reset: false, canWork: true },
+        { accountId: 'main', deadline: now + 3 * 24 * HOUR, estimated: false, reset: false, canWork: true },
       ],
       suggestedReset: null,
     },
@@ -442,10 +451,11 @@ export function resetSuggestedState(now: number): State {
     mainWorksItself: false,
     delegated: { accountId: 'a2' },
     why: 'mainKeeps',
-    handOffAt: 84,
+    handOffAt: s.delegation.handOffAt,
+    reserve: s.delegation.reserve,
     order: [
-      { accountId: 'main', deadline: now + 2 * day, reset: true },
-      { accountId: 'a2', deadline: now + 4 * day, reset: false },
+      { accountId: 'main', deadline: now + 2 * day, estimated: false, reset: true, canWork: false },
+      { accountId: 'a2', deadline: now + 4 * day, estimated: false, reset: false, canWork: true },
     ],
     suggestedReset: { accountId: 'main', resetId: 'grant-full', title: 'Full reset', expiresAt: now + 2 * day },
   };

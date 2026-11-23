@@ -73,7 +73,7 @@ fn reserve_line_shrinks_at_start_middle_and_end_of_week() {
         (WEEK_MS / 2, 87.5, 87),
         (0, 100.0, 100),
     ] {
-        assert_eq!(reserve_now(25, None, Some(NOW + left), NOW), 100.0 - line);
+        assert_eq!(reserve_now(25, None, Some(NOW + left), NOW).0, 100.0 - line);
         let (s, mut r) = setup();
         usage(
             &mut r,
@@ -97,9 +97,9 @@ fn reserve_line_shrinks_at_start_middle_and_end_of_week() {
             assert!(!main_ranked(&decide(&s, &r, NOW)));
         }
     }
-    assert_eq!(reserve_now(25, None, Some(NOW + 2 * WEEK_MS), NOW), 25.0);
-    assert_eq!(reserve_now(25, None, Some(NOW - 1), NOW), 0.0);
-    assert_eq!(reserve_now(25, None, None, NOW), 25.0);
+    assert_eq!(reserve_now(25, None, Some(NOW + 2 * WEEK_MS), NOW).0, 25.0);
+    assert_eq!(reserve_now(25, None, Some(NOW - 1), NOW).0, 0.0);
+    assert_eq!(reserve_now(25, None, None, NOW), (25.0, WEEK_MS, WEEK_MS));
 }
 
 /// Monday 2026-11-09 00:00 in local time (UTC+1, Central European winter time), as ms since the epoch.
@@ -118,7 +118,7 @@ fn work_hours_shrink_the_reserve_only_while_working() {
     // Reset Friday 05:00; Monday to Friday, 09:00 to 18:00 (45 hours a week).
     let reset = Some(at(4, 5, 0));
     let w = office();
-    let reserve = |now| reserve_with(25, Some(&w), reset, now, &cet);
+    let reserve = |now| reserve_with(25, Some(&w), reset, now, &cet).0;
     // Monday 09:00: 36 of 45 work hours left, so 20% (hands off at 80%).
     assert!((reserve(at(0, 9, 0)) - 20.0).abs() < 1e-9);
     assert_eq!(hand_off(reserve(at(0, 9, 0))), 80);
@@ -142,14 +142,19 @@ fn weekends_do_not_shrink_it_and_a_reset_inside_a_window_counts_up_to_the_reset(
     let sun = reserve_with(25, Some(&w), reset, at(6, 20, 0), &cet);
     assert_eq!(sat, sun);
     // Monday 9 hours, Tuesday 09:00 to the reset at 12:00: 12 of 45 hours.
-    assert!((sat - 25.0 * 12.0 / 45.0).abs() < 1e-9);
+    assert!((sat.0 - 25.0 * 12.0 / 45.0).abs() < 1e-9);
+    // With the time that counts: 12 of 45 work hours.
+    assert_eq!((sat.1, sat.2), (12 * HOUR_MS, 45 * HOUR_MS));
     // A reset more than a week away counts as a week: the full reserve.
     assert_eq!(
-        reserve_with(25, Some(&w), Some(at(20, 0, 0)), at(0, 0, 0), &cet),
+        reserve_with(25, Some(&w), Some(at(20, 0, 0)), at(0, 0, 0), &cet).0,
         25.0
     );
     // No reset known: the full reserve.
-    assert_eq!(reserve_with(25, Some(&w), None, at(0, 0, 0), &cet), 25.0);
+    assert_eq!(
+        reserve_with(25, Some(&w), None, at(0, 0, 0), &cet),
+        (25.0, 45 * HOUR_MS, 45 * HOUR_MS)
+    );
 }
 
 #[test]
@@ -747,8 +752,8 @@ fn resets(r: &mut Readings, id: &str, list: &[(&str, i64)]) {
 #[test]
 fn a_reset_that_expires_soonest_is_suggested_and_the_work_goes_on_meanwhile() {
     let (s, mut r) = example();
-    // Codex has used 95% of its week (resets in 72 hours); its Full reset expires in 10 hours, before Claude 2's week.
-    usage(&mut r, "third", Some(10.0), Some(95.0), NOW + 72 * HOUR_MS);
+    // Codex has used its week (resets in 72 hours); its Full reset expires in 10 hours, before Claude 2's week.
+    usage(&mut r, "third", Some(10.0), Some(100.0), NOW + 72 * HOUR_MS);
     resets(
         &mut r,
         "third",
@@ -756,7 +761,7 @@ fn a_reset_that_expires_soonest_is_suggested_and_the_work_goes_on_meanwhile() {
     );
     let d = decide(&s, &r, NOW);
     assert_eq!(order(&d), ["third", "second", MAIN_ID]);
-    assert!(d.order[0].reset);
+    assert!(d.order[0].reset && !d.order[0].can_work);
     assert_eq!(
         d.suggested_reset,
         Some(Suggested {
@@ -771,10 +776,10 @@ fn a_reset_that_expires_soonest_is_suggested_and_the_work_goes_on_meanwhile() {
     assert!(!d.main_works_itself);
     let text = guidance(&s, &r, Some(MAIN_ID), Bash, None, NOW).text;
     assert!(
-        text.contains("\nTell the user: Warden suggests using third's Full reset (Weekly + 5 hr) on Warden's Overview, as it expires before third's week resets. Once it is used, third takes the work; until then, work goes as above.\n"),
+        text.contains("\nTell the user: Warden suggests using third's Full reset (Weekly + 5 hr) on Warden's Overview, as it expires before third's week resets. Using it gives third's week back, and Warden ranks third again; until then, work goes as above.\n"),
         "{text}"
     );
-    // A week used up counts too, and a full 5-hour window.
+    // Its 5-hour window full too: a full reset refills both, so it still counts.
     usage(&mut r, "third", Some(95.0), Some(100.0), NOW + 72 * HOUR_MS);
     assert!(decide(&s, &r, NOW).suggested_reset.is_some());
     // Once used: the reset is gone and the readings refill, so it is ranked by its week as usual.
@@ -787,16 +792,44 @@ fn a_reset_that_expires_soonest_is_suggested_and_the_work_goes_on_meanwhile() {
 }
 
 #[test]
-fn only_a_usable_week_reset_before_the_weekly_one_on_a_nearly_used_week_counts() {
+fn an_account_with_room_spends_it_before_its_reset_is_suggested() {
+    let (s, mut r) = example();
+    // Both Warden accounts at 95%, each with a reset lost before Claude 2's week: they keep their own room and are
+    // ranked by their resets' expiry, so the work goes to them first and nothing is suggested yet.
+    usage(&mut r, "second", Some(10.0), Some(95.0), NOW + 15 * HOUR_MS);
+    resets(&mut r, "second", &[("Full reset", NOW + 8 * HOUR_MS)]);
+    usage(&mut r, "third", Some(10.0), Some(95.0), NOW + 72 * HOUR_MS);
+    resets(&mut r, "third", &[("Weekly reset", NOW + 5 * HOUR_MS)]);
+    let d = decide(&s, &r, NOW);
+    assert_eq!(order(&d), ["third", "second", MAIN_ID]);
+    assert!(d.order.iter().take(2).all(|e| e.reset && e.can_work));
+    assert_eq!(d.suggested_reset, None);
+    assert_eq!(target(&s, &r).as_deref(), Some("third"));
+    // Once third's week is used up, its reset is suggested and second takes the work meanwhile.
+    usage(&mut r, "third", Some(10.0), Some(100.0), NOW + 72 * HOUR_MS);
+    let d = decide(&s, &r, NOW);
+    assert_eq!(
+        d.suggested_reset.map(|x| x.account_id).as_deref(),
+        Some("third")
+    );
+    assert_eq!(d.delegated.map(|t| t.account_id).as_deref(), Some("second"));
+}
+
+#[test]
+fn only_a_reset_that_lets_the_account_work_again_counts() {
     let (s, mut r) = example();
     let suggested = |r: &Readings| decide(&s, r, NOW).suggested_reset.map(|x| x.account_id);
-    usage(&mut r, "third", Some(10.0), Some(90.0), NOW + 72 * HOUR_MS);
+    usage(&mut r, "third", Some(10.0), Some(100.0), NOW + 72 * HOUR_MS);
     resets(&mut r, "third", &[("Weekly reset", NOW + 10 * HOUR_MS)]);
     assert_eq!(suggested(&r).as_deref(), Some("third"));
+    // A weekly reset leaves a full 5-hour window full: it does not count then.
+    usage(&mut r, "third", Some(95.0), Some(100.0), NOW + 72 * HOUR_MS);
+    assert_eq!(suggested(&r), None);
+    usage(&mut r, "third", Some(10.0), Some(100.0), NOW + 72 * HOUR_MS);
     // Below 90%: ranked by its week, and the reset waits.
     usage(&mut r, "third", Some(10.0), Some(89.0), NOW + 72 * HOUR_MS);
-    assert_eq!(suggested(&r), None);
-    usage(&mut r, "third", Some(10.0), Some(95.0), NOW + 72 * HOUR_MS);
+    assert!(!decide(&s, &r, NOW).order.iter().any(|e| e.reset));
+    usage(&mut r, "third", Some(10.0), Some(100.0), NOW + 72 * HOUR_MS);
     // A 5-hour or Fable reset gives no week back; one expiring after the week resets is not lost; an expired one is
     // gone.
     for (title, at) in [
@@ -817,11 +850,20 @@ fn only_a_usable_week_reset_before_the_weekly_one_on_a_nearly_used_week_counts()
     let d = decide(&s, &r, NOW);
     assert_eq!(order(&d), ["second", "third", MAIN_ID]);
     assert_eq!(d.suggested_reset, None);
-    // Signed out: no reset counts.
-    r.accounts.get_mut("third").expect("third").error = Some(UsageError::SignedOut);
+    // An expired login cannot use one, and its last reading still counts as usual.
     resets(&mut r, "third", &[("Full reset", NOW + 10 * HOUR_MS)]);
+    r.accounts.get_mut("third").expect("third").error =
+        Some(UsageError::LoginExpired { status: Some(401) });
     assert_eq!(suggested(&r), None);
-    // Main's own reset counts the same way.
+    usage(&mut r, "third", Some(10.0), Some(95.0), NOW + 72 * HOUR_MS);
+    r.accounts.get_mut("third").expect("third").error =
+        Some(UsageError::LoginExpired { status: Some(401) });
+    assert_eq!(order(&decide(&s, &r, NOW)), ["second", "third", MAIN_ID]);
+    // Signed out: no reset counts.
+    usage(&mut r, "third", Some(10.0), Some(100.0), NOW + 72 * HOUR_MS);
+    r.accounts.get_mut("third").expect("third").error = Some(UsageError::SignedOut);
+    assert_eq!(suggested(&r), None);
+    // Main's own reset counts the same way: its own sign-in uses it.
     usage(&mut r, MAIN_ID, Some(10.0), Some(95.0), NOW + 93 * HOUR_MS);
     resets(&mut r, MAIN_ID, &[("Full reset", NOW + 5 * HOUR_MS)]);
     let d = decide(&s, &r, NOW);
@@ -831,4 +873,40 @@ fn only_a_usable_week_reset_before_the_weekly_one_on_a_nearly_used_week_counts()
     );
     assert_eq!(d.why, Why::MainKeeps);
     assert_eq!(target(&s, &r).as_deref(), Some("second"));
+}
+
+#[test]
+fn an_assumed_week_is_marked_and_the_reserve_carries_its_figures() {
+    let (mut s, mut r) = example();
+    r.accounts.remove("second");
+    usage(&mut r, "third", Some(10.0), Some(40.0), NOW - 1);
+    let d = decide(&s, &r, NOW);
+    for e in &d.order {
+        assert_eq!(e.estimated, e.account_id != MAIN_ID, "{}", e.account_id);
+    }
+    // Main resets in 93 hours of 168: 25% of its week shrinks to 13.8%, so it keeps 14% (takes work up to 86%).
+    assert_eq!(
+        d.reserve,
+        Reserve {
+            configured: 25,
+            kept: 14,
+            resets_at: Some(NOW + 93 * HOUR_MS),
+            work_hours: false,
+            left_min: 93 * 60,
+            week_min: 168 * 60,
+        }
+    );
+    assert_eq!(d.hand_off_at, 86);
+    // Main's reset unknown: all of it is kept, all of the week counts.
+    r.accounts.get_mut(MAIN_ID).expect("main").usage = None;
+    let d = decide(&s, &r, NOW);
+    assert_eq!(
+        (d.reserve.kept, d.reserve.resets_at, d.reserve.left_min),
+        (25, None, 168 * 60)
+    );
+    // Work hours: the week holds 45 of them.
+    s.work_hours = Some(office());
+    let d = decide(&s, &r, NOW);
+    assert!(d.reserve.work_hours);
+    assert_eq!(d.reserve.week_min, 45 * 60);
 }

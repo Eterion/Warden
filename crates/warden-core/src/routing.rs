@@ -42,8 +42,30 @@ pub struct Ranked {
     pub account_id: String,
     /// When its allowance is lost: its weekly reset, or a limit reset's expiry (`reset`). `None`: no weekly limit.
     pub deadline: Option<i64>,
-    /// Ranked by a limit reset that gives it the work once used (its week is at 90% or more).
+    /// The deadline is assumed, a fresh week from now: no reading yet, or its weekly reset has passed.
+    pub estimated: bool,
+    /// Ranked by a limit reset's expiry: its week is at 90% or more and the reset is lost before the week resets.
     pub reset: bool,
+    /// It can take work on its own allowance now (one ranked by a reset may still have some room).
+    pub can_work: bool,
+}
+
+/// What main keeps for the user now and why: the configured reserve shrinks with the time that counts left before
+/// main's weekly reset, out of a week's (the work hours, when set).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reserve {
+    /// The reserve set in Settings, a percent of main's week.
+    pub configured: u8,
+    /// What it keeps now, the whole percent the hand-off point shows: 100 less it.
+    pub kept: u8,
+    /// Main's weekly reset; `None`: not known (the whole reserve is kept).
+    pub resets_at: Option<i64>,
+    /// Only the work hours count.
+    pub work_hours: bool,
+    /// Minutes that count left before the reset (at most a week's), and in a week.
+    pub left_min: u32,
+    pub week_min: u32,
 }
 
 /// A limit reset Warden suggests using: it expires before its account's week resets, and before any other account's
@@ -67,6 +89,7 @@ pub struct Decision {
     /// Main's hand-off point: the whole percent of its week up to which it takes work (100 less the reserve now,
     /// rounded down). The same number decides, so what is shown is what Warden does.
     pub hand_off_at: u8,
+    pub reserve: Reserve,
     /// The accounts that can take work, main too, in Warden's order: soonest deadline first.
     pub order: Vec<Ranked>,
     pub suggested_reset: Option<Suggested>,
@@ -158,13 +181,14 @@ fn local_offset_s(at_ms: i64) -> i64 {
 }
 
 /// The reserve now: it shrinks with what is left of main's week before its reset, never below zero or above the
-/// configured reserve. Without work hours that is the time left; with them, the work hours left.
+/// configured reserve. Without work hours that is the time left; with them, the work hours left. With it, the time
+/// that counts left before the reset (at most a week's) and in a week (ms); with no reset known, all of a week.
 fn reserve_now(
     reserve: u8,
     work_hours: Option<&WorkHours>,
     resets_at: Option<i64>,
     now: i64,
-) -> f64 {
+) -> (f64, i64, i64) {
     reserve_with(reserve, work_hours, resets_at, now, &local_offset_s)
 }
 
@@ -175,22 +199,20 @@ fn reserve_with(
     resets_at: Option<i64>,
     now: i64,
     offset_s: &dyn Fn(i64) -> i64,
-) -> f64 {
-    let Some(at) = resets_at else {
-        return f64::from(reserve);
+) -> (f64, i64, i64) {
+    let week = match work_hours {
+        None => WEEK_MS,
+        Some(w) => w.days.len() as i64 * i64::from(w.to - w.from) * MINUTE_MS,
+    };
+    let Some(at) = resets_at.filter(|_| week > 0) else {
+        return (f64::from(reserve), week, week);
     };
     let end = at.min(now.saturating_add(WEEK_MS));
-    let share = match work_hours {
-        None => (end - now).clamp(0, WEEK_MS) as f64 / WEEK_MS as f64,
-        Some(w) => {
-            let week = w.days.len() as i64 * i64::from(w.to - w.from) * MINUTE_MS;
-            if week == 0 {
-                return f64::from(reserve);
-            }
-            (work_ms_between(w, now, end, offset_s) as f64 / week as f64).clamp(0.0, 1.0)
-        }
+    let left = match work_hours {
+        None => (end - now).clamp(0, WEEK_MS),
+        Some(w) => work_ms_between(w, now, end, offset_s).clamp(0, week),
     };
-    f64::from(reserve) * share
+    (f64::from(reserve) * (left as f64 / week as f64), left, week)
 }
 
 /// How much of the work windows (each work day's `from` to `to`, local time) falls between `start` and `end`.
@@ -249,27 +271,31 @@ pub fn reset_text(at: Option<i64>) -> String {
     format!("{} {:02}:{:02}", at.weekday(), at.hour(), at.minute())
 }
 
-/// The week share from which an account with a usable limit reset is ranked by that reset instead of its week.
+/// The week share from which an account with a usable limit reset is ranked by that reset.
 const NEARLY_USED_UP: f64 = 90.0;
 /// The 5-hour share from which an account takes no work until that window resets.
 const FIVE_HOUR_FULL: f64 = 90.0;
 
-/// Whether a limit reset gives a week back: a full or weekly reset (Claude's "Full reset" and "Weekly reset",
-/// Codex's "Full reset (Weekly + 5 hr)"). A 5-hour reset, a Fable reset (only what Fable used) or one without a name
-/// does not count.
-fn refills_week(reset: &Reset) -> bool {
-    reset
-        .title
-        .as_deref()
-        .is_some_and(|t| t.starts_with("Full reset") || t == "Weekly reset")
+/// Which limits a limit reset refills, from its short name: a full reset (Claude's "Full reset", Codex's "Full reset
+/// (Weekly + 5 hr)") both, a weekly reset the week, a 5-hour reset the 5-hour window. A Fable reset (only what Fable
+/// used) or one without a name refills neither for certain. `(five_hour, week)`.
+pub fn refills(title: Option<&str>) -> (bool, bool) {
+    match title {
+        Some(t) if t.starts_with("Full reset") => (true, true),
+        Some("Weekly reset") => (false, true),
+        Some("5-hour reset") => (true, false),
+        _ => (false, false),
+    }
 }
 
-/// The account's soonest usable reset that gives its week back and expires before its week resets, when its week is
-/// at [`NEARLY_USED_UP`] or more: what ranks it then.
+/// The account's soonest reset that would let it work again and is lost first: its week is at [`NEARLY_USED_UP`] or
+/// more, and the reset can be used (it has an id), refills the week (and the 5-hour window too while that is full),
+/// and expires before the week resets.
 fn reset_to_use<'a>(
     reading: Option<&'a AccountReading>,
     weekly: Option<&Limit>,
     week: f64,
+    five_full: bool,
     now: i64,
 ) -> Option<&'a Reset> {
     let week_resets = weekly.and_then(|l| l.resets_at).filter(|at| *at > now)?;
@@ -279,7 +305,10 @@ fn reset_to_use<'a>(
     reading?
         .resets
         .iter()
-        .filter(|r| r.id.is_some() && refills_week(r))
+        .filter(|r| {
+            let (five, week) = refills(r.title.as_deref());
+            r.id.is_some() && week && (five || !five_full)
+        })
         .filter(|r| r.expires_at.is_some_and(|at| at > now && at < week_resets))
         .min_by_key(|r| r.expires_at)
 }
@@ -289,20 +318,26 @@ struct Entry<'a> {
     account_id: &'a str,
     /// `None`: no weekly limit, ranked after every account with one.
     deadline: Option<i64>,
+    /// The deadline is a fresh week from now, assumed: no reading yet, or its weekly reset has passed.
+    estimated: bool,
     /// Its room: what is left of its week (main: up to its hand-off point), or of its 5-hour window without a weekly
-    /// limit; a reset gives a whole week.
+    /// limit; a reset that has to be used first gives a whole week.
     room: f64,
     /// Settings order, main first.
     order: usize,
+    /// Ranked by this reset's expiry: it is lost before the account's week resets.
     reset: Option<&'a Reset>,
+    /// It can take work now, on its own allowance.
+    can_work: bool,
 }
 
-/// Its weekly reset, or a fresh week from now when there is none ahead (no reading, or a reset that has passed).
-fn week_deadline(weekly: Option<&Limit>, now: i64) -> i64 {
-    weekly
-        .and_then(|l| l.resets_at)
-        .filter(|at| *at > now)
-        .unwrap_or(now.saturating_add(WEEK_MS))
+/// Its weekly reset, or a fresh week from now when there is none ahead (no reading, or a reset that has passed), and
+/// whether it is that fresh week.
+fn week_deadline(weekly: Option<&Limit>, now: i64) -> (i64, bool) {
+    match weekly.and_then(|l| l.resets_at).filter(|at| *at > now) {
+        Some(at) => (at, false),
+        None => (now.saturating_add(WEEK_MS), true),
+    }
 }
 
 /// Earliest deadline first, the same hour counting as a tie; then more room; then settings order, main first.
@@ -316,6 +351,46 @@ fn rank(entries: &mut [Entry]) {
             .then_with(|| b.room.total_cmp(&a.room))
             .then_with(|| a.order.cmp(&b.order))
     });
+}
+
+/// What an account brings to the ranking, before its entry is made.
+struct Candidate<'a> {
+    account_id: &'a str,
+    order: usize,
+    reset: Option<&'a Reset>,
+    can_work: bool,
+    weekly: Option<&'a Limit>,
+    has_week: bool,
+    room: f64,
+}
+
+/// An account's entry: ranked by a reset that is lost before its week, otherwise by its week when it can work; `None`
+/// when it is neither.
+fn entry(c: Candidate<'_>, now: i64) -> Option<Entry<'_>> {
+    let (week_at, estimated) = week_deadline(c.weekly, now);
+    match c.reset {
+        // An account that can still work spends its own room first, as soon as its reset would be lost; one that
+        // cannot waits for the reset to be used.
+        Some(r) => Some(Entry {
+            account_id: c.account_id,
+            deadline: r.expires_at,
+            estimated: false,
+            room: if c.can_work { c.room } else { 100.0 },
+            order: c.order,
+            reset: Some(r),
+            can_work: c.can_work,
+        }),
+        None if c.can_work => Some(Entry {
+            account_id: c.account_id,
+            deadline: c.has_week.then_some(week_at),
+            estimated: c.has_week && estimated,
+            room: c.room,
+            order: c.order,
+            reset: None,
+            can_work: true,
+        }),
+        None => None,
+    }
 }
 
 pub fn decide(settings: &Settings, readings: &Readings, now: i64) -> Decision {
@@ -344,28 +419,28 @@ pub fn decide(settings: &Settings, readings: &Readings, now: i64) -> Decision {
         if login.is_some() {
             continue;
         }
-        if let Some(reset) = reset_to_use(reading, weekly, week, now) {
-            entries.push(Entry {
-                account_id: &account.id,
-                deadline: reset.expires_at,
-                room: 100.0,
-                order: k + 1,
-                reset: Some(reset),
-            });
-            continue;
-        }
-        if skip.is_some() {
-            continue;
-        }
+        // An expired login cannot use a reset (Warden never renews it); its last reading still counts.
+        let expired =
+            reading.is_some_and(|r| matches!(r.error, Some(UsageError::LoginExpired { .. })));
+        let reset = if expired {
+            None
+        } else {
+            reset_to_use(reading, weekly, week, five >= FIVE_HOUR_FULL, now)
+        };
         // No reading: zero usage and a full week.
         let has_week = usage.is_none() || weekly.is_some();
-        entries.push(Entry {
-            account_id: &account.id,
-            deadline: has_week.then(|| week_deadline(weekly, now)),
-            room: if has_week { 100.0 - week } else { 100.0 - five },
-            order: k + 1,
-            reset: None,
-        });
+        entries.extend(entry(
+            Candidate {
+                account_id: &account.id,
+                order: k + 1,
+                reset,
+                can_work: skip.is_none(),
+                weekly,
+                has_week,
+                room: if has_week { 100.0 - week } else { 100.0 - five },
+            },
+            now,
+        ));
     }
     let main = readings.accounts.get(MAIN_ID);
     let usage = main.and_then(|r| r.usage.as_ref());
@@ -382,39 +457,37 @@ pub fn decide(settings: &Settings, readings: &Readings, now: i64) -> Decision {
     let weekly = usage.and_then(|u| u.weekly.as_ref());
     let week = known.then(|| used_now(weekly, now)).flatten();
     let five = usage.and_then(|u| used_now(u.five_hour.as_ref(), now));
-    let remaining = reserve_now(
+    let resets_at = weekly.and_then(|l| l.resets_at);
+    let (kept, left_ms, week_ms) = reserve_now(
         settings.reserve,
         settings.work_hours.as_ref(),
-        weekly.and_then(|l| l.resets_at),
+        resets_at,
         now,
     );
-    let hand_off_at = hand_off(remaining);
+    let hand_off_at = hand_off(kept);
     let five_full = five.is_some_and(|five| five >= FIVE_HOUR_FULL);
-    let main_reset = week.and_then(|week| reset_to_use(main, weekly, week, now));
-    if let Some(reset) = main_reset {
-        entries.push(Entry {
-            account_id: MAIN_ID,
-            deadline: reset.expires_at,
-            room: 100.0,
-            order: 0,
-            reset: Some(reset),
-        });
-    } else if let Some(week) = week.filter(|w| *w < f64::from(hand_off_at) && !five_full) {
-        // Main counts only up to its hand-off point: above what it keeps for the user.
-        entries.push(Entry {
-            account_id: MAIN_ID,
-            deadline: Some(week_deadline(weekly, now)),
-            room: f64::from(hand_off_at) - week,
-            order: 0,
-            reset: None,
-        });
+    if let Some(week) = week {
+        // Main counts only up to its hand-off point: above what it keeps for the user. Its own sign-in can use a reset.
+        entries.extend(entry(
+            Candidate {
+                account_id: MAIN_ID,
+                order: 0,
+                reset: reset_to_use(main, weekly, week, five_full, now),
+                can_work: week < f64::from(hand_off_at) && !five_full,
+                weekly,
+                has_week: true,
+                room: f64::from(hand_off_at) - week,
+            },
+            now,
+        ));
     }
     let main_ranked = entries
         .iter()
-        .any(|e| e.account_id == MAIN_ID && e.reset.is_none());
+        .any(|e| e.account_id == MAIN_ID && e.can_work);
     rank(&mut entries);
-    // A reset ranked first is suggested; the work goes to the first account ranked by its own allowance meanwhile.
-    let suggested_reset = entries.first().and_then(|e| {
+    // A reset ranked first, on an account that cannot work without it, is suggested; the work goes to the first account
+    // that can work meanwhile.
+    let suggested_reset = entries.first().filter(|e| !e.can_work).and_then(|e| {
         let reset = e.reset?;
         Some(Suggested {
             account_id: e.account_id.to_owned(),
@@ -423,13 +496,10 @@ pub fn decide(settings: &Settings, readings: &Readings, now: i64) -> Decision {
             expires_at: reset.expires_at?,
         })
     });
-    let pick = entries
-        .iter()
-        .find(|e| e.reset.is_none())
-        .map(|e| e.account_id);
+    let pick = entries.iter().find(|e| e.can_work).map(|e| e.account_id);
     let delegated = entries
         .iter()
-        .find(|e| e.reset.is_none() && e.account_id != MAIN_ID)
+        .find(|e| e.can_work && e.account_id != MAIN_ID)
         .map(|e| Target {
             account_id: e.account_id.to_owned(),
         });
@@ -452,14 +522,25 @@ pub fn decide(settings: &Settings, readings: &Readings, now: i64) -> Decision {
         .map(|e| Ranked {
             account_id: e.account_id.to_owned(),
             deadline: e.deadline,
+            estimated: e.estimated,
             reset: e.reset.is_some(),
+            can_work: e.can_work,
         })
         .collect();
+    let minutes = |ms: i64| u32::try_from(ms.max(0) / MINUTE_MS).unwrap_or(u32::MAX);
     Decision {
         main_works_itself,
         delegated,
         why,
         hand_off_at,
+        reserve: Reserve {
+            configured: settings.reserve,
+            kept: 100 - hand_off_at,
+            resets_at,
+            work_hours: settings.work_hours.is_some(),
+            left_min: minutes(left_ms),
+            week_min: minutes(week_ms),
+        },
         order,
         suggested_reset,
         accounts: listed,
@@ -579,7 +660,7 @@ pub fn guidance(
         };
         if let Some(label) = label {
             text.push_str(&format!(
-                "\nTell the user: Warden suggests using {label}'s {} on Warden's Overview, as it expires before {label}'s week resets. Once it is used, {label} takes the work; until then, work goes as above.",
+                "\nTell the user: Warden suggests using {label}'s {} on Warden's Overview, as it expires before {label}'s week resets. Using it gives {label}'s week back, and Warden ranks {label} again; until then, work goes as above.",
                 s.title
             ));
         }

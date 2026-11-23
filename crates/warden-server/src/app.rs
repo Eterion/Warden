@@ -359,6 +359,7 @@ pub struct DelegationView {
     delegated: Option<DelegatedView>,
     why: routing::Why,
     hand_off_at: u8,
+    reserve: routing::Reserve,
     order: Vec<routing::Ranked>,
     suggested_reset: Option<routing::Suggested>,
 }
@@ -371,6 +372,7 @@ impl From<routing::Decision> for DelegationView {
             }),
             why: d.why,
             hand_off_at: d.hand_off_at,
+            reserve: d.reserve,
             order: d.order,
             suggested_reset: d.suggested_reset,
         }
@@ -993,6 +995,12 @@ impl App {
         {
             let mut inner = self.lock();
             inner.readings.use_reset(id, reset_id);
+            // A Codex account's usage comes only from its logs: show what the reset refilled until they say more.
+            if id != store::MAIN_ID && account.provider == Provider::Codex {
+                inner
+                    .readings
+                    .refill_after_reset(id, Some(&title), now_ms());
+            }
             self.save_readings(&mut inner);
         }
         // Read again as a refresh by hand reads it: its usage and its limit resets.

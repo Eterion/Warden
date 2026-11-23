@@ -905,7 +905,16 @@ function fakeApi(current: () => Fixture): Plugin {
         if (fixture === 'accountHooksMissing') state.accounts[0]!.hooks = 'notInstalled';
         if (fixture === 'problems') problemsState(state);
         if (fixture === 'hooks') hooksState(state);
-        if (fixture === 'workHours') state.settings.workHours = { days: [1, 2, 3, 4, 5], from: 540, to: 1080 };
+        if (fixture === 'workHours') {
+          state.settings.workHours = { days: [1, 2, 3, 4, 5], from: 540, to: 1080 };
+          // 25% kept shrinks with 20 of 45 work hours left: 11%.
+          state.delegation.reserve = {
+            ...state.delegation.reserve,
+            workHours: true,
+            leftMin: 20 * 60,
+            weekMin: 45 * 60,
+          };
+        }
         if (fixture === 'mainPick') {
           // Second's week resets after main's.
           const second = state.accounts.find((a) => a.id === 'a2');
@@ -915,8 +924,14 @@ function fakeApi(current: () => Fixture): Plugin {
             mainWorksItself: true,
             why: 'mainSoonest',
             order: [
-              { accountId: 'main', deadline: state.main?.usage?.weekly?.resetsAt ?? null, reset: false },
-              { accountId: 'a2', deadline: now + 4 * 24 * 3_600_000, reset: false },
+              {
+                accountId: 'main',
+                deadline: state.main?.usage?.weekly?.resetsAt ?? null,
+                estimated: false,
+                reset: false,
+                canWork: true,
+              },
+              { accountId: 'a2', deadline: now + 4 * 24 * 3_600_000, estimated: false, reset: false, canWork: true },
             ],
           };
         }
@@ -929,10 +944,10 @@ function fakeApi(current: () => Fixture): Plugin {
           };
         if (fixture === 'noTarget')
           state.delegation = {
+            ...state.delegation,
             mainWorksItself: true,
             delegated: null,
             why: 'noOther',
-            handOffAt: 84,
             order: state.delegation.order.filter((r) => r.accountId === 'main'),
             suggestedReset: null,
           };

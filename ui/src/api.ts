@@ -86,7 +86,16 @@ export interface Delegation {
   /** Main's hand-off point: the whole percent of its week up to which it takes work; the same number decides. */
   handOffAt: number;
   /** The accounts that can take work, main too, soonest deadline first; `deadline` null: no weekly limit. */
-  order: { accountId: string; deadline: number | null; reset: boolean }[];
+  order: { accountId: string; deadline: number | null; estimated: boolean; reset: boolean; canWork: boolean }[];
+  /** What main keeps for the user now and why (docs/api.md). */
+  reserve: {
+    configured: number;
+    kept: number;
+    resetsAt: number | null;
+    workHours: boolean;
+    leftMin: number;
+    weekMin: number;
+  };
   /** A limit reset Warden suggests using; the work goes to the next account until it is used. */
   suggestedReset: { accountId: string; resetId: string; title: string; expiresAt: number } | null;
 }

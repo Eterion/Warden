@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { Account, Main, Problem, State } from './api';
 import {
   distance,
+  keepsLine,
+  markText,
+  reserveText,
   IDLE_LOGIN,
   WEEKDAYS,
   accountProblems,
@@ -30,6 +33,8 @@ import {
   workHoursText,
 } from './format';
 import { NOW, account } from './test/state';
+
+type Ranked = State['delegation']['order'][number];
 
 describe('Settings › Accounts wording', () => {
   const main = (extra: Partial<Account> = {}, signIn: Main['signIn']['state'] = 'signedIn'): Main => ({
@@ -152,25 +157,40 @@ describe('work hours, the hand-off point and the status bar', () => {
     }
   });
 
-  it('says who gets the work and why, with the order on hover, and a reset to use first in amber', () => {
+  it('says who gets the work and why, with the order and what main keeps on hover, and a reset to use first in amber', () => {
     const H = 3_600_000;
     const main = { ...account({ id: 'main', label: 'Claude' }), signIn: { state: 'signedIn' as const, email: null } };
     const second = account({ id: 's', label: 'Claude 2' });
     const codex = account({ id: 'c', label: 'Codex', provider: 'codex' });
     const base = { main, accounts: [second, codex] } as Pick<State, 'main' | 'accounts'>;
-    const order = [
-      { accountId: 's', deadline: NOW + 15 * H, reset: false },
-      { accountId: 'c', deadline: NOW + 72 * H, reset: false },
-      { accountId: 'main', deadline: NOW + 93 * H, reset: false },
-    ];
-    const d = {
+    const at = (accountId: string, deadline: number | null, more: Partial<Ranked> = {}): Ranked => ({
+      accountId,
+      deadline,
+      estimated: false,
+      reset: false,
+      canWork: true,
+      ...more,
+    });
+    const order = [at('s', NOW + 15 * H), at('c', NOW + 72 * H), at('main', NOW + 93 * H)];
+    // Main's 25% shrinks with 93 of 168 hours left: it keeps 14%, so it takes work up to 86%.
+    const reserve = {
+      configured: 25,
+      kept: 14,
+      resetsAt: NOW + 93 * H,
+      workHours: false,
+      leftMin: 93 * 60,
+      weekMin: 168 * 60,
+    };
+    const d: State['delegation'] = {
       mainWorksItself: false,
       delegated: { accountId: 's' },
-      why: 'soonest' as const,
-      handOffAt: 80,
+      why: 'soonest',
+      handOffAt: 86,
+      reserve,
       order,
       suggestedReset: null,
     };
+    const keeps = `Claude keeps 14% for you now: 25% × 4 of 7 days left before ${resetTime(NOW + 93 * H, NOW)}.`;
     const said = (delegation: Partial<State['delegation']>) => {
       const w = workGoesTo({ ...base, delegation: { ...d, ...delegation } }, NOW)!;
       return [`${w.lead} ${w.account.label}${w.rest}`, w.order, w.attn];
@@ -178,9 +198,13 @@ describe('work hours, the hand-off point and the status bar', () => {
     // The rule's example: delegating to the week lost soonest.
     expect(said({})).toEqual([
       'Work goes to Claude 2: its week resets in 15 h',
-      'Claude 2 (resets in 15 h), then Codex (3 days), then Claude (4 days; keeps 20% for you)',
+      `Claude 2 (resets in 15 h), then Codex (3 days), then Claude (4 days). ${keeps}`,
       false,
     ]);
+    // The tooltip starts with the whole item, which a narrow window may cut.
+    expect(workGoesTo({ ...base, delegation: d }, NOW)!.tooltip).toBe(
+      `Work goes to Claude 2: its week resets in 15 h. Claude 2 (resets in 15 h), then Codex (3 days), then Claude (4 days). ${keeps}`,
+    );
     // Main is the pick.
     expect(said({ mainWorksItself: true, why: 'mainSoonest', order: [order[2]!, order[0]!] })[0]).toBe(
       'Work stays on Claude: its week resets soonest',
@@ -190,35 +214,95 @@ describe('work hours, the hand-off point and the status bar', () => {
       'Work stays on Claude: no other account has room',
     );
     expect(said({ mainWorksItself: true, delegated: null, why: 'noOther', order: [] })[1]).toBe(
-      'No account has room in its week and 5-hour window now.',
+      `No account has room in its week and 5-hour window now. ${keeps}`,
     );
     // Main's 5-hour window is full.
     expect(said({ why: 'mainFiveHourFull', order: order.slice(0, 2) })[0]).toBe(
       "Work goes to Claude 2 while Claude's 5-hour window is full",
     );
-    // Main keeps the rest of its week, or its usage is unknown: said first in the tooltip.
-    expect(said({ why: 'mainKeeps', order: order.slice(0, 2) })[1]).toBe(
-      'Claude keeps the rest of its week for you. Claude 2 (resets in 15 h), then Codex (3 days)',
-    );
+    // Main's usage unknown: said first in the tooltip.
     expect(said({ why: 'mainUnknown', order: order.slice(0, 2) })[1]).toMatch(/^Claude's usage is unknown/);
-    // An account without a weekly limit.
-    expect(said({ order: [{ accountId: 's', deadline: null, reset: false }] })).toEqual([
+    // An account without a weekly limit, and one whose reset is not known yet (a fresh week assumed).
+    expect(said({ order: [at('s', null)] }).slice(0, 2)).toEqual([
       'Work goes to Claude 2: it has no weekly limit',
-      'Claude 2 (no weekly limit)',
-      false,
+      `Claude 2 (no weekly limit). ${keeps}`,
     ]);
+    expect(said({ order: [at('s', NOW + 168 * H, { estimated: true })] }).slice(0, 2)).toEqual([
+      'Work goes to Claude 2: its weekly reset is not known yet',
+      `Claude 2 (reset not known yet). ${keeps}`,
+    ]);
+    // An account spending its last room before its own reset expires.
+    expect(said({ order: [at('s', NOW + 5 * H, { reset: true })] })[0]).toBe(
+      'Work goes to Claude 2: its limit reset expires in 5 h, so it spends its own room first',
+    );
     // A reset to use: in amber, the work going to the next account meanwhile.
     const tomorrow = new Date(2026, 10, 10, 12, 0).getTime();
     expect(
       said({
-        order: [{ accountId: 'c', deadline: tomorrow, reset: true }, order[0]!, order[2]!],
+        order: [at('c', tomorrow, { reset: true, canWork: false }), order[0]!, order[2]!],
         suggestedReset: { accountId: 'c', resetId: 'r1', title: 'Full reset', expiresAt: tomorrow },
       }),
     ).toEqual([
       "Use Codex's Full reset (expires tomorrow) to give it the work",
-      'Until then, work goes to Claude 2. Codex (its Full reset expires tomorrow), then Claude 2 (15 h), then Claude (4 days; keeps 20% for you)',
+      `Until then, work goes to Claude 2. Codex (its Full reset expires tomorrow), then Claude 2 (15 h), then Claude (4 days). ${keeps}`,
       true,
     ]);
+  });
+
+  it('says what main keeps and why, with the figures, with and without work hours, at either end of its week', () => {
+    const fri = new Date(2026, 10, 13, 5, 0).getTime();
+    const when = resetTime(fri, NOW);
+    // With work hours: 34 of 45 left, 25% shrinks to 19% (takes work up to 81%).
+    const work = { configured: 25, kept: 19, resetsAt: fri, workHours: true, leftMin: 34 * 60, weekMin: 45 * 60 };
+    expect(reserveText(work, 25, 81, 'Claude', NOW)).toEqual({
+      point: 'Claude takes delegated work only up to 81% now: it keeps 19% of its week for you.',
+      why: `Your 25% shrinks as Claude's week ends (${when}), counting only your work hours: 34 of your 45 work hours are left, so 19% now. By the reset none is kept, so none of it goes unused.`,
+    });
+    expect(keepsLine(work, 'Claude', NOW)).toBe(
+      `Claude keeps 19% for you now: 25% × 34 of 45 work hours left before ${when}`,
+    );
+    expect(markText(work, 81, 'Claude', NOW)).toBe(
+      `Claude takes delegated work only up to 81% now: it keeps 19% for you, shrinking with the 34 of 45 work hours left before ${when}.`,
+    );
+    // Without them: all hours count, in days.
+    const days = { ...work, workHours: false, kept: 15, leftMin: 4 * 24 * 60 - 30, weekMin: 168 * 60 };
+    expect(reserveText(days, 25, 85, 'Claude', NOW).why).toBe(
+      `Your 25% shrinks as Claude's week ends (${when}): 4 of 7 days are left, so 15% now. By the reset none is kept, so none of it goes unused.`,
+    );
+    // The start of the week: all of it kept, said plainly.
+    const start = { ...days, kept: 25, leftMin: 168 * 60 };
+    expect(reserveText(start, 25, 75, 'Claude', NOW).why).toBe(
+      `All of your 25% is kept now: 7 of 7 days are left before Claude's week ends (${when}). It shrinks as they pass, so by the reset none is kept and none of it goes unused.`,
+    );
+    // The end: none kept, said plainly; the last hours count in hours.
+    const end = { ...work, kept: 0, leftMin: 0 };
+    expect(reserveText(end, 25, 100, 'Claude', NOW)).toEqual({
+      point: 'Claude takes delegated work up to 100% now: it keeps none of its week for you.',
+      why: `None of your 25% is kept now: no work hours are left before Claude's week ends (${when}), so none of it goes unused.`,
+    });
+    expect(keepsLine(end, 'Claude', NOW)).toBe(
+      `Claude keeps none for you now: 25% × 0 of 45 work hours left before ${when}`,
+    );
+    expect(keepsLine({ ...days, kept: 1, leftMin: 5 * 60 }, 'Claude', NOW)).toContain('25% × 5 of 168 hours left');
+    // Main's reset unknown: the whole reserve is kept.
+    const unknown = { ...days, kept: 25, resetsAt: null, leftMin: 168 * 60 };
+    expect(reserveText(unknown, 25, 75, 'Claude', NOW).why).toBe(
+      "All of your 25% is kept until Warden reads when Claude's week ends.",
+    );
+    expect(keepsLine(unknown, 'Claude', NOW)).toBe('Claude keeps 25% for you: its weekly reset is not known yet');
+    expect(markText(unknown, 75, 'Claude', NOW)).toBe(
+      'Claude takes delegated work only up to 75% now: it keeps 25% for you.',
+    );
+    // No reserve at all.
+    const none = { ...days, configured: 0, kept: 0 };
+    expect(reserveText(none, 0, 100, 'Claude', NOW).why).toBe(
+      "You keep none of Claude's week, so it takes work up to its limit.",
+    );
+    expect(keepsLine(none, 'Claude', NOW)).toBe('Claude keeps none of its week for you');
+    // While the slider is dragged, its value and the preview's point, with the core's time counted.
+    expect(reserveText(work, 40, 70, 'Claude', NOW).point).toBe(
+      'Claude takes delegated work only up to 70% now: it keeps 30% of its week for you.',
+    );
   });
 
   it('says how far away a reset is in hours within a day, then in days', () => {

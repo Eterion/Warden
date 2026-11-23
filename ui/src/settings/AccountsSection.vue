@@ -22,6 +22,7 @@ import {
   accountProblems,
   clock,
   handOffPreview,
+  reserveText,
   hooksCell,
   type Fix,
   whereText,
@@ -90,6 +91,13 @@ const handOffAt = computed(() => {
   if (!s) return 100;
   if (reserve.value === s.settings.reserve) return s.delegation.handOffAt;
   return handOffPreview(reserve.value, s.settings.workHours, s.main?.usage?.weekly?.resetsAt ?? null, store.now);
+});
+
+/** Under the slider: up to where main takes work and what it keeps, then why, with the core's figures. */
+const reserveLines = computed(() => {
+  const s = store.state;
+  if (!s?.main) return null;
+  return reserveText(s.delegation.reserve, reserve.value, handOffAt.value, s.main.label, store.now);
 });
 
 // Work hours: a switch, the days, and one range for the hours; each change is saved at once (the range once per drag).
@@ -303,9 +311,8 @@ function identityLine(a: Account): string | null {
             />
             <span class="text-13 whitespace-nowrap text-secondary tabular-nums">{{ reserve }}% of its week</span>
           </span>
-          <span class="text-13 text-secondary tabular-nums" data-hand-off
-            >{{ store.state.main.label }} takes delegated work only up to {{ handOffAt }}% now</span
-          >
+          <span class="text-13 text-secondary tabular-nums" data-hand-off>{{ reserveLines?.point }}</span>
+          <span class="text-13 text-tertiary tabular-nums" data-reserve-why>{{ reserveLines?.why }}</span>
         </div>
       </div>
 
@@ -314,7 +321,8 @@ function identityLine(a: Account): string | null {
           <div class="flex min-w-0 flex-auto flex-col gap-0.5">
             <label for="work-hours" class="cursor-pointer text-14 font-medium">My work hours</label>
             <span class="text-13 text-tertiary"
-              >Main's reserve shrinks only during these hours, so evenings and weekends keep it.</span
+              >{{ store.state.main.label }}'s reserve shrinks only during these hours, so evenings and weekends keep
+              it.</span
             >
           </div>
           <WSwitch

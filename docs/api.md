@@ -100,8 +100,17 @@ interface Delegation {
   why: 'mainSoonest' | 'noOther' | 'soonest' | 'mainKeeps' | 'mainFiveHourFull' | 'mainUnknown';
   /** Main's hand-off point: the whole percent of its week up to which it takes work (100 less the reserve now, rounded down); the same number decides. */
   handOffAt: number;
-  /** The accounts that can take work, main too, in Warden's order: earliest deadline first (the same hour a tie, then more room, then settings order with main first); those without a weekly limit last. */
-  order: { accountId: string; deadline: number | null; reset: boolean }[];
+  /** What main keeps for the user now and why: the configured reserve (`configured`, a percent of its week) shrinks with the minutes that count left before its weekly reset (`resetsAt`; `null`: not known, all of it kept) out of a week's (`leftMin` of `weekMin`; only the work hours when `workHours`, otherwise all hours, at most a week's); `kept` is the whole percent the hand-off point shows (100 less `handOffAt`). */
+  reserve: {
+    configured: number;
+    kept: number;
+    resetsAt: number | null;
+    workHours: boolean;
+    leftMin: number;
+    weekMin: number;
+  };
+  /** The accounts Warden ranks, main too, in its order: earliest deadline first (the same hour a tie, then more room, then settings order with main first); those without a weekly limit last. `deadline` is the weekly reset, or a limit reset's expiry (`reset`); `estimated`: a fresh week from now is assumed (no reading yet, or its reset has passed); `canWork`: it can take work on its own allowance now (one ranked by a reset may not). */
+  order: { accountId: string; deadline: number | null; estimated: boolean; reset: boolean; canWork: boolean }[];
   /** A limit reset Warden suggests using: ranked first, it expires before its account's week resets. The work goes to the next account until the user uses it. */
   suggestedReset: { accountId: string; resetId: string; title: string; expiresAt: number } | null;
 }
@@ -352,7 +361,7 @@ Work goes to the account whose week resets soonest and still has room, so the al
 - Its deadline: its weekly reset. With no reading yet, or a weekly reset that has passed (it counts as 0%, including for an expired login), a week from now. An account with no weekly limit comes after every account with one, by its 5-hour room.
 - The pick: the earliest deadline. Deadlines in the same hour tie: then the one with more room left (main's up to its hand-off point), then settings order, main first.
 - Main works itself when it is the pick, or when no other account can take work; otherwise it delegates to the pick.
-- Limit resets: an account (main too) whose week is at 90% or more, with a usable full or weekly limit reset that expires before its weekly reset, is ranked by that reset's expiry instead. Ranked first, the reset is suggested (`suggestedReset`) and the work goes to the next account until the user uses it in the app; Warden never uses one itself. Once used, the account's readings refill and it is ranked by its week again.
+- Limit resets: an account (main too) whose week is at 90% or more, with a usable full or weekly limit reset that expires before its weekly reset, is ranked by that reset's expiry instead. Ranked first, on an account that cannot work without it, the reset is suggested (`suggestedReset`) and the work goes to the next account until the user uses it in the app; Warden never uses one itself. An account that still has room, or main below its hand-off point, takes the work at that deadline and spends its own room first, and only then is its reset suggested. A reset counts only when using it lets the account work again: it refills the week, and the 5-hour window too while that is at 90% or more, and the account's login can use it (an expired Warden login cannot). Once used, the account's readings refill (Claude's read again; a Codex account's, which come from its logs, show the limits the reset refills as unused until its logs say more) and it is ranked by its week again.
 
 One group of two command handlers on `UserPromptSubmit` (every message), in the account's `settings.json` (Claude) or `hooks.json` (Codex), added after the user's own groups:
 
@@ -378,7 +387,7 @@ Replace `<name>` with a few words saying what the run does, and `<task>` with th
 - Spare (skipped: signed out)
 ```
 
-While main delegates the first line is "Warden: main is handing work off now (<why>), so run each task on <account> (Warden's pick: its week resets soonest of the accounts with room); here, only talk to the user and check results. Whenever the user asks, work in this session instead, or run on the account they name.", where <why> is "another account's week resets sooner than main's", "main keeps the rest of its week for the user", "main's 5-hour window is full" or "main's usage is unknown" (and the pick's, for an account without a weekly limit, "no account with a weekly limit has room, and it has none"). A suggested reset adds a second line: "Tell the user: Warden suggests using <account>'s <reset> on Warden's Overview, as it expires before <account>'s week resets. Once it is used, <account> takes the work; until then, work goes as above." With nothing to delegate to, "Warden: no other account can take delegated work now, so work in this session. If the user names an account, run it there." Parent ids come only from hook stdin: ASCII letters, digits, `-` and `_`, at most 128 characters; a missing or invalid id omits the variable.
+While main delegates the first line is "Warden: main is handing work off now (<why>), so run each task on <account> (Warden's pick: its week resets soonest of the accounts with room); here, only talk to the user and check results. Whenever the user asks, work in this session instead, or run on the account they name.", where <why> is "another account's week resets sooner than main's", "main keeps the rest of its week for the user", "main's 5-hour window is full" or "main's usage is unknown" (and the pick's, for an account without a weekly limit, "no account with a weekly limit has room, and it has none"). A suggested reset adds a second line: "Tell the user: Warden suggests using <account>'s <reset> on Warden's Overview, as it expires before <account>'s week resets. Using it gives <account>'s week back, and Warden ranks <account> again; until then, work goes as above." With nothing to delegate to, "Warden: no other account can take delegated work now, so work in this session. If the user names an account, run it there." Parent ids come only from hook stdin: ASCII letters, digits, `-` and `_`, at most 128 characters; a missing or invalid id omits the variable.
 
 The guidance names the exact command for each account it sends work to, written for the shell the session's AI runs commands in, with the account's folder in single quotes and the CLI as found on PATH:
 

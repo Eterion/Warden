@@ -407,6 +407,25 @@ impl Readings {
         Some(resets.remove(at))
     }
 
+    /// After a Codex account's reset was used, as its backend confirmed: its reading, which only its CLI's logs bring,
+    /// shows the limits the reset refills (by its short name) as unused at once, so delegation ranks it again without
+    /// waiting for its next run (which, at a full week, would never come). Log events from before now are ignored from
+    /// then on. A reset of an unknown kind changes nothing.
+    pub fn refill_after_reset(&mut self, id: &str, title: Option<&str>, now: i64) {
+        let (five, week) = crate::routing::refills(title);
+        let Some(u) = self.accounts.get_mut(id).and_then(|r| r.usage.as_mut()) else {
+            return;
+        };
+        for (refilled, limit) in [(five, u.five_hour.as_mut()), (week, u.weekly.as_mut())] {
+            if let Some(l) = limit.filter(|_| refilled) {
+                l.used_percent = 0.0;
+            }
+        }
+        if five || week {
+            u.read_at = u.read_at.max(now);
+        }
+    }
+
     /// Records a usage attempt: a reading replaces the last one; an error is kept beside the last good reading.
     pub fn apply_usage(&mut self, id: &str, result: Result<Usage, UsageError>) -> UsageUpdate {
         let reading = self.accounts.entry(id.to_owned()).or_default();

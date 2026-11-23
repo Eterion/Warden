@@ -5,6 +5,7 @@ import type { Reset, Session } from '../api';
 import { fakeServer } from '../test/api';
 import { NOW, account, state } from '../test/state';
 import { DUST_MS } from '../components/dust';
+import { resetTime } from '../format';
 import OverviewPage from './OverviewPage.vue';
 
 const HOUR = 3_600_000;
@@ -110,7 +111,22 @@ describe('OverviewPage', () => {
     const marks = rows[1]!.findAll('[data-mark]');
     expect(marks).toHaveLength(1);
     expect(marks[0]!.attributes('style')).toContain('left: 98%');
-    expect(rows[1]!.text()).toContain('Main takes delegated work only up to 98% now.');
+    // The bar with the mark explains it on hover and keyboard focus, and to screen readers, from the core's figures.
+    const fri = NOW + 30 * HOUR;
+    store.state.delegation.reserve = {
+      configured: 25,
+      kept: 2,
+      resetsAt: fri,
+      workHours: true,
+      leftMin: 4 * 60,
+      weekMin: 45 * 60,
+    };
+    const page = mount(OverviewPage);
+    const explained = page.get('[data-hand-off-mark]');
+    expect(explained.element.tagName).toBe('BUTTON');
+    const said = `Main takes delegated work only up to 98% now: it keeps 2% for you, shrinking with the 4 of 45 work hours left before ${resetTime(fri, NOW)}.`;
+    expect(explained.attributes('aria-label')).toBe(said);
+    expect(page.findAllComponents({ name: 'WTooltip' }).some((w) => w.props('text') === said)).toBe(true);
     expect(rows[2]!.findAll('[data-mark]')).toHaveLength(0);
     // At 100% there is nothing to mark.
     store.state.delegation.handOffAt = 100;

@@ -475,3 +475,121 @@ export function healthyState(now: number): State {
   s.sessions = s.sessions.map((x) => ({ ...x, signedInAs: null }));
   return s;
 }
+
+// ---- Memory ----
+
+const GIB_KIB = 1024 * 1024;
+
+/** A smooth made-up rise and fall between 0 and 1. */
+function wave(t: number, period: number, phase: number): number {
+  return 0.5 + 0.5 * Math.sin((t / period + phase) * 2 * Math.PI);
+}
+
+/** A local date as yyyy-MM-dd. */
+export function localDay(at: number): string {
+  const d = new Date(at);
+  const two = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+}
+
+/** The days before today the Memory fixtures have recordings on. */
+export function memoryDays(now: number): string[] {
+  return [4, 2, 1].map((back) => localDay(now - back * 24 * HOUR)).concat(localDay(now));
+}
+
+/**
+ * A made-up day of memory (`GET /api/memory/day`): main, Second and Codex working through it, a process Second left
+ * running, Warden itself, and Warden closed over lunch. `quiet`: today with only Warden itself, no AI session.
+ */
+export function memoryDay(date: string, now: number, quiet = false): unknown {
+  const today = date === localDay(now);
+  const days = memoryDays(now);
+  if (!days.includes(date))
+    return {
+      date,
+      today,
+      days,
+      series: [],
+      minutes: [],
+      gaps: [],
+      summary: {
+        first: null,
+        last: null,
+        computerTotal: null,
+        now: null,
+        nowShare: null,
+        peak: null,
+        peakAt: null,
+        peakShare: null,
+        series: [],
+      },
+    };
+  const seed = Number(date.slice(-2));
+  const s = (
+    series: number,
+    kind: string,
+    accountId: string | null,
+    label: string | null,
+    provider: string | null,
+  ) => ({
+    series,
+    kind,
+    provider,
+    accountId,
+    account: label,
+    sessionId: kind === 'warden' ? null : `memory-${series}`,
+    parentSessionId: null,
+    name: kind === 'warden' ? null : 'Memory page',
+    project: kind === 'warden' ? null : 'Warden',
+  });
+  const series = quiet
+    ? [s(5, 'warden', null, null, null)]
+    : [
+        s(1, 'session', 'main', 'Main', 'claude'),
+        s(2, 'session', 'a2', 'Second', 'claude'),
+        s(3, 'session', 'a3', 'Codex', 'codex'),
+        s(4, 'left', 'a2', 'Second', 'claude'),
+        s(5, 'warden', null, null, null),
+      ];
+  // Each series runs part of the day: [series, from, to, its highest in GB].
+  const runs: [number, number, number, number][] = quiet
+    ? [[5, 480, 900, 0.012]]
+    : [
+        [1, 480, 900, 1.6],
+        [2, 570, 840, 1.2],
+        [3, 780, 900, 0.9],
+        [4, 840, 900, 0.4],
+        [5, 480, 900, 0.012],
+      ];
+  const minutes = [];
+  for (let m = 480; m < 900; m++) {
+    if (m >= 720 && m < 760) continue;
+    const pairs: [number, number][] = [];
+    for (const [n, from, to, gb] of runs)
+      if (m >= from && m < to)
+        pairs.push([n, Math.round(gb * GIB_KIB * (0.35 + 0.65 * wave(m + seed * 13, 47 + n * 11, n / 7)))]);
+    const sum = pairs.filter(([n]) => n !== 5).reduce((a, [, v]) => a + v, 0);
+    const used = Math.round((14 + 3 * wave(m, 180, 0.2)) * GIB_KIB + sum);
+    minutes.push({ m, total: 32 * GIB_KIB, used, sum, s: pairs });
+  }
+  const last = minutes[minutes.length - 1]!;
+  return {
+    date,
+    today,
+    days,
+    series,
+    minutes,
+    gaps: [{ from: 720, to: 760 }],
+    summary: {
+      first: 480,
+      last: last.m,
+      computerTotal: 32 * GIB_KIB,
+      now: today ? last.sum : null,
+      nowShare: null,
+      peak: null,
+      peakAt: null,
+      peakShare: null,
+      series: [],
+    },
+  };
+}

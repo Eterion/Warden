@@ -478,6 +478,33 @@ function closeWindow(pid: number): void {
   if (!found) throw new Error('the desktop window was not found to close');
 }
 
+/**
+ * Opens the window's Memory page as a user would: its sidebar link, invoked through Windows UI Automation (the
+ * WebView2's accessibility tree), then waits for the page's chart. No debugging port is opened.
+ */
+function openMemoryPage(pid: number): void {
+  const script = [
+    'Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes',
+    'Add-Type -Namespace W -Name U -MemberDefinition \'public delegate bool P(System.IntPtr h, System.IntPtr l); [DllImport("user32.dll")] public static extern bool EnumWindows(P f, System.IntPtr l); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr h, out uint p); [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr h, System.Text.StringBuilder s, int n);\'',
+    `$target = ${pid}; $script:win = [IntPtr]::Zero`,
+    '[W.U]::EnumWindows({ param($h, $l) $p = 0; [void][W.U]::GetWindowThreadProcessId($h, [ref]$p); $t = New-Object System.Text.StringBuilder 64; [void][W.U]::GetWindowText($h, $t, 64); if ($p -eq $target -and $t.ToString() -eq "Warden") { $script:win = $h }; $true }, [IntPtr]::Zero) | Out-Null',
+    'if ($script:win -eq [IntPtr]::Zero) { throw "the desktop window was not found" }',
+    '$A = [System.Windows.Automation.AutomationElement]; $T = [System.Windows.Automation.TreeScope]::Descendants',
+    '$root = $A::FromHandle($script:win)',
+    '$named = { param($n) New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $n) }',
+    '$link = $null; for ($i = 0; $i -lt 60 -and -not $link; $i++) { $link = $root.FindFirst($T, (New-Object System.Windows.Automation.AndCondition((& $named "Memory"), (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Hyperlink))))); if (-not $link) { Start-Sleep -Milliseconds 500 } }',
+    'if (-not $link) { throw "the sidebar link to the Memory page was not found" }',
+    '$link.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()',
+    '$chart = $null; for ($i = 0; $i -lt 60 -and -not $chart; $i++) { $chart = $root.FindFirst($T, (& $named "Memory over the day")); if (-not $chart) { Start-Sleep -Milliseconds 500 } }',
+    'if (-not $chart) { throw "the Memory page did not show its chart" }',
+    '"opened"',
+  ].join('; ');
+  const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+  }).trim();
+  if (!out.endsWith('opened')) throw new Error(`could not open the Memory page: ${out}`);
+}
+
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -490,7 +517,8 @@ function alive(pid: number): boolean {
 /**
  * The desktop app, in a throwaway data and home folder (WebView2's profile goes into the data folder too), with
  * setup already done and no accounts. Also checks the window's lifecycle, since the budgets depend on it:
- * - Keep running in the tray off: the window open (the app and its WebView2 processes, after the page loaded and sat
+ * - Keep running in the tray off: the window open on the Memory page with a full day (the app and its WebView2
+ *   processes, after the page loaded and sat
  *   idle) is measured; closing the window then quits Warden.
  * - On: closing the window leaves the app running alone (no WebView2 process: the window's memory is freed); that
  *   idle app is measured. Started as Windows would at sign-in, it opens no window.
@@ -503,11 +531,13 @@ async function measureDesktop(): Promise<{ window: number; tray: number; trayCpu
     settings: object,
     args: string[],
     measure: (pid: number, log: () => string) => Promise<void>,
+    prepare?: (data: string) => void,
   ): Promise<void> {
     const scratch = mkdtempSync(join(tmpdir(), 'warden-budget-desktop-'));
     const data = join(scratch, 'data');
     mkdirSync(data, { recursive: true });
     writeFileSync(join(data, 'settings.json'), JSON.stringify({ ...settings, version: 2 }));
+    prepare?.(data);
     const child = spawn(exe, ['--data-dir', data, ...args], {
       stdio: ['ignore', 'ignore', 'pipe'],
       env: scratchEnv(scratch),
@@ -533,14 +563,21 @@ async function measureDesktop(): Promise<{ window: number; tray: number; trayCpu
       PAGE_LOADED.every((line) => log().includes(line)),
     );
   };
-  await launch({ setupDone: true }, [], async (pid, log) => {
-    await opened(pid, log);
-    await sleep((WINDOW_LOAD_SECONDS + IDLE_SECONDS) * 1000);
-    window = sample(pid, true).privateMB;
-    closeWindow(pid);
-    await sleep(CLOSE_SECONDS * 1000);
-    if (alive(pid)) throw new Error('with Keep running in the tray off, closing the window should quit Warden');
-  });
+  // With the Memory page open on a full day (1,440 minutes, 20 series), the heaviest page.
+  await launch(
+    { setupDone: true },
+    [],
+    async (pid, log) => {
+      await opened(pid, log);
+      openMemoryPage(pid);
+      await sleep((WINDOW_LOAD_SECONDS + IDLE_SECONDS) * 1000);
+      window = sample(pid, true).privateMB;
+      closeWindow(pid);
+      await sleep(CLOSE_SECONDS * 1000);
+      if (alive(pid)) throw new Error('with Keep running in the tray off, closing the window should quit Warden');
+    },
+    fullMemoryDay,
+  );
   await launch({ setupDone: true, keepInTray: true }, [], async (pid, log) => {
     await opened(pid, log);
     await sleep(WINDOW_LOAD_SECONDS * 1000);

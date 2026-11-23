@@ -19,6 +19,8 @@ import {
   desktopState,
   fiveCandidates,
   healthyState,
+  localDay,
+  memoryDay,
   hooksState,
   normalState,
   problemsState,
@@ -63,7 +65,9 @@ type Fixture =
   | 'noTarget'
   | 'mainUnknown'
   | 'resetSuggested'
-  | 'setupFive';
+  | 'setupFive'
+  | 'memory'
+  | 'memoryQuiet';
 
 /** What to do on a page once it is ready, to reach a state such as a menu's modal (Playwright selectors). */
 /** `hover` rests the pointer on an element; `press` also holds the button down on it, until the page is checked. */
@@ -160,6 +164,52 @@ export const PAGES: {
     path: '/',
     fixture: 'setupOtherAccount',
     ready: 'button:has-text("Sign in again")',
+  },
+  {
+    // Today: the figures, the chart stacked by account with the hour Warden was closed, and the table.
+    name: 'memory-today',
+    path: '/#/memory',
+    fixture: 'memory',
+    ready: '[data-memory-chart]',
+  },
+  {
+    name: 'memory-past-day',
+    path: '/#/memory',
+    fixture: 'memory',
+    ready: '[data-memory-chart]',
+    steps: [
+      { click: 'button[aria-label="Previous day"]' },
+      { waitFor: 'text=Share at peak' },
+      { waitFor: '[data-memory-chart]' },
+    ],
+  },
+  {
+    name: 'memory-empty-day',
+    path: '/#/memory/2026-01-05',
+    fixture: 'memory',
+    ready: '[data-memory-empty]',
+  },
+  {
+    name: 'memory-nothing-running',
+    path: '/#/memory',
+    fixture: 'memoryQuiet',
+    ready: '[data-memory-none]',
+  },
+  {
+    // The pointer on the chart: the guide on its minute, with the bands and their total.
+    name: 'memory-guide',
+    path: '/#/memory',
+    fixture: 'memory',
+    ready: '[data-memory-chart]',
+    steps: [{ hover: '[data-memory-chart]' }, { waitFor: '[data-guide-tip]' }],
+  },
+  {
+    // A table row under the pointer: its band darkest.
+    name: 'memory-row-hovered',
+    path: '/#/memory',
+    fixture: 'memory',
+    ready: '[data-memory-chart]',
+    steps: [{ hover: '[data-band-row="account:a2"]' }, { waitFor: '[data-band="account:a2"].fill-chart-hover' }],
   },
   {
     name: 'overview',
@@ -963,7 +1013,12 @@ function fakeApi(current: () => Fixture): Plugin {
           };
         }
         const url = req.url ?? '';
-        if (url.startsWith('/state/wait')) return;
+        if (url.startsWith('/state/wait') || url.startsWith('/memory/today/wait')) return;
+        if (url.startsWith('/memory/day')) {
+          const date = /date=([\d-]+)/.exec(url)?.[1] ?? localDay(now);
+          send(res, memoryDay(date, now, fixture === 'memoryQuiet'));
+          return;
+        }
         // Using a reset: refused as the provider would say it (nothing real is sent; the other fixtures answer the state).
         if (fixture === 'resetsRefused' && req.method === 'POST' && /\/resets\/use$/.test(url)) {
           res.statusCode = 409;

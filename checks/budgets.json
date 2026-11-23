@@ -15,7 +15,7 @@
   "windowMemoryMB": {
     "budget": 250,
     "unit": "MB",
-    "what": "desktop app with the window open: the app and its WebView2 processes, private memory after the page loaded and sat idle",
+    "what": "desktop app with the window open on the Memory page showing a full day (1,440 minutes, 20 series): the app and its WebView2 processes, private memory after the page loaded and sat idle",
     "measured": "step 4.4: measured 172 to 181 MB (the app and its WebView2 processes, Overview with no accounts); room for accounts and the sessions table"
   },
   "desktopTrayMemoryMB": {

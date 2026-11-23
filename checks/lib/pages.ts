@@ -105,6 +105,8 @@ export function affectedPages<T extends PageState>(
           routedAliases.add('AddAccountModal');
           roots.push(add);
         } else if (route[2]) throw new Error('unknown nested route');
+      } else if (route?.[0] === 'memory') {
+        // The Memory page is one of App's own imports, so its closure is common to every state.
       } else if (route?.[0]) throw new Error('unknown route');
       return roots;
     });

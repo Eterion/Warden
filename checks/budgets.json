@@ -55,16 +55,16 @@
     "measured": "measured 1.33 to 1.42 ms before the hook state was kept in memory, 0.38 to 0.80 ms after (three runs of 1000 events each)"
   },
   "memorySampleCpuMs": {
-    "budget": null,
+    "budget": 25,
     "unit": "ms",
     "what": "the demo server's CPU time per memory sample (sampling this computer every second) with one session whose stand-in CLI runs a tree of 20 processes, among all of the computer's processes",
-    "measured": "step 5.2: first measured"
+    "measured": "step 5.2: 7.7 ms; limit approved by the user on 2026-11-23"
   },
   "coreSamplingCpuPercent": {
-    "budget": null,
+    "budget": 0.5,
     "unit": "% of one core",
     "what": "the demo server's CPU over 20 s, sampling this computer's memory every 10 s, with one session whose stand-in CLI runs a tree of 20 processes",
-    "measured": "step 5.2: first measured"
+    "measured": "step 5.2: 0.00 to 0.16%; limit approved by the user on 2026-11-23"
   },
   "statusHookDownMs": {
     "budget": 50,

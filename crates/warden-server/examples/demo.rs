@@ -4,6 +4,7 @@
 //!
 //! ```text
 //! demo --port <port> --data-dir <folder> --home <folder> --usage-dir <folder> --ui-dir <folder> [--route-exe <file>]
+//!      [--real-memory-every-ms <ms>]
 //! ```
 //!
 //! The stand-in endpoint answers a token's request with `<usage-dir>/<token>.json` (as Anthropic's body, its limit
@@ -13,6 +14,10 @@
 //! and the stand-ins remember it until the demo stops: a used reset no longer comes back in their answers, and starting
 //! the demo again brings it back. Nothing leaves this computer, and no program is started: the CLIs on the demo's PATH
 //! (the home's `bin`) are stand-ins the driver writes, and the sign-in only prints.
+//!
+//! Memory comes from made-up processes (three under each session's CLI, one beside the demo for its window), and a
+//! few made-up past days are written to the data folder at start: no real process is read. Only the budgets pass
+//! `--real-memory-every-ms`, to measure what sampling this computer costs with a stand-in tree they start themselves.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -21,12 +26,209 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use warden_core::claude::UsageEndpoint;
 use warden_core::detect::Env;
+use warden_core::memory;
 use warden_core::secret::Secret;
 use warden_core::time::now_ms;
 use warden_server::{Config, start};
 
 /// How long the stand-ins take to answer a use of a reset, so the app's busy state shows.
 const USE_TAKES: Duration = Duration::from_millis(1000);
+
+const MIB: u64 = 1024 * 1024;
+const GIB: u64 = 1024 * MIB;
+
+/// Between 0 and 1, going up and down once every `period` (in the same unit as `t`).
+fn wave(t: f64, period: f64, phase: f64) -> f64 {
+    ((t / period + phase) * std::f64::consts::TAU).sin() * 0.5 + 0.5
+}
+
+/// Stands in for this computer's processes, so the demo reads no real one: each session's CLI gets three made-up
+/// processes under it and Warden one made-up window process, each holding memory that rises and falls over a few
+/// minutes; the computer has 32 GB.
+struct MadeUpMemory {
+    started: std::time::Instant,
+}
+
+impl MadeUpMemory {
+    fn seconds(&self) -> f64 {
+        self.started.elapsed().as_secs_f64()
+    }
+
+    /// A made-up process id under a real one, apart from the small ids Windows gives.
+    fn child(root: u32, k: u32) -> u32 {
+        0x8000_0000 | (root.wrapping_mul(8).wrapping_add(k) & 0x7FFF_FFFF)
+    }
+
+    fn private(&self, pid: u32) -> u64 {
+        let base = 40 + u64::from(pid.wrapping_mul(2_654_435_761) >> 24);
+        let phase = f64::from(pid % 97) / 97.0;
+        let swing = wave(self.seconds(), 240.0, phase) * 200.0;
+        (base + swing as u64) * MIB
+    }
+}
+
+impl warden_server::procs::MemorySource for MadeUpMemory {
+    fn computer(&self) -> Option<(u64, u64)> {
+        let used = 14 * GIB + (wave(self.seconds(), 600.0, 0.0) * 4.0 * GIB as f64) as u64;
+        Some((32 * GIB, 32 * GIB - used))
+    }
+
+    fn processes(
+        &self,
+        roots: &[u32],
+        own: u32,
+        pick: &mut dyn FnMut(&[memory::Proc]) -> Vec<u32>,
+    ) -> Vec<memory::Proc> {
+        let proc = |pid, parent| memory::Proc {
+            pid,
+            parent,
+            started: if parent.is_some() { 2 } else { 1 },
+            private: None,
+        };
+        let mut list = Vec::new();
+        for &root in roots {
+            list.push(proc(root, None));
+            for k in 0..3 {
+                list.push(proc(MadeUpMemory::child(root, k), Some(root)));
+            }
+        }
+        list.push(proc(own, None));
+        list.push(proc(MadeUpMemory::child(own, 0), Some(own)));
+        let wanted: std::collections::HashSet<u32> = pick(&list).into_iter().collect();
+        for p in &mut list {
+            if wanted.contains(&p.pid) {
+                p.private = Some(self.private(p.pid));
+            }
+        }
+        list
+    }
+}
+
+/// A few made-up past days of memory (yesterday, the day before, and four days ago), so the Memory page has days to
+/// show. Each a working day from 08:00 to 17:30 with Warden closed over lunch. A day already there is left as it is.
+fn made_up_days(data_dir: &std::path::Path) {
+    use memory::{Day, Kind, Minute, Series, SeriesInfo};
+    let today = warden_core::time::parse_date(&memory::today(now_ms())).unwrap_or(0);
+    let series = |n: u16,
+                  kind: Kind,
+                  provider,
+                  account: Option<(&str, &str)>,
+                  session: Option<(&str, &str)>| Series {
+        series: n,
+        info: SeriesInfo {
+            kind,
+            provider,
+            account_id: account.map(|a| a.0.to_owned()),
+            account: account.map(|a| a.1.to_owned()),
+            session_id: session.map(|s| s.0.to_owned()),
+            parent_session_id: (n == 3).then(|| "demo-past-main-1".to_owned()),
+            name: session.map(|s| s.1.to_owned()),
+            project: session.map(|_| "Warden".to_owned()),
+        },
+    };
+    let claude = Some(warden_core::model::Provider::Claude);
+    let codex = Some(warden_core::model::Provider::Codex);
+    let all = [
+        series(
+            1,
+            Kind::Session,
+            claude,
+            Some(("main", "Main")),
+            Some(("demo-past-main-1", "Fix the login page")),
+        ),
+        series(
+            2,
+            Kind::Session,
+            claude,
+            Some(("main", "Main")),
+            Some(("demo-past-main-2", "Memory monitoring")),
+        ),
+        series(
+            3,
+            Kind::Session,
+            claude,
+            Some(("a2", "Second")),
+            Some(("demo-past-run-1", "Review the API")),
+        ),
+        series(
+            4,
+            Kind::Session,
+            claude,
+            Some(("a1", "Work")),
+            Some(("demo-past-work-1", "Payroll export")),
+        ),
+        series(
+            5,
+            Kind::Session,
+            codex,
+            Some(("a3", "Codex")),
+            Some(("demo-past-codex-1", "Tidy the checks")),
+        ),
+        series(
+            6,
+            Kind::Left,
+            claude,
+            Some(("a1", "Work")),
+            Some(("demo-past-work-1", "Payroll export")),
+        ),
+        series(7, Kind::Warden, None, None, None),
+    ];
+    let dir = data_dir.join(memory::DIR);
+    for back in [1, 2, 4] {
+        let mut minutes = Vec::new();
+        for m in (8 * 60)..(17 * 60 + 30) {
+            if (12 * 60..12 * 60 + 40).contains(&m) {
+                continue;
+            }
+            let t = f64::from(m) + f64::from(back) * 37.0;
+            // Each series runs part of the day, its memory going up and down.
+            let runs: [(u16, u16, u16, f64); 7] = [
+                (1, 8 * 60, 11 * 60, 900.0),
+                (2, 13 * 60, 17 * 60 + 30, 1400.0),
+                (3, 9 * 60 + 30, 10 * 60 + 45, 700.0),
+                (4, 10 * 60, 16 * 60, 600.0),
+                (5, 14 * 60, 15 * 60 + 20, 500.0),
+                (6, 16 * 60, 17 * 60 + 30, 350.0),
+                (7, 8 * 60, 17 * 60 + 30, 12.0),
+            ];
+            let mut s = Vec::new();
+            for (n, from, to, peak) in runs {
+                if (from..to).contains(&m) {
+                    let mib = peak
+                        * (0.35 + 0.65 * wave(t, 47.0 + f64::from(n) * 11.0, f64::from(n) / 7.0));
+                    s.push((n, (mib * 1024.0) as u32));
+                }
+            }
+            let sum = s.iter().filter(|(n, _)| *n != 7).map(|(_, kib)| kib).sum();
+            let used = 13.0 + 3.0 * wave(t, 180.0, 0.2) + f64::from(sum) / 1024.0 / 1024.0;
+            minutes.push(Minute {
+                m,
+                total: 32 * 1024 * 1024,
+                used: (used * 1024.0 * 1024.0) as u32,
+                sum,
+                s,
+            });
+        }
+        let used: std::collections::HashSet<u16> = minutes
+            .iter()
+            .flat_map(|m| m.s.iter().map(|(n, _)| *n))
+            .collect();
+        let day = Day {
+            series: all
+                .iter()
+                .filter(|s| used.contains(&s.series))
+                .cloned()
+                .collect(),
+            minutes,
+        };
+        let date = warden_core::time::date_text(today - i64::from(back));
+        if let Err(e) = memory::write_day(&dir, &date, &day)
+            && e.kind() != std::io::ErrorKind::AlreadyExists
+        {
+            eprintln!("demo: could not write the made-up memory day {date}: {e}");
+        }
+    }
+}
 
 /// The answer file's name for a token: its plain characters only.
 fn file_name(token: &Secret) -> String {
@@ -183,10 +385,13 @@ struct Args {
     usage_dir: PathBuf,
     ui_dir: PathBuf,
     route_exe: Option<PathBuf>,
+    /// Sample this computer's memory at this interval (ms) in place of the made-up processes: the budgets only.
+    real_memory_every_ms: Option<u64>,
 }
 
 fn parse(args: &[String]) -> Result<Args, String> {
     let mut port = None;
+    let mut real_memory_every_ms = None;
     let (mut data_dir, mut home, mut usage_dir, mut ui_dir, mut route_exe) =
         (None, None, None, None, None);
     let mut it = args.iter();
@@ -199,6 +404,13 @@ fn parse(args: &[String]) -> Result<Args, String> {
             "--usage-dir" => usage_dir = Some(PathBuf::from(value)),
             "--ui-dir" => ui_dir = Some(PathBuf::from(value)),
             "--route-exe" => route_exe = Some(PathBuf::from(value)),
+            "--real-memory-every-ms" => {
+                real_memory_every_ms = Some(
+                    value
+                        .parse()
+                        .map_err(|_| "--real-memory-every-ms needs a number")?,
+                );
+            }
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -210,6 +422,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
         usage_dir: need(usage_dir, "--usage-dir")?,
         ui_dir: need(ui_dir, "--ui-dir")?,
         route_exe,
+        real_memory_every_ms,
     })
 }
 
@@ -220,6 +433,18 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("demo: {e}");
             return ExitCode::from(2);
+        }
+    };
+    // Made-up processes and past days, unless the budgets ask for this computer's own memory.
+    let memory: Arc<dyn warden_server::procs::MemorySource> = match args.real_memory_every_ms {
+        Some(ms) => Arc::new(warden_server::procs::SystemMemory::every(
+            Duration::from_millis(ms),
+        )),
+        None => {
+            made_up_days(&args.data_dir);
+            Arc::new(MadeUpMemory {
+                started: std::time::Instant::now(),
+            })
         }
     };
     let config = Config {
@@ -256,6 +481,7 @@ fn main() -> ExitCode {
         log: Arc::new(|line| eprintln!("{} warden: {line}", now_ms())),
         route_exe: args.route_exe,
         desktop: None,
+        memory,
     };
     match start(config, args.port) {
         Ok(running) => {

@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use warden_core::policy::{ALLOWED_OUTBOUND_HOSTS, BIND_IP};
 use warden_rules::hook_data::{assert_not_kept, canary_text};
 use warden_rules::secrets::{assert_no_token, canary_refresh_token, canary_token};
-use warden_rules::{hosts, net};
+use warden_rules::{hosts, memory_history, net};
 
 #[test]
 fn the_codex_apps_folder_is_left_alone() {
@@ -783,5 +783,164 @@ fn transcripts_read_only_for_their_title() {
     for file in ["settings.json", "readings.json"] {
         let saved = std::fs::read_to_string(f.data.path().join(file)).expect("saved file");
         assert_not_kept(file, &saved, &message);
+    }
+}
+
+/// The part the copies of this binary play in a stand-in tree (`memory_history_keeps_only_what_is_allowed`).
+#[test]
+fn memory_helper() {
+    common::memory_helper();
+}
+
+/// Every day file in the data folder's memory folder, by name.
+fn memory_files(data: &std::path::Path) -> Vec<(String, String)> {
+    std::fs::read_dir(data.join("memory"))
+        .expect("the memory folder")
+        .flatten()
+        .map(|e| {
+            (
+                e.file_name().to_string_lossy().into_owned(),
+                std::fs::read_to_string(e.path()).expect("a day file"),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn memory_history_keeps_only_what_is_allowed() {
+    let f = Fixture::new();
+    let claude = f.claude_folder(".claude-work", "ann@acme.example", "t1");
+    let server = f.start();
+    let addr = server.addr;
+    let body =
+        serde_json::json!({ "provider": "claude", "folder": claude, "label": "Work" }).to_string();
+    assert_eq!(call(addr, "POST", "/api/accounts", Some(&body)).status, 200);
+    let id = call(addr, "GET", "/api/state", None).json()["accounts"][0]["id"]
+        .as_str()
+        .expect("id")
+        .to_owned();
+
+    // Secrets where a process's command line, environment and path would be read, and where the hook's prompt and
+    // tool input arrive.
+    let command_line = canary_text("command line");
+    let environment = canary_text("environment");
+    let path = canary_text("path");
+    let prompt = canary_text("prompt");
+    let input = canary_text("tool input");
+    let marker = path.rsplit(' ').next().expect("marker").to_owned();
+    let project = f.home.path().join("Warden");
+    std::fs::create_dir_all(&project).expect("project");
+    let tree = common::StandIn::start(&common::StandInSpec {
+        folder: &f.home.path().join(format!("programs {marker}")),
+        data_dir: f.data.path(),
+        account: &id,
+        session_id: "s1",
+        cwd: &project,
+        mib: 8,
+        extra_arg: &command_line,
+        extra_env: &environment,
+    });
+    for e in [
+        serde_json::json!({ "session_id": "s1", "hook_event_name": "UserPromptSubmit", "prompt": prompt }),
+        serde_json::json!({ "session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": { "command": input } }),
+    ] {
+        assert!(common::hook_event(f.data.path(), &id, &e));
+    }
+    let mut answers = Vec::new();
+    eventually("the session's memory", || {
+        let day = common::memory_today(addr);
+        let found = common::memory_now(&day, "session", "s1").is_some();
+        answers.push(day.to_string());
+        found
+    });
+    drop(tree);
+    server.stop();
+
+    let files = memory_files(f.data.path());
+    assert!(!files.is_empty(), "a day file is written");
+    let home = f.home.path().to_string_lossy().into_owned();
+    for (name, text) in &files {
+        memory_history::assert_only_allowed(name, text);
+        assert!(text.contains("\"project\":\"Warden\""), "{name}: {text}");
+        for kept in [text].into_iter().chain(answers.iter()) {
+            for canary in [&command_line, &environment, &path, &prompt, &input] {
+                assert_not_kept(name, kept, canary);
+            }
+            assert!(
+                !kept.contains(&home) && !kept.contains(&home.replace('\\', "\\\\")),
+                "rule broken: the memory history in {name} keeps a path"
+            );
+            assert!(
+                !kept.to_ascii_lowercase().contains(".exe"),
+                "rule broken: the memory history in {name} keeps a process name"
+            );
+        }
+    }
+}
+
+#[test]
+fn memory_history_is_capped() {
+    use warden_core::memory::{self, MAX_MINUTES, MAX_SERIES, MAX_TOTAL_BYTES, Reading, Recorder};
+    let f = Fixture::new();
+    let mem = f.data.path().join(memory::DIR);
+    let today = memory::today(warden_core::time::now_ms());
+    let today_n = warden_core::time::parse_date(&today).expect("today");
+    // Forty full days (about 1.3 MB each), far over the days and the total kept.
+    let pairs: Vec<String> = (1..=100).map(|n| format!("[{n},1]")).collect();
+    let day: String = (0..MAX_MINUTES)
+        .map(|m| {
+            format!(
+                "{{\"m\":{m},\"total\":1,\"used\":1,\"sum\":1,\"s\":[{}]}}\n",
+                pairs.join(",")
+            )
+        })
+        .collect();
+    for back in 1..40 {
+        let date = warden_core::time::date_text(today_n - back);
+        common::write(&memory::day_file(&mem, &date), &day);
+    }
+    // Warden starts: the days past their time and over the total go.
+    let server = f.start();
+    server.stop();
+    let caps = memory_history::Caps {
+        oldest: &warden_core::time::date_text(today_n - (memory::KEEP_DAYS - 1)),
+        max_total_bytes: MAX_TOTAL_BYTES,
+        max_series: MAX_SERIES,
+        max_minutes: MAX_MINUTES,
+    };
+    memory_history::assert_capped(&mem, &caps);
+
+    // A day with more series and minutes than it may hold, recorded as the server records.
+    let other = f.data.path().join("busy");
+    let start = 1_795_000_000_000 - 1_795_000_000_000 % 86_400_000;
+    let mut recorder = Recorder::new_in(&other, start, 0);
+    let info = |n: i64| memory::SeriesInfo {
+        kind: memory::Kind::Session,
+        provider: Some(warden_core::model::Provider::Codex),
+        account_id: Some("a1".into()),
+        account: Some("Work".into()),
+        session_id: Some(format!("session-{n}")),
+        parent_session_id: None,
+        name: Some(format!("Session {n}")),
+        project: Some("Warden".into()),
+    };
+    for minute in 0..(MAX_MINUTES as i64 + 60) {
+        let values = (0..3).map(|k| (info(minute * 3 + k), 1 << 20)).collect();
+        let reading = Reading {
+            at_ms: start + minute * 60_000 % 86_400_000,
+            total: 1 << 35,
+            available: 1 << 34,
+            values,
+        };
+        recorder.record_in(&reading, 0).expect("record");
+    }
+    recorder.finish().expect("finish");
+    let caps = memory_history::Caps {
+        oldest: "1970-01-01",
+        ..caps
+    };
+    memory_history::assert_capped(&other.join(memory::DIR), &caps);
+    for (name, text) in memory_files(&other) {
+        memory_history::assert_only_allowed(&name, &text);
     }
 }

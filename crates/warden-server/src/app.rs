@@ -14,6 +14,7 @@ use warden_core::fallback;
 use warden_core::hooks::{self, HookTool, Setup, Setups, Want};
 use warden_core::logfile::{self, RollingLog};
 use warden_core::mainlogin::{self, SignInServer};
+use warden_core::memory::{self, MemoryDay};
 use warden_core::model::{Identity, IdentityChange, Provider, Usage, UsageError};
 use warden_core::pipe::Message;
 use warden_core::routing;
@@ -216,6 +217,10 @@ pub struct App {
     /// Where each Claude session's transcript was last read for its title.
     transcripts: Mutex<titles::Transcripts>,
     desktop: Option<Arc<dyn Desktop>>,
+    /// Memory over time: today's minutes and the day files. Apart from the state, so a sample changes no revision.
+    memory: Mutex<memory::Recorder>,
+    /// Wakes the memory sampler when the server stops.
+    memory_wake: Condvar,
 }
 
 type CodexSender = std::sync::mpsc::Sender<notify::Result<notify::Event>>;
@@ -448,6 +453,8 @@ impl App {
                 .is_some()
         });
         let tools = detect::tools(&env);
+        // Memory days past their time go now; today's is read back.
+        let recorder = memory::Recorder::new(&data_dir, now_ms());
         let app = App {
             inner: Mutex::new(Inner {
                 settings,
@@ -500,6 +507,8 @@ impl App {
             start_with_windows_change: Mutex::new(()),
             transcripts: Mutex::new(titles::Transcripts::default()),
             desktop,
+            memory: Mutex::new(recorder),
+            memory_wake: Condvar::new(),
         };
         // The sessions the CLIs' own lists hold, before the hooks' pipe opens and before the first usage reading: the
         // first answer already has every session Warden can know about at start, each under its main session again
@@ -1358,6 +1367,7 @@ impl App {
     pub fn stop(&self) {
         self.lock().stop = true;
         self.wake.notify_all();
+        self.memory_wake.notify_all();
         self.changed.notify_all();
         self.poke_codex();
         self.poke_hooks();
@@ -1375,6 +1385,115 @@ impl App {
 
     pub fn stopped(&self) -> bool {
         self.lock().stop
+    }
+
+    fn memory_lock(&self) -> MutexGuard<'_, memory::Recorder> {
+        self.memory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The memory sampler waits for its next sample. Returns false once the server stops.
+    pub fn memory_wait(&self, timeout: Duration) -> bool {
+        let inner = self.lock();
+        let (inner, _) = self
+            .memory_wake
+            .wait_timeout_while(inner, timeout, |i| !i.stop)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !inner.stop
+    }
+
+    /// The sessions memory is sampled for: those not ended whose CLI process is known.
+    fn live_sessions(&self) -> Vec<memory::Live> {
+        let inner = self.lock();
+        inner
+            .sessions
+            .with_processes()
+            .map(|(s, cli)| memory::Live {
+                provider: s.provider,
+                session_id: s.id.clone(),
+                parent_session_id: s.parent_id.clone(),
+                account_id: s.account_id.clone(),
+                account_label: if s.account_id == store::MAIN_ID {
+                    Some(inner.settings.main.label.clone())
+                } else {
+                    inner
+                        .settings
+                        .account(&s.account_id)
+                        .map(|a| a.label.clone())
+                },
+                other_sign_in: s.signed_in_as.is_some(),
+                name: s.place.name.clone(),
+                project: s.place.project.clone(),
+                cli,
+                last_event_at: s.last_event_at,
+            })
+            .collect()
+    }
+
+    /// One memory sample: the computer's memory always; while a session with a known CLI runs or a process one left
+    /// is remembered, one snapshot of the processes and the private memory of those in their trees and Warden's own.
+    /// Errors are the day file's.
+    pub fn sample_memory(
+        &self,
+        source: &dyn crate::procs::MemorySource,
+        left: &mut memory::LeftRunning,
+    ) -> io::Result<()> {
+        let live = self.live_sessions();
+        let (total, available) = source.computer().unwrap_or((0, 0));
+        let mut values = Vec::new();
+        if !live.is_empty() || !left.is_empty() {
+            let own = std::process::id();
+            let roots: Vec<u32> = live.iter().map(|l| l.cli).collect();
+            let mut plan = None;
+            let procs = source.processes(&roots, own, &mut |list| {
+                let p = memory::plan(list, &live, own, left);
+                let pids = p.pids();
+                plan = Some(p);
+                pids
+            });
+            if let Some(plan) = plan {
+                values = plan.values(&procs);
+                left.update(&plan, &procs);
+            }
+        }
+        self.memory_lock().record(&memory::Reading {
+            at_ms: now_ms(),
+            total,
+            available,
+            values,
+        })
+    }
+
+    /// Writes the minute being gathered (the server stops).
+    pub fn finish_memory(&self) -> io::Result<()> {
+        self.memory_lock().finish()
+    }
+
+    /// One day's memory: today's from memory, a past day's from its file. `400` for a date not written
+    /// `YYYY-MM-DD` or one still to come.
+    pub fn memory_day(&self, date: Option<&str>) -> ApiResult<MemoryDay> {
+        let Some(date) = date.filter(|d| warden_core::time::parse_date(d).is_some()) else {
+            return Err(ApiError::bad("Give the day as YYYY-MM-DD."));
+        };
+        let today = memory::today(now_ms());
+        if date > today.as_str() {
+            return Err(ApiError::bad("That day has not come yet."));
+        }
+        let recorder = self.memory_lock();
+        let mut days = memory::days(recorder.dir());
+        if recorder.has(&today) && !days.contains(&today) {
+            days.push(today.clone());
+            days.sort();
+        }
+        let day = if date == today {
+            recorder.today_day(date)
+        } else {
+            let dir = recorder.dir().to_owned();
+            drop(recorder);
+            memory::read_day(&dir, date)
+        };
+        Ok(MemoryDay::new(date, date == today, days, day))
     }
 
     /// The Codex accounts to watch, and a number that changes when they do.

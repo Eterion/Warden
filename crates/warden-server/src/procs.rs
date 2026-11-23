@@ -4,11 +4,16 @@
 //! session's CLI (`claude.exe`, or `node.exe` for an npm install; `codex.exe`, with `cmd.exe` between for Codex's
 //! hooks). Warden then holds a handle on that process and a small thread waits on it (no polling): when it exits,
 //! the session ends. Nothing is started and nothing is read beyond the process list.
+//!
+//! Memory samples ([`MemorySource`]) read the same list (parents and start times) and the private memory of the
+//! sessions' processes and Warden's own: never another process's command line, environment, executable path or
+//! working folder.
 
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::time::Duration;
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use sysinfo::{MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use warden_core::memory;
 use warden_core::model::Provider;
 
 #[derive(Clone, Copy)]
@@ -80,6 +85,107 @@ pub fn parent_session(cli: u32, main: &[(u32, String)]) -> Option<String> {
         })
         .collect();
     parent_in_chain(cli, main, &processes)
+}
+
+/// Where memory samples come from: this computer ([`SystemMemory`]), or the demo's made-up processes.
+pub trait MemorySource: Send + Sync {
+    /// The computer's total and available memory, in bytes.
+    fn computer(&self) -> Option<(u64, u64)>;
+    /// One snapshot of the processes: each one's id, parent and start time, then the private memory of those
+    /// `pick` chooses from that list. `roots` are the sessions' CLIs and `own` Warden's process (a made-up source
+    /// makes its processes up from them; this computer's has them all).
+    fn processes(
+        &self,
+        roots: &[u32],
+        own: u32,
+        pick: &mut dyn FnMut(&[memory::Proc]) -> Vec<u32>,
+    ) -> Vec<memory::Proc>;
+    /// How long between two samples.
+    fn every(&self) -> Duration {
+        Duration::from_millis(memory::SAMPLE_EVERY_MS)
+    }
+}
+
+/// This computer's memory, through `sysinfo`: for other processes only their parents, start times and private
+/// memory (Windows' private bytes, what `sysinfo` calls virtual memory there), never anything else. A fresh
+/// `System` each time, so no handle on another process is held between samples.
+pub struct SystemMemory {
+    every: Duration,
+}
+
+impl SystemMemory {
+    /// Sampled every [`memory::SAMPLE_EVERY_MS`].
+    pub fn new() -> SystemMemory {
+        SystemMemory::every(Duration::from_millis(memory::SAMPLE_EVERY_MS))
+    }
+
+    /// Sampled at another interval (the tests, the budgets).
+    pub fn every(every: Duration) -> SystemMemory {
+        SystemMemory { every }
+    }
+}
+
+impl Default for SystemMemory {
+    fn default() -> SystemMemory {
+        SystemMemory::new()
+    }
+}
+
+impl MemorySource for SystemMemory {
+    fn computer(&self) -> Option<(u64, u64)> {
+        let mut sys = System::new();
+        sys.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
+        (sys.total_memory() > 0).then(|| (sys.total_memory(), sys.available_memory()))
+    }
+
+    fn processes(
+        &self,
+        _roots: &[u32],
+        _own: u32,
+        pick: &mut dyn FnMut(&[memory::Proc]) -> Vec<u32>,
+    ) -> Vec<memory::Proc> {
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        let mut list: Vec<memory::Proc> = sys
+            .processes()
+            .iter()
+            .map(|(pid, p)| memory::Proc {
+                pid: pid.as_u32(),
+                parent: p.parent().map(Pid::as_u32),
+                started: p.start_time(),
+                private: None,
+            })
+            .collect();
+        let wanted: Vec<Pid> = pick(&list).into_iter().map(Pid::from_u32).collect();
+        if wanted.is_empty() {
+            return list;
+        }
+        // Only the processes asked for are opened again, for their memory alone.
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&wanted),
+            false,
+            ProcessRefreshKind::nothing().with_memory(),
+        );
+        let wanted: HashSet<Pid> = wanted.into_iter().collect();
+        for p in &mut list {
+            let pid = Pid::from_u32(p.pid);
+            if wanted.contains(&pid) {
+                p.private = sys
+                    .process(pid)
+                    .filter(|q| q.start_time() == p.started)
+                    .map(sysinfo::Process::virtual_memory);
+            }
+        }
+        list
+    }
+
+    fn every(&self) -> Duration {
+        self.every
+    }
 }
 
 /// How far up a hook's parent chain the CLI is looked for (`warden.exe`, a shell, the CLI, its launcher).

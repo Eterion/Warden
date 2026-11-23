@@ -40,6 +40,8 @@ pub struct Config {
     pub route_exe: Option<PathBuf>,
     /// The desktop app's own parts; `None` in the demo server.
     pub desktop: Option<Arc<dyn Desktop>>,
+    /// Where memory samples come from: this computer ([`procs::SystemMemory`]), or the demo's made-up processes.
+    pub memory: Arc<dyn procs::MemorySource>,
 }
 
 /// The running core: the app and its background threads, without a listener.
@@ -76,8 +78,8 @@ impl Core {
     }
 }
 
-/// Starts the core: Warden's own outdated hooks rewritten, the hooks' pipe, the usage loop, the Codex log watcher and
-/// the hook file watcher. Nothing listens on the network.
+/// Starts the core: Warden's own outdated hooks rewritten, the hooks' pipe, the usage loop, the memory sampler, the
+/// Codex log watcher and the hook file watcher. Nothing listens on the network.
 pub fn start_core(config: Config) -> io::Result<Core> {
     let app = App::new(
         config.data_dir,
@@ -143,6 +145,32 @@ pub fn start_core(config: Config) -> io::Result<Core> {
                 if !app.wait(app.usage_interval()) {
                     break;
                 }
+            }
+        }));
+    }
+    {
+        let app = Arc::clone(&app);
+        let source = config.memory;
+        threads.push(std::thread::spawn(move || {
+            // Memory on its interval, while Warden runs: the computer's always, the sessions' processes only while
+            // one runs. A failing day file is logged once, until it works again.
+            let mut left = warden_core::memory::LeftRunning::default();
+            let mut failing = false;
+            loop {
+                match app.sample_memory(&*source, &mut left) {
+                    Ok(()) => failing = false,
+                    Err(e) if !failing => {
+                        failing = true;
+                        (app.log)(&format!("could not write the memory history: {e}"));
+                    }
+                    Err(_) => {}
+                }
+                if !app.memory_wait(source.every()) {
+                    break;
+                }
+            }
+            if let Err(e) = app.finish_memory() {
+                (app.log)(&format!("could not write the memory history: {e}"));
             }
         }));
     }

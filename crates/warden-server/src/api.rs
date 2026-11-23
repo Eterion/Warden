@@ -55,10 +55,15 @@ impl Answer {
 }
 
 fn query_u64(url: &str, key: &str) -> Option<u64> {
+    query(url, key)?.parse().ok()
+}
+
+/// A query parameter's value as sent (not decoded).
+fn query<'a>(url: &'a str, key: &str) -> Option<&'a str> {
     url.split_once('?')?
         .1
         .split('&')
-        .find_map(|kv| kv.strip_prefix(key)?.strip_prefix('=')?.parse().ok())
+        .find_map(|kv| kv.strip_prefix(key)?.strip_prefix('='))
 }
 
 fn body<T: DeserializeOwned>(body: &[u8]) -> ApiResult<T> {
@@ -200,6 +205,11 @@ pub fn answer(app: &App, ui_dir: Option<&Path>, method: &str, url: &str, body: &
             ("POST", ["accounts", id, "resets", "use"]) => {
                 let b: UseResetBody = self::body(body)?;
                 app.use_reset(id, &b.reset_id)?;
+            }
+            ("GET", ["memory", "day"]) => {
+                return Ok(Some(
+                    serde_json::to_value(app.memory_day(query(url, "date"))?).unwrap_or_default(),
+                ));
             }
             ("POST", ["logs", "open"]) => app.open_log_folder()?,
             ("POST", ["update", "install"]) => app.install_update()?,

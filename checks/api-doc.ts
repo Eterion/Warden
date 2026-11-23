@@ -28,6 +28,7 @@ export interface ApiType {
 const APP = 'crates/warden-server/src/app.rs';
 const MODEL = 'crates/warden-core/src/model.rs';
 const SESSIONS = 'crates/warden-core/src/sessions.rs';
+const MEMORY = 'crates/warden-core/src/memory.rs';
 const s = (file: string, type: string, ...where: string[]): ApiType => ({ file, type, kind: 'struct', in: where });
 const e = (file: string, type: string, ...where: string[]): ApiType => ({ file, type, kind: 'enum', in: where });
 
@@ -67,6 +68,14 @@ export const API_TYPES: ApiType[] = [
   e(SESSIONS, 'SessionState', 'SessionState'),
   e(SESSIONS, 'Source', 'Session'),
   s(SESSIONS, 'Bin', 'Bin'),
+  s(MEMORY, 'MemoryDay', 'MemoryDay'),
+  s(MEMORY, 'Summary', 'MemoryDay'),
+  s(MEMORY, 'SeriesSummary', 'MemoryDay'),
+  s(MEMORY, 'Gap', 'MemoryDay'),
+  s(MEMORY, 'Series', 'MemorySeries'),
+  s(MEMORY, 'SeriesInfo', 'MemorySeries'),
+  e(MEMORY, 'Kind', 'MemoryKind'),
+  s(MEMORY, 'Minute', 'MemoryMinute'),
 ];
 
 export interface Problem {
@@ -165,14 +174,20 @@ export function jsonFields(rust: string, type: string): string[] | null {
   return it && fieldsOf(it.body, /rename_all\s*=\s*"camelCase"/.test(it.attrs));
 }
 
-/** An enum's variants as serde writes them (`rename_all` camelCase or lowercase), with their fields (`rename_all_fields`). */
+/** An enum's variants as serde writes them (`rename_all` camelCase, lowercase or kebab-case), with their fields (`rename_all_fields`). */
 export function jsonVariants(rust: string, type: string): { name: string; fields: string[] }[] | null {
   const it = item(rust, 'enum', type);
   if (!it) return null;
-  const all = /rename_all\s*=\s*"(\w+)"/.exec(it.attrs)?.[1];
+  const all = /rename_all\s*=\s*"([\w-]+)"/.exec(it.attrs)?.[1];
   const fieldsCamel = /rename_all_fields\s*=\s*"camelCase"/.test(it.attrs);
   const rename = (v: string) =>
-    all === 'lowercase' ? v.toLowerCase() : all === 'camelCase' ? v[0]?.toLowerCase() + v.slice(1) : v;
+    all === 'lowercase'
+      ? v.toLowerCase()
+      : all === 'camelCase'
+        ? v[0]?.toLowerCase() + v.slice(1)
+        : all === 'kebab-case'
+          ? v.replace(/(?<=.)([A-Z])/g, '-$1').toLowerCase()
+          : v;
   const out: { name: string; fields: string[] }[] = [];
   // Variants are the lines at depth 0 starting with a capital; `Name { a: T }` on one line or `Name {` ... `},`.
   let open: { name: string; body: string } | null = null;

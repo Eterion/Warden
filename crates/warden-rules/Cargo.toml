@@ -1,11 +1,14 @@
 [package]
 name = "warden-rules"
-description = "Test harness for Warden's own rules: no login tokens in logs or responses, loopback-only server with a Host check, allowed outbound hosts. Used as a dev-dependency only."
+description = "Test harness for Warden's own rules: no login tokens in logs or responses, loopback-only server with a Host check, allowed outbound hosts, what the memory history keeps. Used as a dev-dependency only."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[dependencies]
+serde_json = "1"
 
 [lints]
 workspace = true

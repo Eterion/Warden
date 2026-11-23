@@ -4910,6 +4910,9 @@ dependencies = [
 [[package]]
 name = "warden-rules"
 version = "0.1.2"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "warden-server"

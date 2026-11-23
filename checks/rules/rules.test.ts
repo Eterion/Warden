@@ -7,6 +7,7 @@ import { namesPattern, personalPaths, personalPathsRule } from './personal-paths
 import { TOKENS_FILE, tokensOnly } from './tokens-only.ts';
 import { FALLBACK_MODULE, cliFallback } from './cli-fallback.ts';
 import { SERVER_LIB, httpDemoOnly } from './http-demo-only.ts';
+import { processDetails } from './process-details.ts';
 import type { Rule } from './types.ts';
 
 function caught(rule: Rule, path: string, text: string): string[] {
@@ -397,5 +398,49 @@ describe('http-demo-only', () => {
       caught(httpDemoOnly, desktop, '//! Unlike warden_server::start, no TcpListener is opened here.'),
       [],
     );
+  });
+});
+
+describe('process-details', () => {
+  const rs = 'crates/warden-server/src/procs.rs';
+
+  it("catches reading another process's command line, environment, path or folder", () => {
+    for (const planted of [
+      'sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always));',
+      'let kind = ProcessRefreshKind::nothing().with_environ(UpdateKind::Always);',
+      'ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet)',
+      'ProcessRefreshKind::nothing().with_cwd(UpdateKind::Always)',
+      'let args = p.cmd();',
+      'let vars = process.environ();',
+      'if let Some(path) = p.exe() {}',
+      'let folder = p.cwd();',
+      'let all = ProcessRefreshKind::everything();',
+      'let sys = System::new_all();',
+      'sys.refresh_all();',
+      'System::new_with_specifics(RefreshKind::everything())',
+    ]) {
+      assert.ok(caught(processDetails, rs, planted).length > 0, `planted violation not caught: ${planted}`);
+    }
+    // Tests and the demo count too.
+    assert.ok(caught(processDetails, 'crates/warden-server/tests/memory.rs', 'p.cmd()').length > 0);
+  });
+
+  it('lets parents, start times, memory and comments through', () => {
+    assert.deepEqual(
+      caught(
+        processDetails,
+        rs,
+        [
+          '// Never with_cmd or .exe(): a command line can hold a token.',
+          'sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());',
+          'ProcessRefreshKind::nothing().with_memory()',
+          'let parent = p.parent(); let started = p.start_time(); let bytes = p.virtual_memory();',
+          'sys.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());',
+          'let exe = std::env::current_exe()?;',
+        ].join('\n'),
+      ),
+      [],
+    );
+    assert.deepEqual(caught(processDetails, 'ui/src/a.ts', 'p.cmd()'), []);
   });
 });

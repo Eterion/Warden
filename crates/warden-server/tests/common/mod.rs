@@ -19,6 +19,9 @@ use warden_core::testdir::Dir;
 use warden_server::app::Desktop;
 use warden_server::{Config, Running, start};
 
+/// How often the servers the tests start sample memory: often, so a test sees a sample within moments.
+pub const MEMORY_EVERY: Duration = Duration::from_millis(500);
+
 pub fn folder_bytes(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
     fn walk(root: &Path, at: &Path, files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>) {
         for entry in std::fs::read_dir(at).expect("directory") {
@@ -299,6 +302,7 @@ impl Fixture {
                     l.push('\n');
                 }),
                 desktop,
+                memory: Arc::new(warden_server::procs::SystemMemory::every(MEMORY_EVERY)),
             },
             0,
         )
@@ -551,4 +555,168 @@ impl FakeEndpoint {
     pub fn tokens_since(&self, from: usize) -> Vec<String> {
         self.tokens_seen.lock().expect("lock")[from..].to_vec()
     }
+}
+
+/// Which part a copy of the test binary plays in a stand-in CLI tree (the environment variable naming it).
+const HELPER_ROLE: &str = "WARDEN_TEST_HELPER";
+/// The test the copies run: each test file that starts a stand-in tree has `#[test] fn memory_helper()` calling
+/// [`memory_helper`].
+const HELPER_TEST: &str = "memory_helper";
+
+/// A stand-in session's CLI tree, made of copies of this test binary: `<dir>/claude.exe` (the CLI), and under it
+/// `<dir>/helper.exe`, which holds a known amount of memory and sends the session's `SessionStart` over the pipe as a
+/// hook would (so Warden finds the CLI above it). The CLI exits when told ([`StandIn::end_cli`]); the helper outlives
+/// it until told ([`StandIn::end_helper`]) or after two minutes.
+pub struct StandIn {
+    dir: PathBuf,
+    cli: std::process::Child,
+    pub helper_pid: u32,
+}
+
+pub struct StandInSpec<'a> {
+    pub folder: &'a Path,
+    pub data_dir: &'a Path,
+    pub account: &'a str,
+    pub session_id: &'a str,
+    pub cwd: &'a Path,
+    pub mib: u64,
+    /// More words on the processes' command line, and one more variable in their environment (canaries).
+    pub extra_arg: &'a str,
+    pub extra_env: &'a str,
+}
+
+impl StandIn {
+    pub fn start(spec: &StandInSpec) -> StandIn {
+        let me = std::env::current_exe().expect("the test binary");
+        std::fs::create_dir_all(spec.folder).expect("mkdir");
+        let cli = spec.folder.join("claude.exe");
+        let helper = spec.folder.join("helper.exe");
+        std::fs::copy(&me, &cli).expect("copy the CLI");
+        std::fs::copy(&me, &helper).expect("copy the helper");
+        let child = std::process::Command::new(&cli)
+            .args([HELPER_TEST, "--exact", "--nocapture", "--test-threads=1"])
+            .args((!spec.extra_arg.is_empty()).then_some(spec.extra_arg))
+            .env(HELPER_ROLE, "cli")
+            .env("WARDEN_TEST_HELPER_EXE", &helper)
+            .env("WARDEN_TEST_DIR", spec.folder)
+            .env("WARDEN_TEST_DATA", spec.data_dir)
+            .env("WARDEN_TEST_ACCOUNT", spec.account)
+            .env("WARDEN_TEST_SESSION", spec.session_id)
+            .env("WARDEN_TEST_CWD", spec.cwd)
+            .env("WARDEN_TEST_MIB", spec.mib.to_string())
+            .env("WARDEN_TEST_CANARY", spec.extra_env)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("the stand-in CLI starts");
+        let held = spec.folder.join("held");
+        let mut helper_pid = 0;
+        eventually("the helper to hold its memory and report", || {
+            helper_pid = std::fs::read_to_string(&held)
+                .ok()
+                .and_then(|t| t.trim().parse().ok())
+                .unwrap_or(0);
+            helper_pid != 0
+        });
+        StandIn {
+            dir: spec.folder.to_owned(),
+            cli: child,
+            helper_pid,
+        }
+    }
+
+    pub fn cli_pid(&self) -> u32 {
+        self.cli.id()
+    }
+
+    /// The CLI exits; the helper keeps running.
+    pub fn end_cli(&mut self) {
+        write(&self.dir.join("stop-cli"), "");
+        let _ = self.cli.wait();
+    }
+
+    pub fn end_helper(&self) {
+        write(&self.dir.join("stop-helper"), "");
+    }
+}
+
+impl Drop for StandIn {
+    fn drop(&mut self) {
+        self.end_helper();
+        write(&self.dir.join("stop-cli"), "");
+        let _ = self.cli.wait();
+    }
+}
+
+/// Waits until `<dir>/<name>` exists, at most two minutes.
+fn wait_for_file(dir: &Path, name: &str) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    while !dir.join(name).exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The part a copy of the test binary plays in a [`StandIn`] tree; nothing in a normal test run.
+pub fn memory_helper() {
+    let Ok(role) = std::env::var(HELPER_ROLE) else {
+        return;
+    };
+    let var = |name: &str| std::env::var(name).expect(name);
+    let dir = PathBuf::from(var("WARDEN_TEST_DIR"));
+    match role.as_str() {
+        "cli" => {
+            let mut helper = std::process::Command::new(var("WARDEN_TEST_HELPER_EXE"));
+            helper
+                .args(std::env::args_os().skip(1))
+                .env(HELPER_ROLE, "helper")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            // Never waited for: the helper is meant to outlive this stand-in CLI (Windows keeps no zombies).
+            let helper = helper.spawn().expect("the helper starts");
+            wait_for_file(&dir, "stop-cli");
+            drop(helper);
+        }
+        "helper" => {
+            let mib: usize = var("WARDEN_TEST_MIB").parse().expect("MiB");
+            // Written to, so every page is committed private memory.
+            let held = vec![7u8; mib * 1024 * 1024];
+            std::hint::black_box(&held);
+            let event = serde_json::json!({
+                "session_id": var("WARDEN_TEST_SESSION"),
+                "hook_event_name": "SessionStart",
+                "cwd": var("WARDEN_TEST_CWD"),
+            });
+            assert!(hook_event(
+                Path::new(&var("WARDEN_TEST_DATA")),
+                &var("WARDEN_TEST_ACCOUNT"),
+                &event
+            ));
+            write(&dir.join("held"), &std::process::id().to_string());
+            wait_for_file(&dir, "stop-helper");
+            std::hint::black_box(&held);
+        }
+        other => panic!("unknown helper role {other}"),
+    }
+}
+
+/// Today's memory, as the API answers it.
+pub fn memory_today(addr: SocketAddr) -> serde_json::Value {
+    let today = warden_core::memory::today(warden_core::time::now_ms());
+    let reply = call(addr, "GET", &format!("/api/memory/day?date={today}"), None);
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    reply.json()
+}
+
+/// A series' value in the latest minute of a day's answer (KiB), found by its kind and session.
+pub fn memory_now(day: &serde_json::Value, kind: &str, session: &str) -> Option<u64> {
+    let n = day["series"]
+        .as_array()?
+        .iter()
+        .find(|s| s["kind"] == kind && s["sessionId"] == session)?["series"]
+        .as_u64()?;
+    day["minutes"].as_array()?.last()?["s"]
+        .as_array()?
+        .iter()
+        .find(|p| p[0].as_u64() == Some(n))?[1]
+        .as_u64()
 }

@@ -708,6 +708,14 @@ impl Sessions {
             .collect()
     }
 
+    /// Sessions not ended whose CLI process is known, each with it: what memory is sampled for.
+    pub fn with_processes(&self) -> impl Iterator<Item = (&Session, u32)> {
+        self.list
+            .iter()
+            .filter(|s| s.ended_at.is_none())
+            .filter_map(|s| s.process.map(|p| (s, p)))
+    }
+
     pub fn activity(&self) -> &HashMap<String, Activity> {
         &self.activity
     }

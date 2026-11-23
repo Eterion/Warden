@@ -12,6 +12,7 @@ pub mod hooks;
 pub mod identity;
 pub mod logfile;
 pub mod mainlogin;
+pub mod memory;
 pub mod model;
 pub mod pipe;
 pub mod policy;

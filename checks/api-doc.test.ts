@@ -72,6 +72,12 @@ pub enum Kind {
     App,
     Cli,
 }
+
+#[serde(rename_all = "kebab-case")]
+pub enum Shape {
+    Session,
+    OtherSignIn,
+}
 `;
     assert.deepEqual(jsonFields(rust, 'Thing'), ['startedAt', 'type']);
     assert.deepEqual(jsonFields(rust, 'Plain'), ['snake_case']);
@@ -84,6 +90,10 @@ pub enum Kind {
     assert.deepEqual(jsonVariants(rust, 'Kind'), [
       { name: 'app', fields: [] },
       { name: 'cli', fields: [] },
+    ]);
+    assert.deepEqual(jsonVariants(rust, 'Shape'), [
+      { name: 'session', fields: [] },
+      { name: 'other-sign-in', fields: [] },
     ]);
   });
 

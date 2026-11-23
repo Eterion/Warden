@@ -569,6 +569,7 @@ fn start_app(
             handle: handle.clone(),
         })),
         route_exe,
+        memory: Arc::new(warden_server::procs::SystemMemory::new()),
     })
     .map_err(|e| format!("Warden could not start its core: {e}"))?;
     handle

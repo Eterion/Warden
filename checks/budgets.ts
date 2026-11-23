@@ -214,6 +214,7 @@ async function measureCore(): Promise<{ memory: number; cpu: number; hook: numbe
     join(data, 'settings.json'),
     JSON.stringify({ version: 2, setupDone: true, accounts: [account], nextId: 2 }),
   );
+  fullMemoryDay(data);
   const child = startDemo(scratch, data, env);
   try {
     await listening(child);
@@ -236,6 +237,116 @@ async function measureCore(): Promise<{ memory: number; cpu: number; hook: numbe
     child.kill();
     await sleep(200);
     rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/** Today's local date, as the core names its memory files. */
+function localDate(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** The memory series a full day holds in the budgets (crates/warden-core/src/memory.rs keeps up to 200). */
+const MEMORY_SERIES = 20;
+
+/**
+ * Today's memory file, full: 1,440 minutes with 20 series each, so the core keeps today's whole buffer in memory
+ * (it reads today's file back at start).
+ */
+function fullMemoryDay(data: string): void {
+  const lines: string[] = [];
+  for (let n = 1; n <= MEMORY_SERIES; n++) {
+    lines.push(
+      JSON.stringify({
+        series: n,
+        kind: 'session',
+        provider: 'codex',
+        accountId: 'a1',
+        account: 'Budget',
+        sessionId: `budget-${n}`,
+        parentSessionId: null,
+        name: `Budget session ${n}`,
+        project: 'Budget',
+      }),
+    );
+  }
+  for (let m = 0; m < 1440; m++) {
+    const s = Array.from({ length: MEMORY_SERIES }, (_, i) => [i + 1, 100_000 + ((m * 37 + i * 101) % 50_000)]);
+    const sum = s.reduce((a, [, kib]) => a + (kib ?? 0), 0);
+    lines.push(JSON.stringify({ m, total: 33_554_432, used: 18_000_000 + m, sum, s }));
+  }
+  mkdirSync(join(data, 'memory'), { recursive: true });
+  writeFileSync(join(data, 'memory', `memory-${localDate()}.jsonl`), lines.join('\n') + '\n');
+}
+
+/** Processes in the stand-in session's tree under its CLI (the CLI, ping processes and the hook). */
+const TREE_PROCESSES = 20;
+const SAMPLING_SECONDS = 20;
+
+/**
+ * The core's cost of sampling memory on this computer while a session runs: the demo server sampling this computer
+ * (`--real-memory-every-ms`), with one Claude session whose CLI is a stand-in (a copy of Node, which Warden takes for
+ * Claude's CLI) running a tree of ping processes, its SessionStart sent by the real status hook (`warden event`) from
+ * inside that tree, so Warden finds the CLI as it would a real one. `every` is the sampling interval; returns the
+ * core's CPU time over SAMPLING_SECONDS and the number of samples in it.
+ */
+async function measureSampling(everyMs: number): Promise<{ cpuMs: number; samples: number }> {
+  const scratch = mkdtempSync(join(tmpdir(), 'warden-budget-memory-'));
+  const env = scratchEnv(scratch);
+  const data = join(scratch, 'data');
+  const folder = join(scratch, 'claude-budget');
+  mkdirSync(data, { recursive: true });
+  mkdirSync(folder, { recursive: true });
+  const account = { id: 'a1', label: 'Budget', provider: 'claude', folder, enabled: true, identity: null };
+  writeFileSync(
+    join(data, 'settings.json'),
+    JSON.stringify({ version: 2, setupDone: true, accounts: [account], nextId: 2 }),
+  );
+  const usage = mkdtempSync(join(scratch, 'usage-'));
+  const ui = mkdtempSync(join(scratch, 'ui-'));
+  const args = ['--port', '0', '--data-dir', data, '--home', scratch, '--usage-dir', usage, '--ui-dir', ui];
+  const child = spawn(DEMO, [...args, '--real-memory-every-ms', String(everyMs)], {
+    stdio: ['ignore', 'ignore', 'pipe'],
+    env,
+  }) as ChildProcess & { pid: number };
+  if (child.pid === undefined) throw new Error('the demo server did not start');
+  // The stand-in CLI: pings that idle under it, then the status hook's SessionStart from inside its tree.
+  const event = JSON.stringify({ session_id: 'budget-memory', hook_event_name: 'SessionStart', cwd: scratch });
+  const script = [
+    "const { spawn } = require('node:child_process');",
+    `for (let i = 0; i < ${TREE_PROCESSES - 2}; i++) spawn('ping', ['-n', '600', '127.0.0.1'], { stdio: 'ignore', windowsHide: true });`,
+    `const hook = spawn(${JSON.stringify(join(RELEASE, 'warden.exe'))}, ${JSON.stringify(hookArgs(data, 'a1'))}, { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });`,
+    `hook.stdin.end(${JSON.stringify(event)});`,
+    'setInterval(() => {}, 1000);',
+  ].join('\n');
+  let cli: ChildProcess | undefined;
+  try {
+    const { port, cookie } = await listening(child);
+    await pipeReady(data);
+    cli = spawn(process.execPath, ['-e', script], { stdio: 'ignore', windowsHide: true, env });
+    const date = localDate();
+    const measured = async () => {
+      const r = await fetch(`http://127.0.0.1:${port}/api/memory/day?date=${date}`, { headers: { cookie } });
+      const day = (await r.json()) as { series: { sessionId: string | null }[] };
+      return day.series.some((s) => s.sessionId === 'budget-memory');
+    };
+    const deadline = performance.now() + 30_000;
+    while (!(await measured())) {
+      if (performance.now() > deadline) throw new Error("the stand-in session's memory was never sampled");
+      await sleep(250);
+    }
+    const tree = cli.pid === undefined ? 0 : sample(cli.pid, true).processes;
+    if (tree < TREE_PROCESSES - 1)
+      throw new Error(`the stand-in tree has ${tree} processes, ${TREE_PROCESSES - 1} expected`);
+    const first = sample(child.pid, false);
+    await sleep(SAMPLING_SECONDS * 1000);
+    const last = sample(child.pid, false);
+    return { cpuMs: last.cpuMs - first.cpuMs, samples: (last.atMs - first.atMs) / everyMs };
+  } finally {
+    if (cli?.pid !== undefined) spawnSync('taskkill', ['/PID', String(cli.pid), '/T', '/F'], { stdio: 'ignore' });
+    child.kill();
+    await sleep(500);
+    rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   }
 }
 
@@ -580,6 +691,9 @@ async function main(): Promise<void> {
   releaseRefusesDevelopmentOptions();
   const core = await measureCore();
   const events = await measureEvents();
+  // Every second, so a sample's CPU time is measured over many samples; then at the real interval.
+  const perSample = await measureSampling(1000);
+  const sampling = await measureSampling(10_000);
   const desktop = await measureDesktop();
   const measured: Record<string, Measured> = {
     coreIdleMemoryMB: core.memory,
@@ -592,6 +706,8 @@ async function main(): Promise<void> {
     statusHookMs: core.hook,
     statusHookDownMs: core.hookDown,
     statusEventCpuMs: events,
+    memorySampleCpuMs: perSample.cpuMs / perSample.samples,
+    coreSamplingCpuPercent: (sampling.cpuMs / (SAMPLING_SECONDS * 1000)) * 100,
     cliBinaryKB: sizeKB('warden.exe'),
     desktopBinaryKB: sizeKB('warden-desktop.exe'),
   };

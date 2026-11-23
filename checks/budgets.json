@@ -3,7 +3,7 @@
   "coreIdleMemoryMB": {
     "budget": 15,
     "unit": "MB",
-    "what": "the demo server's private memory (the core with its loopback listener, stand-in endpoints, no logins) after 5 s idle, with its session table full (200 sessions)",
+    "what": "the demo server's private memory (the core with its loopback listener, stand-in endpoints, no logins) after 5 s idle, with its session table full (200 sessions) and today's memory history full (1,440 minutes, 20 series)",
     "measured": "step 4.1: measured 1.7 MB with no accounts; room for accounts, readings and capped history; step 4.3: 2.0 MB with 200 sessions"
   },
   "coreIdleCpuPercent": {
@@ -53,6 +53,18 @@
     "unit": "ms",
     "what": "the demo server's CPU time (the core with its loopback listener, stand-in endpoints, no logins) per status hook event with four windows waiting for changes (each answered) and three accounts with hook files",
     "measured": "measured 1.33 to 1.42 ms before the hook state was kept in memory, 0.38 to 0.80 ms after (three runs of 1000 events each)"
+  },
+  "memorySampleCpuMs": {
+    "budget": null,
+    "unit": "ms",
+    "what": "the demo server's CPU time per memory sample (sampling this computer every second) with one session whose stand-in CLI runs a tree of 20 processes, among all of the computer's processes",
+    "measured": "step 5.2: first measured"
+  },
+  "coreSamplingCpuPercent": {
+    "budget": null,
+    "unit": "% of one core",
+    "what": "the demo server's CPU over 20 s, sampling this computer's memory every 10 s, with one session whose stand-in CLI runs a tree of 20 processes",
+    "measured": "step 5.2: first measured"
   },
   "statusHookDownMs": {
     "budget": 50,

@@ -136,6 +136,9 @@
   --color-chart-left: light-dark(#35353a, #d7d7de);
   --color-chart-hover: light-dark(#09090b, #fafafa);
   --color-chart-gap: light-dark(#fafafa, rgba(255, 255, 255, 0.035));
+  /* The chart's baseline and its ticks: a step firmer than the gridlines; decoration, read through its labels (tertiary
+     text), so it needs no contrast pair of its own. */
+  --color-axis: light-dark(#a1a1aa, #52525b);
 
   /* Status: session states */
   --color-act-working: light-dark(#27272a, #e4e4e7);
@@ -320,6 +323,11 @@ body {
   grid-template-columns: 20px minmax(180px, 1fr) minmax(80px, 120px) minmax(80px, 120px) minmax(88px, 120px);
 }
 
+@utility grid-cols-figures {
+  /* The Memory page's figures: equal columns across the width, as many as fit at a figure's least width. */
+  grid-template-columns: repeat(auto-fit, minmax(184px, 1fr));
+}
+
 @utility min-w-memory {
   min-width: 560px;
 }
@@ -460,4 +468,9 @@ body {
 
 @utility origin-menu {
   transform-origin: var(--reka-dropdown-menu-content-transform-origin);
+}
+
+/* A popover (the Memory page's calendar) grows from its trigger, as a menu does. */
+@utility origin-popover {
+  transform-origin: var(--reka-popover-content-transform-origin);
 }

@@ -67,7 +67,9 @@ type Fixture =
   | 'resetSuggested'
   | 'setupFive'
   | 'memory'
-  | 'memoryQuiet';
+  | 'memoryQuiet'
+  | 'memoryHigh'
+  | 'memoryShort';
 
 /** What to do on a page once it is ready, to reach a state such as a menu's modal (Playwright selectors). */
 /** `hover` rests the pointer on an element; `press` also holds the button down on it, until the page is checked. */
@@ -194,6 +196,28 @@ export const PAGES: {
     path: '/#/memory',
     fixture: 'memoryQuiet',
     ready: '[data-memory-none]',
+  },
+  {
+    // The day's calendar open: the recorded days marked, the day shown filled, today ringed, later days disabled.
+    name: 'memory-calendar',
+    path: '/#/memory',
+    fixture: 'memory',
+    ready: '[data-memory-chart]',
+    steps: [{ click: '[data-day-picker]' }, { waitFor: '[data-calendar] [data-recorded]' }],
+  },
+  {
+    // The computer above 90% in use: its number, share and meter in amber.
+    name: 'memory-computer-high',
+    path: '/#/memory',
+    fixture: 'memoryHigh',
+    ready: '[data-meter][data-high]',
+  },
+  {
+    // A day recorded only in its first hour: the axis in quarter hours.
+    name: 'memory-short-span',
+    path: '/#/memory',
+    fixture: 'memoryShort',
+    ready: '[data-axis-label]',
   },
   {
     // The pointer on the chart: the guide on its minute, with the bands and their total.
@@ -1016,7 +1040,15 @@ function fakeApi(current: () => Fixture): Plugin {
         if (url.startsWith('/state/wait') || url.startsWith('/memory/today/wait')) return;
         if (url.startsWith('/memory/day')) {
           const date = /date=([\d-]+)/.exec(url)?.[1] ?? localDay(now);
-          send(res, memoryDay(date, now, fixture === 'memoryQuiet'));
+          const variant =
+            fixture === 'memoryQuiet'
+              ? 'quiet'
+              : fixture === 'memoryHigh'
+                ? 'high'
+                : fixture === 'memoryShort'
+                  ? 'short'
+                  : 'busy';
+          send(res, memoryDay(date, now, variant));
           return;
         }
         // Using a reset: refused as the provider would say it (nothing real is sent; the other fixtures answer the state).

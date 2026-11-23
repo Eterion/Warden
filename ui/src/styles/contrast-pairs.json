@@ -1408,5 +1408,29 @@
     "bg": ["panel"],
     "min": 3,
     "use": "the Memory chart's guide line, on its halo in the panel's colour, wherever it crosses the bands"
+  },
+  {
+    "fg": "text",
+    "bg": ["modal", "chip-off"],
+    "min": 4.5,
+    "use": "a day in the Memory page calendar, hovered"
+  },
+  {
+    "fg": "text",
+    "bg": ["panel", "track"],
+    "min": 3,
+    "use": "the Memory page Computer meter: the AI sessions part of the memory in use, against its track"
+  },
+  {
+    "fg": "control",
+    "bg": ["panel", "track"],
+    "min": 3,
+    "use": "the Memory page Computer meter: the rest of the memory in use, against its track"
+  },
+  {
+    "fg": "attn-icon",
+    "bg": ["panel", "track"],
+    "min": 3,
+    "use": "the Memory page Computer meter above 90% in use, against its track"
   }
 ]

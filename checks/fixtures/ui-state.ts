@@ -501,9 +501,11 @@ export function memoryDays(now: number): string[] {
  * A made-up day of memory (`GET /api/memory/day`): main, Second and Codex working through it, a switched-off and a removed Codex account and
  * one Claude account since removed, a session signed in as someone else in the morning, a process Second left running,
  * Warden itself, and Warden closed over lunch: every colour the chart has. `quiet`: today with only Warden itself, no
- * AI session.
+ * AI session. `high`: the computer above 90% in use. `short`: a day recorded only from 00:05 to 00:50, so the
+ * chart spans its first hour.
  */
-export function memoryDay(date: string, now: number, quiet = false): unknown {
+export function memoryDay(date: string, now: number, variant: 'busy' | 'quiet' | 'high' | 'short' = 'busy'): unknown {
+  const quiet = variant === 'quiet';
   const today = date === localDay(now);
   const days = memoryDays(now);
   if (!days.includes(date))
@@ -560,26 +562,34 @@ export function memoryDay(date: string, now: number, quiet = false): unknown {
   // Each series runs part of the day: [series, from, to, its highest in GB].
   const runs: [number, number, number, number][] = quiet
     ? [[5, 480, 900, 0.012]]
-    : [
-        [1, 480, 900, 1.6],
-        [2, 570, 840, 1.2],
-        [3, 780, 900, 0.9],
-        [4, 840, 900, 0.4],
-        [5, 480, 900, 0.012],
-        [6, 510, 660, 0.6],
-        [7, 600, 700, 0.5],
-        [8, 790, 900, 0.5],
-        [9, 810, 880, 0.4],
-      ];
+    : variant === 'short'
+      ? [
+          [1, 5, 50, 1.4],
+          [3, 20, 50, 0.8],
+          [5, 5, 50, 0.012],
+        ]
+      : [
+          [1, 480, 900, 1.6],
+          [2, 570, 840, 1.2],
+          [3, 780, 900, 0.9],
+          [4, 840, 900, 0.4],
+          [5, 480, 900, 0.012],
+          [6, 510, 660, 0.6],
+          [7, 600, 700, 0.5],
+          [8, 790, 900, 0.5],
+          [9, 810, 880, 0.4],
+        ];
+  const [start, end] = variant === 'short' ? [5, 50] : [480, 900];
+  const gaps = variant === 'short' ? [] : [{ from: 720, to: 760 }];
   const minutes = [];
-  for (let m = 480; m < 900; m++) {
-    if (m >= 720 && m < 760) continue;
+  for (let m = start; m < end; m++) {
+    if (gaps.some((g) => m >= g.from && m < g.to)) continue;
     const pairs: [number, number][] = [];
     for (const [n, from, to, gb] of runs)
       if (m >= from && m < to)
         pairs.push([n, Math.round(gb * GIB_KIB * (0.35 + 0.65 * wave(m + seed * 13, 47 + n * 11, n / 7)))]);
     const sum = pairs.filter(([n]) => n !== 5).reduce((a, [, v]) => a + v, 0);
-    const used = Math.round((14 + 3 * wave(m, 180, 0.2)) * GIB_KIB + sum);
+    const used = Math.round((variant === 'high' ? 29 : 14 + 3 * wave(m, 180, 0.2)) * GIB_KIB + sum);
     minutes.push({ m, total: 32 * GIB_KIB, used, sum, s: pairs });
   }
   const last = minutes[minutes.length - 1]!;
@@ -589,9 +599,9 @@ export function memoryDay(date: string, now: number, quiet = false): unknown {
     days,
     series,
     minutes,
-    gaps: [{ from: 720, to: 760 }],
+    gaps,
     summary: {
-      first: 480,
+      first: start,
       last: last.m,
       computerTotal: 32 * GIB_KIB,
       now: today ? last.sum : null,

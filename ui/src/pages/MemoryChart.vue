@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// The Memory page's chart, drawn by hand in SVG (no chart library): the minutes across the day's recorded span, memory
-// up with three faint gridlines labelled in GB, a stacked band per account (coloured by provider, greys for the groups,
+// The Memory page's chart, drawn by hand in SVG (no chart library), on the panel itself with no box around it: the
+// minutes across the day's recorded span along a baseline with ticks and time labels (`timeAxis`), memory up with three
+// faint gridlines labelled in GB, a stacked band per account (coloured by provider, greys for the groups,
 // the band of the hovered table row in chart-hover), each divided from the next by a thin line in the panel's colour,
-// and the minutes Warden was not running as an empty band. A guide follows the pointer with a tooltip of the shown bands and their total at that minute; the chart
+// and the minutes Warden was not running as an empty band, named on one line or two where that fits. A guide follows the pointer with a tooltip of the shown bands and their total at that minute; the chart
 // is a slider for the keyboard (the arrow keys move the guide a minute, Page Up and Page Down an hour, Home and End to
 // the first and last recording), its value the same words, so it works without a mouse; Escape hides the tooltip. The table under it is its accessible equivalent.
 import { useElementSize } from '@vueuse/core';
@@ -13,7 +14,7 @@ import {
   bandPaths,
   guideAt,
   guideText,
-  hourTicks,
+  timeAxis,
   size,
   type BandColour,
   type ChartModel,
@@ -48,10 +49,22 @@ const x = (m: number) => CHART.gutter + ((m - props.model.from) / span.value) * 
 const y = (kib: number) => CHART.top + (1 - kib / props.model.top) * (CHART.height - CHART.top);
 
 const paths = computed(() => bandPaths(props.model, width.value));
-const ticks = computed(() => hourTicks(props.model, width.value));
+const axis = computed(() => timeAxis(props.model, width.value));
+/** A gap's label: on one line where it fits, on two ("Warden", "not running") in a narrower gap, none in a sliver. */
+const GAP_ONE_LINE = 120;
+const GAP_TWO_LINES = 76;
 const gaps = computed(() =>
-  props.model.gaps.map((g) => ({ ...g, x: x(g.from), w: x(g.to) - x(g.from) })).filter((g) => g.w > 0),
+  props.model.gaps
+    .map((g) => {
+      const w = x(g.to) - x(g.from);
+      const lines =
+        w >= GAP_ONE_LINE ? [MISSING_TEXT['not-running']] : w >= GAP_TWO_LINES ? ['Warden', 'not running'] : [];
+      return { ...g, x: x(g.from), w, lines };
+    })
+    .filter((g) => g.w > 0),
 );
+/** The plot's middle, where a gap's label sits. */
+const middle = CHART.top + (CHART.height - CHART.top) / 2;
 
 /** The guide's minute, any minute of the span: in a gap the guide says Warden was not running. */
 const at = ref<number | null>(null);
@@ -151,18 +164,25 @@ function onKey(e: KeyboardEvent): void {
       <g v-for="g in gaps" :key="g.from">
         <rect :x="g.x" :y="CHART.top" :width="g.w" :height="CHART.height - CHART.top" class="fill-chart-gap" />
         <text
-          v-if="g.w >= 128"
+          v-if="g.lines.length"
           :x="g.x + g.w / 2"
-          :y="CHART.top + (CHART.height - CHART.top) / 2"
+          :y="middle"
           text-anchor="middle"
           dominant-baseline="middle"
           class="fill-tertiary"
           data-not-running
         >
-          Warden not running
+          <tspan
+            v-for="(line, i) in g.lines"
+            :key="line"
+            :x="g.x + g.w / 2"
+            :dy="i === 0 ? (-(g.lines.length - 1) * CHART.line) / 2 : CHART.line"
+          >
+            {{ line }}
+          </tspan>
         </text>
       </g>
-      <!-- Three faint gridlines, labelled in GB, and the baseline. -->
+      <!-- Three faint gridlines, labelled in GB. -->
       <g v-for="line in props.model.grid" :key="line.kib">
         <line
           :x1="CHART.gutter"
@@ -176,13 +196,6 @@ function onKey(e: KeyboardEvent): void {
           {{ line.label }}
         </text>
       </g>
-      <line
-        :x1="CHART.gutter"
-        :x2="CHART.gutter + width"
-        :y1="CHART.height"
-        :y2="CHART.height"
-        class="stroke-divider-strong"
-      />
       <!-- The bands, bottom first, each edged on top by a thin line in the panel's colour. -->
       <g :transform="`translate(${CHART.gutter} 0)`">
         <path
@@ -201,17 +214,37 @@ function onKey(e: KeyboardEvent): void {
           stroke-linejoin="round"
         />
       </g>
-      <!-- The hours along the bottom. -->
-      <text
-        v-for="t in ticks"
-        :key="t.m"
-        :x="CHART.gutter + t.x"
-        :y="CHART.height + CHART.axis - 4"
-        text-anchor="middle"
-        class="fill-tertiary"
-      >
-        {{ t.label }}
-      </text>
+      <!-- The baseline over the bands' feet, its ticks (longer under a label) and the times. -->
+      <g data-axis>
+        <line
+          :x1="CHART.gutter"
+          :x2="CHART.gutter + width"
+          :y1="CHART.height + 0.5"
+          :y2="CHART.height + 0.5"
+          class="stroke-axis"
+        />
+        <line
+          v-for="t in axis.ticks"
+          :key="`tick-${t.m}`"
+          :x1="CHART.gutter + t.x"
+          :x2="CHART.gutter + t.x"
+          :y1="CHART.height + 0.5"
+          :y2="CHART.height + (t.major ? CHART.tick : CHART.tick / 2)"
+          class="stroke-axis"
+          :data-tick="t.major ? 'major' : 'minor'"
+        />
+        <text
+          v-for="t in axis.labels"
+          :key="t.m"
+          :x="CHART.gutter + t.x"
+          :y="CHART.height + CHART.axis - 2"
+          text-anchor="middle"
+          class="fill-tertiary"
+          data-axis-label
+        >
+          {{ t.label }}
+        </text>
+      </g>
       <!-- The guide: a line in the text colour on a wider one in the panel's, so it stands out on every band. -->
       <g v-if="guideX !== null" data-guide>
         <line :x1="guideX" :x2="guideX" :y1="CHART.top" :y2="CHART.height" class="stroke-panel" stroke-width="3" />

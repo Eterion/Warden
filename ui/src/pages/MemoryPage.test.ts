@@ -53,6 +53,15 @@ function day(date: string, minutes: MemoryMinute[], extra: Partial<MemoryDay> = 
   };
 }
 
+/** A figure's parts: its label, then each line under it, as the page shows them (the meter's line is empty). */
+function figure(
+  page: { find: (s: string) => { exists: () => boolean; findAll: (s: string) => { text: () => string }[] } },
+  key: string,
+) {
+  const f = page.find(`[data-figure="${key}"]`);
+  return f.exists() ? f.findAll('dt, dd').map((e) => e.text().trim()) : null;
+}
+
 const busyDay = (date: string) =>
   day(date, [
     minute(540, [
@@ -130,12 +139,22 @@ describe('MemoryPage', () => {
     const page = mount(MemoryPage, { attachTo: document.body });
     await flushPromises();
     expect(page.get('[data-day]').text()).toBe('Monday, 9 November');
-    const figures = page.get('[data-figures]').text();
-    expect(figures).toContain('Now1 GB3% of 32 GB');
-    expect(figures).toContain('Peak3 GB at 09:00');
-    // The computer above 90% in use: amber.
+    expect(figure(page, 'now')).toEqual(['AI sessions now', '1 GB', '3% of 32 GB']);
+    expect(figure(page, 'peak')).toEqual(['Peak today', '3 GB', 'at 09:00']);
+    expect(figure(page, 'computer')).toEqual(['Computer', '30 GB', '', '94% of 32 GB']);
+    expect(figure(page, 'warden')).toEqual(['Warden itself', '9 MB', '<1% of 32 GB']);
+    // Each with its icon, Warden's its own owl.
+    expect(page.findAll('[data-figures] dt svg')).toHaveLength(4);
+    expect(page.find('[data-figure="warden"] [data-owl-icon]').exists()).toBe(true);
+    // The computer above 90% in use: its number, share and meter amber.
     expect(page.get('[data-computer] dd').classes()).toContain('text-attn');
-    expect(figures).toContain('Warden itself9 MB');
+    expect(page.get('[data-computer] dd:last-child').classes()).toContain('text-attn');
+    expect(page.get('[data-meter]').attributes('data-high')).toBe('true');
+    expect(page.get('[data-meter-used]').classes()).toContain('bg-attn-icon');
+    // The meter: Main's 1 GB of the 30 GB in use marked in the text colour, then the rest, as shares of 32 GB.
+    expect(page.get('[data-meter-ai]').classes()).toContain('bg-text');
+    expect(page.get('[data-meter-ai]').attributes('style')).toContain('width: 3.13%');
+    expect(page.get('[data-meter-used]').attributes('style')).toContain('width: 90.63%');
     const rows = page.findAll('[data-memory-table] [role=row]');
     expect(rows.map((r) => r.text())).toEqual([
       'Shown in the chartAccountNowPeakShare now',
@@ -156,9 +175,11 @@ describe('MemoryPage', () => {
     await flushPromises();
     expect(location.hash).toBe(`#/memory/${PAST}`);
     expect(page.get('[data-day]').text()).toBe('Thursday, 5 November');
-    // A past day: no Now, its peak and the computer at its highest.
-    expect(page.get('[data-figures]').text()).not.toContain('Now');
-    expect(page.get('[data-figures]').text()).toContain('Computer at its highest');
+    // A past day: no AI sessions now, its peak, the computer at its highest and when, Warden at its highest.
+    expect(figure(page, 'now')).toBeNull();
+    expect(figure(page, 'peak')).toEqual(['Peak', '3 GB', 'at 09:00']);
+    expect(figure(page, 'computer')).toEqual(['Computer', '30 GB', '', '94% of 32 GB at 09:02']);
+    expect(figure(page, 'warden')).toEqual(['Warden itself', '9 MB', 'at its highest']);
     expect(page.get('button[aria-label="Previous day"]').attributes('aria-disabled')).toBe('true');
     await page.get('button[aria-label="Next day"]').trigger('click');
     await flushPromises();
@@ -175,7 +196,7 @@ describe('MemoryPage', () => {
     await box.trigger('click');
     expect(page.get('[role=checkbox][aria-label="Show Work in the chart"]').attributes('aria-checked')).toBe('false');
     expect(page.find('[data-band="account:a1"]').exists()).toBe(false);
-    expect(page.get('[data-figures]').text()).toContain('Peak2 GB');
+    expect(figure(page, 'peak')?.[1]).toBe('2 GB');
     // The row stays, with its own figures.
     expect(page.get('[data-band-row="account:a1"]').text()).toContain('1 GB');
     await page.get('[data-band-row="account:main"]').trigger('pointerenter');
@@ -290,8 +311,8 @@ describe('MemoryPage', () => {
     const waits = asked.filter((p) => p.includes('/today/wait'));
     expect(waits[0]).toBe('/api/memory/today/wait?after=542');
     expect(waits[1]).toBe('/api/memory/today/wait?after=543&sample=7');
-    expect(page.get('[data-figures]').text()).toContain('Now4 GB');
-    expect(page.get('[data-figures]').text()).toContain('Peak4 GB at 09:03');
+    expect(figure(page, 'now')?.[1]).toBe('4 GB');
+    expect(figure(page, 'peak')).toEqual(['Peak today', '4 GB', 'at 09:03']);
     store.away = true;
     await nextTick();
     const count = asked.length;
@@ -332,6 +353,47 @@ describe('MemoryPage', () => {
     expect(asked.length).toBe(count);
   });
 
+  it('goes to the day picked in the calendar, today to its own address', async () => {
+    server({ [TODAY]: busyDay(TODAY), [PAST]: busyDay(PAST) });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    await page.get('[data-day-picker]').trigger('click');
+    await flushPromises();
+    // The days with recordings, from the day the page read.
+    const marked = [...document.querySelectorAll('[data-calendar] :not([data-outside-view]) > [data-recorded]')];
+    expect(marked.map((d) => d.parentElement!.getAttribute('data-value'))).toEqual([PAST, TODAY]);
+    document.querySelector<HTMLElement>(`[data-calendar] [data-value="${PAST}"]`)!.click();
+    await flushPromises();
+    expect(location.hash).toBe(`#/memory/${PAST}`);
+    expect(page.get('[data-day]').text()).toBe('Thursday, 5 November');
+    await page.get('[data-day-picker]').trigger('click');
+    await flushPromises();
+    document.querySelector<HTMLElement>(`[data-calendar] [data-value="${TODAY}"]`)!.click();
+    await flushPromises();
+    expect(location.hash).toBe('#/memory');
+    page.unmount();
+  });
+
+  it('a past day: the meter marks the AI sessions in the minute the computer was at its highest', async () => {
+    server({ [PAST]: busyDay(PAST) });
+    go(`memory/${PAST}`);
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    // 09:02, 30 GB in use, Main's 1 GB of it.
+    expect(page.get('[data-meter-ai]').attributes('style')).toContain('width: 3.13%');
+    // A computer below 90%: no amber.
+    page.unmount();
+    const calm = busyDay(PAST);
+    calm.minutes = calm.minutes.map((m) => ({ ...m, used: 16 * GIB }));
+    server({ [PAST]: calm });
+    const again = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    expect(again.get('[data-meter]').attributes('data-high')).toBeUndefined();
+    expect(again.get('[data-meter-used]').classes()).toContain('bg-control');
+    expect(again.get('[data-computer] dd').classes()).not.toContain('text-attn');
+    again.unmount();
+  });
+
   it('keeps focus on Next as it turns off on arriving at today', async () => {
     server({ [TODAY]: busyDay(TODAY), [PAST]: busyDay(PAST) });
     go(`memory/${PAST}`);
@@ -357,7 +419,7 @@ describe('MemoryPage', () => {
     await flushPromises();
     expect(page.get('[data-memory-none-now]').text()).toBe('No AI sessions are running.');
     expect(page.find('[data-memory-chart]').exists()).toBe(true);
-    expect(page.get('[data-figures]').text()).toContain('Now0 MB');
+    expect(figure(page, 'now')?.[1]).toBe('0 MB');
     page.unmount();
   });
 
@@ -385,7 +447,7 @@ describe('MemoryPage', () => {
     const page = mount(MemoryPage, { attachTo: document.body });
     await flushPromises();
     expect(page.get('[data-memory-none]').text()).toBe('No AI sessions are running.');
-    expect(page.get('[data-computer]').text()).toContain('12 GB of 32 GB');
+    expect(figure(page, 'computer')).toEqual(['Computer', '12 GB', '', '38% of 32 GB']);
     expect(page.find('[data-memory-chart]').exists()).toBe(false);
     page.unmount();
   });

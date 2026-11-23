@@ -1,9 +1,10 @@
 <script setup lang="ts">
 // The Memory page: one day at a time, its own address (#/memory is today, #/memory/<yyyy-MM-dd> a past day), so back
 // and forward go through the days seen. Previous and Next go to the nearest day with recordings (Next stops at today,
-// saying why). The figures (now and its share of the computer, today only; the peak and its time; the computer's
-// memory in use, amber above 90%; Warden itself), then the chart of the AI sessions' memory stacked by account, and the
-// table: the chart's legend and accessible equivalent, a checkbox per row leaving its band out (on this page only),
+// saying why); between them the day opens a calendar to pick any day (MemoryDayPicker). The figures (MemoryFigures:
+// the AI sessions now and their share of the computer, today only; the peak and its time; the computer's memory in use
+// with its meter, amber above 90%; Warden itself), then the chart of the AI sessions' memory stacked by account, on the
+// panel without a box, and the table: the chart's legend and accessible equivalent, a checkbox per row leaving its band out (on this page only),
 // hovering a row darkening its band. Today's page follows each new sample through its own long poll, paused while the
 // window is hidden; a past day is read once.
 import { Check, ChevronLeft, ChevronRight } from 'lucide-vue-next';
@@ -14,12 +15,10 @@ import WButton from '../components/WButton.vue';
 import WIconButton from '../components/WIconButton.vue';
 import WTable from '../components/WTable.vue';
 import WTableRow from '../components/WTableRow.vue';
-import WTooltip from '../components/WTooltip.vue';
 import {
   anyRan,
   bandsOf,
   chartModel,
-  dayTitle,
   figures,
   isoDay,
   mergeToday,
@@ -28,10 +27,11 @@ import {
   stepDays,
   type BandColour,
 } from '../memory';
-import { clock } from '../format';
 import { go, route } from '../route';
 import { store, usedAccounts } from '../store';
 import MemoryChart from './MemoryChart.vue';
+import MemoryDayPicker from './MemoryDayPicker.vue';
+import MemoryFigures from './MemoryFigures.vue';
 
 const today = computed(() => isoDay(new Date(store.now)));
 /** The day shown: the address's, never one to come. */
@@ -40,7 +40,6 @@ const day = computed(() => {
   return d && d < today.value ? d : today.value;
 });
 const isToday = computed(() => day.value === today.value);
-const title = computed(() => dayTitle(day.value, today.value));
 
 function show(d: string): void {
   go(d === today.value ? 'memory' : `memory/${d}`);
@@ -146,9 +145,6 @@ const noneNow = computed(
 );
 const total = computed(() => data.value?.summary.computerTotal ?? null);
 const hovered = ref<string | null>(null);
-/** Why a share can read a little high. */
-const SHARE_NOTE =
-  'Shares count private memory, part of which Windows can page out to disk, so a share can read a little high when memory is short.';
 const SWATCH: Record<BandColour, string> = {
   'claude-1': 'bg-chart-claude-1',
   'claude-2': 'bg-chart-claude-2',
@@ -176,7 +172,7 @@ function toggle(key: string): void {
           :disabled-reason="steps.prev ? null : 'No earlier day was recorded.'"
           @click="steps.prev && show(steps.prev)"
         />
-        <h2 class="min-w-52 text-center text-16 font-semibold" data-day>{{ title }}</h2>
+        <h2><MemoryDayPicker :day="day" :today="today" :recorded="days" @pick="show" /></h2>
         <WIconButton
           label="Next day"
           :icon="ChevronRight"
@@ -201,39 +197,7 @@ function toggle(key: string): void {
       Nothing recorded on this day.
     </div>
     <template v-else-if="figs">
-      <!-- The figures, plain text in a row. -->
-      <dl class="flex flex-wrap gap-x-10 gap-y-3" data-figures>
-        <div v-if="isToday" class="flex flex-col">
-          <dt class="text-12 text-secondary">Now</dt>
-          <dd class="text-16 font-semibold tabular-nums">{{ size(figs.now ?? 0) }}</dd>
-          <dd v-if="total" class="text-12 text-secondary tabular-nums">
-            <!-- Said once, where the share first shows. -->
-            <WTooltip :text="SHARE_NOTE" class="text-left" data-share-note
-              >{{ figs.nowShare }} of {{ size(total) }}</WTooltip
-            >
-          </dd>
-        </div>
-        <div class="flex flex-col">
-          <dt class="text-12 text-secondary">Peak</dt>
-          <dd class="text-16 font-semibold tabular-nums">{{ size(figs.peak ?? 0) }}</dd>
-          <dd v-if="figs.peakAt !== null && figs.peak" class="text-12 text-secondary tabular-nums">
-            at {{ clock(figs.peakAt) }}
-          </dd>
-        </div>
-        <div v-if="figs.computer" class="flex flex-col" data-computer>
-          <dt class="text-12 text-secondary">{{ isToday ? 'Computer' : 'Computer at its highest' }}</dt>
-          <dd :class="['text-16 font-semibold tabular-nums', figs.computer.high && 'text-attn']">
-            {{ size(figs.computer.used) }} of {{ size(figs.computer.total) }}
-          </dd>
-          <dd :class="['text-12 tabular-nums', figs.computer.high ? 'font-medium text-attn' : 'text-secondary']">
-            {{ shareText(figs.computer.used, figs.computer.total) }} in use
-          </dd>
-        </div>
-        <div v-if="figs.warden !== null" class="flex flex-col">
-          <dt class="text-12 text-secondary">{{ isToday ? 'Warden itself' : 'Warden at its highest' }}</dt>
-          <dd class="text-16 font-semibold tabular-nums">{{ size(figs.warden) }}</dd>
-        </div>
-      </dl>
+      <MemoryFigures :figures="figs" :today="isToday" :total="total" />
 
       <div
         v-if="noSessions"
@@ -244,7 +208,7 @@ function toggle(key: string): void {
       </div>
       <template v-else>
         <p v-if="noneNow" class="text-14 text-tertiary" data-memory-none-now>No AI sessions are running.</p>
-        <section aria-label="Memory over the day" class="rounded-lg border border-divider-strong px-4 pt-4 pb-2">
+        <section aria-label="Memory over the day">
           <MemoryChart v-if="model" :model="model" :ran="ran" :hovered="hovered" :day="day" />
         </section>
 

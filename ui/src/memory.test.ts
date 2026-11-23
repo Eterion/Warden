@@ -9,11 +9,12 @@ import {
   figures,
   guideAt,
   guideText,
-  hourTicks,
+  meterParts,
   mergeToday,
   shareText,
   size,
   stepDays,
+  timeAxis,
 } from './memory';
 import { account } from './test/state';
 
@@ -239,8 +240,16 @@ describe('figures', () => {
     expect(mainOnly.peakAt).toBe(600);
   });
 
-  it('marks the computer above 90% in use', () => {
-    expect(figures(d, bands, new Set()).computer).toEqual({ used: 30 * GIB, total: 32 * GIB, high: true });
+  it("marks the computer above 90% in use, with the shown bands' part of it in that minute", () => {
+    expect(figures(d, bands, new Set()).computer).toEqual({
+      used: 30 * GIB,
+      total: 32 * GIB,
+      high: true,
+      ai: 0,
+      at: 601,
+    });
+    expect(figures(d, bands, new Set(['account:main', 'account:a1'])).computer?.ai).toBe(4 * GIB);
+    expect(figures(d, bands, new Set(['account:a1'])).computer?.ai).toBe(3 * GIB);
     const calm = { ...d, minutes: [minute(600, [[1, GIB]], 28 * GIB)] };
     expect(figures(calm, bands, new Set()).computer?.high).toBe(false);
   });
@@ -251,7 +260,17 @@ describe('figures', () => {
     expect(f.now).toBeNull();
     expect(f.rows[0]!.now).toBeNull();
     expect(f.computer?.used).toBe(30 * GIB);
+    expect(f.computer?.at).toBe(601);
+    expect(f.computer?.ai).toBe(GIB);
     expect(f.warden).toBe(9 * MIB);
+  });
+
+  it("splits the computer's meter into the AI sessions' part and the rest of the memory in use", () => {
+    expect(meterParts({ used: 16 * GIB, total: 32 * GIB, ai: 4 * GIB })).toEqual({ ai: 12.5, rest: 37.5 });
+    expect(meterParts({ used: 30 * GIB, total: 32 * GIB, ai: 0 })).toEqual({ ai: 0, rest: 93.75 });
+    // Never past the memory in use, nor the computer's total.
+    expect(meterParts({ used: 2 * GIB, total: 32 * GIB, ai: 3 * GIB })).toEqual({ ai: 6.25, rest: 0 });
+    expect(meterParts({ used: 40 * GIB, total: 32 * GIB, ai: 0 })).toEqual({ ai: 0, rest: 100 });
   });
 });
 
@@ -298,22 +317,58 @@ describe('the chart', () => {
     expect(alone.map((p) => p.key)).toEqual(['account:a1']);
   });
 
-  it('marks the hours, as many as fit', () => {
-    const model = chartModel({ ...d, minutes: [minute(480, []), minute(1080, [])], gaps: [] }, bands, both)!;
-    expect(hourTicks(model, 800).map((t) => t.label)).toEqual([
-      '08:00',
+  it('labels the axis at a step giving four to eight labels, with ticks at half the step', () => {
+    const span = (from: number, to: number) =>
+      chartModel({ ...d, minutes: [minute(from, []), minute(to - 1, [])], gaps: [] }, bands, both)!;
+    const labels = (a: ReturnType<typeof timeAxis>) => a.labels.map((l) => l.label);
+    // 08:00 to 18:00: two hours; the last label, at the very end, would be cut, so it is left out.
+    const day10 = timeAxis(span(480, 1080), 800);
+    expect(day10.step).toBe(120);
+    expect(labels(day10)).toEqual(['08:00', '10:00', '12:00', '14:00', '16:00']);
+    expect(day10.ticks.map((t) => t.m)).toEqual([480, 540, 600, 660, 720, 780, 840, 900, 960, 1020, 1080]);
+    expect(day10.ticks.filter((t) => t.major).map((t) => t.m)).toEqual([480, 600, 720, 840, 960, 1080]);
+    // A whole day: three hours.
+    expect(timeAxis(span(0, 1440), 900).step).toBe(180);
+    expect(labels(timeAxis(span(0, 1440), 900))).toEqual([
+      '00:00',
+      '03:00',
+      '06:00',
       '09:00',
-      '10:00',
-      '11:00',
       '12:00',
-      '13:00',
-      '14:00',
       '15:00',
-      '16:00',
-      '17:00',
       '18:00',
+      '21:00',
     ]);
-    expect(hourTicks(model, 400).map((t) => t.label)).toEqual(['08:00', '10:00', '12:00', '14:00', '16:00', '18:00']);
+    // Seven hours: an hour.
+    expect(timeAxis(span(480, 900), 900).step).toBe(60);
+    // Three hours: half an hour.
+    expect(timeAxis(span(480, 660), 900).step).toBe(30);
+  });
+
+  it('gives a short span early in the day enough labels, none cut at either end or crowded', () => {
+    // Recorded 00:05 to 00:50: the chart spans an hour from its first recording, labelled every quarter.
+    const model = chartModel({ ...d, minutes: [minute(5, []), minute(50, [])], gaps: [] }, bands, both)!;
+    expect([model.from, model.to]).toEqual([5, 65]);
+    const axis = timeAxis(model, 600);
+    expect(axis.step).toBe(15);
+    expect(axis.labels.map((l) => l.label)).toEqual(['00:15', '00:30', '00:45', '01:00']);
+    expect(axis.ticks.map((t) => t.m)).toEqual([7.5, 15, 22.5, 30, 37.5, 45, 52.5, 60]);
+    for (const l of axis.labels) expect(l.x + 18).toBeLessThanOrEqual(600);
+    // Narrower, the step grows so labels keep their room.
+    const narrow = timeAxis(model, 300);
+    expect(narrow.step).toBe(15);
+    const roomy = timeAxis(model, 150);
+    expect(roomy.step).toBe(30);
+    for (const axis2 of [narrow, roomy, timeAxis(model, 60)]) {
+      const xs = axis2.labels.map((l) => l.x);
+      for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(48);
+    }
+    // Too narrow even for three hours over a whole day: every other label, so none collide.
+    const wholeDay = chartModel({ ...d, minutes: [minute(0, []), minute(1439, [])], gaps: [] }, bands, both)!;
+    const tight = timeAxis(wholeDay, 260);
+    const xs = tight.labels.map((l) => l.x);
+    for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(48);
+    expect(tight.labels.length).toBeGreaterThanOrEqual(3);
   });
 
   it('says what the guide shows: the bands that ran that day, top first, and their total', () => {

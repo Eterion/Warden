@@ -193,8 +193,11 @@ export interface Figures {
   /** The shown bands' highest total, and its minute. */
   peak: number | null;
   peakAt: number | null;
-  /** The computer's memory in use (today: now; a past day: at its highest) of its total; `high` above 90%. */
-  computer: { used: number; total: number; high: boolean } | null;
+  /**
+   * The computer's memory in use (today: now; a past day: at its highest, in minute `at`) of its total, `high` above
+   * 90%, and the shown bands' part of it in that same minute (`ai`, the meter's mark).
+   */
+  computer: { used: number; total: number; high: boolean; ai: number; at: number } | null;
   /** Warden itself (today: now; a past day: at its highest). */
   warden: number | null;
   rows: BandRow[];
@@ -227,14 +230,17 @@ export function figures(day: MemoryDay, bands: Band[], shown: Set<string>): Figu
   const total = day.summary.computerTotal;
   let used: number | null = null;
   let usedTotal = total;
+  let usedAt: MemoryMinute | null = null;
   if (day.today && last) {
     used = last.used;
     usedTotal = last.total;
+    usedAt = last;
   } else
     for (const m of day.minutes)
       if (used === null || m.used > used) {
         used = m.used;
         usedTotal = m.total;
+        usedAt = m;
       }
   const wardenSeries = day.series.filter((s) => s.kind === 'warden').map((s) => s.series);
   const wardenAt = (m: MemoryMinute) => m.s.filter(([n]) => wardenSeries.includes(n)).reduce((a, [, v]) => a + v, 0);
@@ -245,10 +251,30 @@ export function figures(day: MemoryDay, bands: Band[], shown: Set<string>): Figu
     nowShare: now === null ? '' : shareText(now, total),
     peak,
     peakAt,
-    computer: used !== null && usedTotal ? { used, total: usedTotal, high: used / usedTotal > 0.9 } : null,
+    computer:
+      used !== null && usedTotal && usedAt
+        ? {
+            used,
+            total: usedTotal,
+            high: used / usedTotal > 0.9,
+            ai: visible.reduce((sum, b) => sum + bandAt(b, usedAt), 0),
+            at: usedAt.m,
+          }
+        : null,
     warden,
     rows,
   };
+}
+
+/**
+ * The Computer figure's meter, as shares of the computer's memory (0 to 100): the AI sessions' part of the memory in
+ * use, then the rest of it.
+ */
+export function meterParts(c: { used: number; total: number; ai: number }): { ai: number; rest: number } {
+  const pct = (kib: number) => Math.round((Math.max(0, kib) / c.total) * 10000) / 100;
+  const used = Math.min(c.used, c.total);
+  const ai = Math.min(c.ai, used);
+  return { ai: pct(ai), rest: pct(used - ai) };
 }
 
 /** Whether any band ran something that day. */
@@ -258,8 +284,8 @@ export function anyRan(rows: BandRow[]): boolean {
 
 // ---- The chart ----
 
-/** The chart's size: its plot height, the gutter for the gridlines' labels, and the room under it for the hours. */
-export const CHART = { height: 200, gutter: 52, axis: 22, top: 8 };
+/** The chart's size: its plot height, the gutter for the gridlines' labels, the room under it for the time axis, a tick's length, and a line of its 12 px text. */
+export const CHART = { height: 200, gutter: 52, axis: 24, top: 8, tick: 6, line: 18 };
 
 export interface ChartModel {
   /** The minutes across, from the day's first recording to its last (at least an hour): [from, to). */
@@ -347,17 +373,46 @@ export function bandPaths(
   });
 }
 
-/** The hours along the bottom: on whole hours, as many as fit with room between them. */
-export function hourTicks(model: ChartModel, width: number): { m: number; x: number; label: string }[] {
+/** The axis's label steps in minutes: a quarter of an hour to three hours. */
+const LABEL_STEPS = [15, 30, 60, 120, 180];
+/** At most this many labels across the span, each with this much room (an "08:00" in 12 px text and a gap). */
+const MOST_LABELS = 8;
+const LABEL_ROOM = 48;
+/** Half a label's width: a label nearer either end of the plot than this would be cut, so it is left out. */
+const LABEL_HALF = 18;
+
+export interface Axis {
+  /** The label step in minutes; ticks fall at half of it. */
+  step: number;
+  labels: { m: number; x: number; label: string }[];
+  /** Every tick along the baseline, `major` under a label's step. */
+  ticks: { m: number; x: number; major: boolean }[];
+}
+
+/**
+ * The time axis under the chart, over a plot `width` wide: labels at the smallest step (15 min, 30 min, 1 h, 2 h, 3 h)
+ * that puts at most eight across the span with room between them, so a short span still gets four or more; ticks at
+ * half the step. A label that would be cut at the right end is left out (the left end has the gutter beside it). In a
+ * chart too narrow for even the longest step to leave room, only every other label (or fewer) is kept, so none collide.
+ */
+export function timeAxis(model: ChartModel, width: number): Axis {
   const span = model.to - model.from;
-  const pxPerHour = (width / span) * 60;
-  const every = [1, 2, 3, 4, 6, 12].find((h) => h * pxPerHour >= 64) ?? 24;
-  const ticks = [];
-  for (let m = Math.ceil(model.from / 60) * 60; m <= model.to; m += 60) {
-    if ((m / 60) % every !== 0) continue;
-    ticks.push({ m, x: ((m - model.from) / span) * width, label: clock(m) });
+  const px = (min: number) => (min / span) * width;
+  const count = (step: number) => Math.floor(model.to / step) - Math.ceil(model.from / step) + 1;
+  const step =
+    LABEL_STEPS.find((s) => count(s) <= MOST_LABELS && px(s) >= LABEL_ROOM) ?? LABEL_STEPS[LABEL_STEPS.length - 1]!;
+  const every = Math.max(1, Math.ceil(LABEL_ROOM / Math.max(px(step), 1)));
+  const x = (m: number) => ((m - model.from) / span) * width;
+  const half = step / 2;
+  const ticks: Axis['ticks'] = [];
+  for (let m = Math.ceil(model.from / half) * half; m <= model.to; m += half)
+    ticks.push({ m, x: x(m), major: m % step === 0 });
+  const labels: Axis['labels'] = [];
+  for (let m = Math.ceil(model.from / step) * step; m <= model.to; m += step) {
+    if ((m / step) % every !== 0 || x(m) + LABEL_HALF > width) continue;
+    labels.push({ m, x: x(m), label: clock(m) });
   }
-  return ticks;
+  return { step, labels, ticks };
 }
 
 export interface Guide {

@@ -758,13 +758,14 @@ interface RouteTimes {
 }
 
 /**
- * Median times of `warden route`, in ROUTE_RUNS rounds spread over time (ROUTE_PAUSE_MS), each round one run of each
- * kind: `silent` the same session each time, so after its first run it prints nothing (every message while nothing
- * changes); `print` a new session each time, so it prints the guidance (a session's first message, or a change). Each
- * kind has its own fixture. `control` is hostname.exe started in the same rounds, with no budget of its own: it shows
- * whether the computer was slowing every program start (ROUTE_ATTEMPTS). `budget` holds each kind's budget.
+ * One attempt: median times of `warden route` in ROUTE_RUNS rounds spread over time (ROUTE_PAUSE_MS), each round one
+ * run of each kind: `silent` the same session each time, so after its first run it prints nothing (every message while
+ * nothing changes); `print` a new session each time, so it prints the guidance (a session's first message, or a
+ * change). Each kind has its own fixture, new for each attempt, so a later attempt times the same work as the first
+ * (the printing runs leave a session file each, which every printing run lists to prune). `control` is hostname.exe
+ * started in the same rounds, with no budget of its own: it shows whether the computer was slowing every program start.
  */
-async function measureRoute(budget: { silent: number; print: number }): Promise<RouteTimes> {
+async function routeRounds(attempts: number): Promise<RouteTimes> {
   const fixtures: RouteFixture[] = [];
   try {
     const silentFixture = routeFixture();
@@ -774,40 +775,52 @@ async function measureRoute(budget: { silent: number; print: number }): Promise<
     // The first run of each warms the file cache and tells the session; it is not timed.
     if (!runRoute(silentFixture, 'budget').printed || !runRoute(printFixture, 'budget-0').printed)
       throw new Error('warden route printed nothing for a new session');
-    let session = 0;
-    const rounds = async (attempts: number): Promise<RouteTimes> => {
-      const silent: number[] = [];
-      const print: number[] = [];
-      const control: number[] = [];
-      const start = performance.now();
-      for (let i = 0; i < ROUTE_RUNS; i++) {
-        const quiet = runRoute(silentFixture, 'budget');
-        if (quiet.printed) throw new Error('warden route printed while nothing changed');
-        silent.push(quiet.took);
-        const guided = runRoute(printFixture, `budget-${++session}`);
-        if (!guided.printed) throw new Error('warden route printed nothing for a new session');
-        print.push(guided.took);
-        control.push(controlRun());
-        await sleep(ROUTE_PAUSE_MS);
-      }
-      const seconds = (performance.now() - start) / 1000;
-      return { silent: median(silent), print: median(print), control: median(control), seconds, attempts };
-    };
-    for (let attempt = 1; ; attempt++) {
-      const times = await rounds(attempt);
-      const over = times.silent > budget.silent || times.print > budget.print;
-      const busy = times.control > Math.min(budget.silent, budget.print) / 2;
-      const said = `route: ${times.silent.toFixed(2)} and ${times.print.toFixed(2)} ms while hostname.exe took ${times.control.toFixed(2)} ms`;
-      if (!over || !busy) return times;
-      if (attempt === ROUTE_ATTEMPTS) {
-        console.log(`${said}: the computer still slows every program start after ${ROUTE_ATTEMPTS} attempts`);
-        return times;
-      }
-      console.log(`${said}: the computer slows every program start; measuring again in ${ROUTE_SETTLE_SECONDS} s`);
-      await sleep(ROUTE_SETTLE_SECONDS * 1000);
+    const silent: number[] = [];
+    const print: number[] = [];
+    const control: number[] = [];
+    const start = performance.now();
+    for (let i = 1; i <= ROUTE_RUNS; i++) {
+      const quiet = runRoute(silentFixture, 'budget');
+      if (quiet.printed) throw new Error('warden route printed while nothing changed');
+      silent.push(quiet.took);
+      const guided = runRoute(printFixture, `budget-${i}`);
+      if (!guided.printed) throw new Error('warden route printed nothing for a new session');
+      print.push(guided.took);
+      control.push(controlRun());
+      await sleep(ROUTE_PAUSE_MS);
     }
+    const seconds = (performance.now() - start) / 1000;
+    return { silent: median(silent), print: median(print), control: median(control), seconds, attempts };
   } finally {
-    for (const fixture of fixtures) rmSync(fixture.data, { recursive: true, force: true });
+    // Each folder on its own, retried while Windows still holds a file in it (Defender may be scanning one); one that
+    // stays is reported, not thrown, so it cannot hide the attempt's own error.
+    for (const fixture of fixtures) {
+      try {
+        rmSync(fixture.data, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+      } catch (e) {
+        console.warn(`could not remove ${fixture.data}: ${(e as Error).message}`);
+      }
+    }
+  }
+}
+
+/**
+ * Median times of `warden route` (routeRounds), measured again while the computer slows every program start
+ * (ROUTE_ATTEMPTS). `budget` holds each kind's budget.
+ */
+async function measureRoute(budget: { silent: number; print: number }): Promise<RouteTimes> {
+  for (let attempt = 1; ; attempt++) {
+    const times = await routeRounds(attempt);
+    const over = times.silent > budget.silent || times.print > budget.print;
+    const busy = times.control > Math.min(budget.silent, budget.print) / 2;
+    const said = `route: ${times.silent.toFixed(2)} and ${times.print.toFixed(2)} ms while hostname.exe took ${times.control.toFixed(2)} ms`;
+    if (!over || !busy) return times;
+    if (attempt === ROUTE_ATTEMPTS) {
+      console.log(`${said}: the computer still slows every program start after ${ROUTE_ATTEMPTS} attempts`);
+      return times;
+    }
+    console.log(`${said}: the computer slows every program start; measuring again in ${ROUTE_SETTLE_SECONDS} s`);
+    await sleep(ROUTE_SETTLE_SECONDS * 1000);
   }
 }
 

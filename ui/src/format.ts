@@ -466,15 +466,85 @@ export function workMsBetween(w: WorkHours, start: number, end: number): number 
   return total;
 }
 
-/** The status bar's one item: the account that gets the work now, "until N%" while it is main, and why. */
-export function workGoesTo(state: Pick<State, 'delegation' | 'main' | 'accounts'>): {
-  account: Account | null;
-  until: string | null;
-  reason: string;
-} {
+/** How far away a moment is, as the status bar says it: "15 h" within a day, then "3 days" (rounded up). */
+export function distance(at: number, now: number): string {
+  const d = Math.max(0, at - now);
+  if (d < DAY) return `${Math.max(1, Math.ceil(d / HOUR))} h`;
+  const days = Math.ceil(d / DAY);
+  return days === 1 ? '1 day' : `${days} days`;
+}
+
+/** "today", "tomorrow" or "in 3 days", by the local calendar. */
+function whenText(at: number, now: number): string {
+  const days = calendarDays(at, now);
+  return days <= 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`;
+}
+
+/**
+ * The status bar's one item: who gets the work now and why ("Work goes to Claude 2: its week resets in 15 h"), or, in
+ * amber, a limit reset to use first. `lead` comes before the account's mark and name, `rest` after them; `order` is
+ * the tooltip: the accounts that can take work, as Warden ranks them.
+ */
+export function workGoesTo(
+  state: Pick<State, 'delegation' | 'main' | 'accounts'>,
+  now: number,
+): { account: Account; lead: string; rest: string; attn: boolean; order: string } | null {
   const d = state.delegation;
-  if (d.mainWorksItself)
-    return { account: state.main, until: d.delegated ? `until ${d.handOffAt}%` : null, reason: d.mainReason };
-  const other = d.delegated ? (state.accounts.find((a) => a.id === d.delegated!.accountId) ?? null) : null;
-  return { account: other, until: null, reason: `${d.mainReason} ${d.delegatedReason}` };
+  const byId = (id: string): Account | null =>
+    id === 'main' ? state.main : (state.accounts.find((a) => a.id === id) ?? null);
+  const main = state.main;
+  const working = d.mainWorksItself ? main : d.delegated ? byId(d.delegated.accountId) : null;
+  const ranked = d.order.flatMap((r) => {
+    const a = byId(r.accountId);
+    return a ? [{ ...r, account: a }] : [];
+  });
+  const parts = ranked.map((r, k) => {
+    let when: string;
+    if (r.reset) {
+      const s = d.suggestedReset;
+      const title = s?.accountId === r.accountId ? `its ${s.title}` : 'a limit reset';
+      when = r.deadline === null ? title : `${title} expires ${whenText(r.deadline, now)}`;
+    } else if (r.deadline === null) when = 'no weekly limit';
+    else when = `${k === 0 ? 'resets in ' : ''}${distance(r.deadline, now)}`;
+    const keeps =
+      r.accountId === 'main' && !r.reset && d.handOffAt < 100 ? `; keeps ${100 - d.handOffAt}% for you` : '';
+    return `${r.account.label} (${when}${keeps})`;
+  });
+  let order = parts.join(', then ');
+  if (d.why === 'mainKeeps' && main) order = `${main.label} keeps the rest of its week for you. ${order}`;
+  if (d.why === 'mainUnknown' && main)
+    order = `${main.label}'s usage is unknown until Warden is signed in to it. ${order}`;
+  order = order.trim() || 'No account has room in its week and 5-hour window now.';
+
+  const s = d.suggestedReset;
+  const resetAccount = s ? byId(s.accountId) : null;
+  if (s && resetAccount) {
+    const meanwhile = working
+      ? `Until then, work ${working.id === 'main' ? 'stays on' : 'goes to'} ${working.label}. `
+      : '';
+    return {
+      account: resetAccount,
+      lead: 'Use',
+      rest: `'s ${s.title} (expires ${whenText(s.expiresAt, now)}) to give it the work`,
+      attn: true,
+      order: `${meanwhile}${order}`,
+    };
+  }
+  if (!working) return null;
+  if (working.id === 'main')
+    return {
+      account: working,
+      lead: 'Work stays on',
+      rest: d.why === 'noOther' ? ': no other account has room' : ': its week resets soonest',
+      attn: false,
+      order,
+    };
+  const deadline = ranked.find((r) => r.accountId === working.id && !r.reset)?.deadline ?? null;
+  const rest =
+    d.why === 'mainFiveHourFull' && main
+      ? ` while ${main.label}'s 5-hour window is full`
+      : deadline === null
+        ? ': it has no weekly limit'
+        : `: its week resets in ${distance(deadline, now)}`;
+  return { account: working, lead: 'Work goes to', rest, attn: false, order };
 }

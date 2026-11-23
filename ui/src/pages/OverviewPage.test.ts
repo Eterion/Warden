@@ -110,7 +110,7 @@ describe('OverviewPage', () => {
     const marks = rows[1]!.findAll('[data-mark]');
     expect(marks).toHaveLength(1);
     expect(marks[0]!.attributes('style')).toContain('left: 98%');
-    expect(rows[1]!.text()).toContain('Hands off at 98%.');
+    expect(rows[1]!.text()).toContain('Main takes delegated work only up to 98% now.');
     expect(rows[2]!.findAll('[data-mark]')).toHaveLength(0);
     // At 100% there is nothing to mark.
     store.state.delegation.handOffAt = 100;
@@ -773,6 +773,33 @@ describe('OverviewPage', () => {
     store.state = { ...st, settings: { ...st.settings, resetWarningDays: 1 } };
     items = list().findAll('li');
     expect(items.some((i) => i.find('[data-expires-soon]').exists())).toBe(false);
+  });
+
+  it("marks the reset Warden suggests as Warden's suggestion: its first row only", () => {
+    store.now = NOW;
+    const DAY = 24 * HOUR;
+    const st = state([
+      account({
+        id: 'main',
+        label: 'Main',
+        resets: [
+          { id: 'g1', title: 'Full reset', expiresAt: NOW + 2 * DAY },
+          { id: 'g1', title: 'Full reset', expiresAt: NOW + 2 * DAY },
+          { id: 'g2', title: 'Full reset', expiresAt: NOW + 4 * DAY },
+        ],
+      }),
+    ]);
+    store.state = st;
+    const tags = () =>
+      mount(OverviewPage)
+        .get('[aria-labelledby=resets-heading]')
+        .findAll('li')
+        .map((i) => i.find('[data-suggested]').exists());
+    expect(tags()).toEqual([false, false, false]);
+    st.delegation.suggestedReset = { accountId: 'main', resetId: 'g1', title: 'Full reset', expiresAt: NOW + 2 * DAY };
+    expect(tags()).toEqual([true, false, false]);
+    const row = mount(OverviewPage).get('[aria-labelledby=resets-heading] li');
+    expect(row.get('[data-suggested]').text()).toBe("Warden's suggestion");
   });
 
   describe('the limit resets filter', () => {

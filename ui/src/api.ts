@@ -81,10 +81,14 @@ export type Problem =
 export interface Delegation {
   mainWorksItself: boolean;
   delegated: { accountId: string } | null;
-  mainReason: string;
-  delegatedReason: string;
-  /** Main's hand-off point: the whole percent of its week from which it delegates; the same number decides. */
+  /** Why the work goes where it goes (docs/api.md). */
+  why: 'mainSoonest' | 'noOther' | 'soonest' | 'mainKeeps' | 'mainFiveHourFull' | 'mainUnknown';
+  /** Main's hand-off point: the whole percent of its week up to which it takes work; the same number decides. */
   handOffAt: number;
+  /** The accounts that can take work, main too, soonest deadline first; `deadline` null: no weekly limit. */
+  order: { accountId: string; deadline: number | null; reset: boolean }[];
+  /** A limit reset Warden suggests using; the work goes to the next account until it is used. */
+  suggestedReset: { accountId: string; resetId: string; title: string; expiresAt: number } | null;
 }
 
 export type Theme = 'system' | 'light' | 'dark';

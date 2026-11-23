@@ -11,61 +11,85 @@ afterEach(() => {
 
 describe('TopStrip', () => {
   const two = () => state([account({ id: 'main', label: 'Main' }), account({ id: 's', label: 'Second' })]);
+  const H = 3_600_000;
 
-  it('names the account that gets the work now: main, until its hand-off point, with its reason', () => {
+  it('says the work stays on main while its week resets soonest, with the order on hover', () => {
     store.now = NOW;
     store.state = two();
-    store.state.delegation = { ...store.state.delegation, mainWorksItself: true, handOffAt: 98 };
+    store.state.delegation = {
+      ...store.state.delegation,
+      mainWorksItself: true,
+      handOffAt: 98,
+      order: [
+        { accountId: 'main', deadline: NOW + 10 * H, reset: false },
+        { accountId: 's', deadline: NOW + 50 * H, reset: false },
+      ],
+    };
     const bar = mount(TopStrip);
     const item = bar.get('[data-work]');
     expect(item.element.tagName).toBe('BUTTON');
-    expect(item.text().replace(/\s+/g, ' ')).toContain('Work goes to Main until 98%');
-    expect(bar.findAllComponents({ name: 'WTooltip' }).map((w) => w.props('text'))).toEqual(['Main has room.']);
-    expect(bar.text()).not.toContain('Delegated work');
+    expect(item.text().replace(/\s+/g, ' ')).toContain('Work stays on Main: its week resets soonest');
+    expect(bar.findAllComponents({ name: 'WTooltip' }).map((w) => w.props('text'))).toEqual([
+      'Main (resets in 10 h; keeps 2% for you), then Second (3 days)',
+    ]);
+    expect(item.classes()).not.toContain('text-attn');
   });
 
-  it('names the other account once main hands off, with both reasons for screen readers too', () => {
+  it('names the other account once main delegates, with the order for screen readers too', () => {
+    store.now = NOW;
     store.state = two();
     store.state.delegation = {
       mainWorksItself: false,
       delegated: { accountId: 's' },
-      mainReason: 'Main is near its reserve.',
-      delegatedReason: 'Second has the most allowance left.',
+      why: 'soonest',
       handOffAt: 80,
+      order: [
+        { accountId: 's', deadline: NOW + 15 * H, reset: false },
+        { accountId: 'main', deadline: NOW + 93 * H, reset: false },
+      ],
+      suggestedReset: null,
     };
     const item = mount(TopStrip).get('[data-work]');
-    expect(item.text()).toContain('Work goes to');
-    expect(item.text()).toContain('Second');
-    expect(item.text()).not.toContain('until');
-    expect(item.get('.sr-only').text()).toBe('. Main is near its reserve. Second has the most allowance left.');
+    expect(item.text().replace(/\s+/g, ' ')).toContain('Work goes to Second: its week resets in 15 h');
+    expect(item.get('.sr-only').text()).toBe('. Second (resets in 15 h), then Main (4 days; keeps 20% for you)');
   });
 
-  it('says work goes to main, with no "until", when no account can take work', () => {
+  it('says the work stays on main when no other account has room', () => {
     store.state = state([account({ id: 'main', label: 'Main' })]);
     store.state.delegation = {
       mainWorksItself: true,
       delegated: null,
-      mainReason: 'No account can take delegated work, so main keeps it.',
-      delegatedReason: 'No account can take delegated work, so main keeps it.',
+      why: 'noOther',
       handOffAt: 90,
+      order: [],
+      suggestedReset: null,
     };
     const item = mount(TopStrip).get('[data-work]');
-    expect(item.text().replace(/\s+/g, ' ')).toContain('Work goes to Main');
-    expect(item.text()).not.toContain('until');
+    expect(item.text().replace(/\s+/g, ' ')).toContain('Work stays on Main: no other account has room');
   });
 
-  it("names the account work goes to while main's usage is unknown", () => {
+  it('asks in amber for a limit reset to be used first, and says where the work goes meanwhile', () => {
+    store.now = NOW;
     store.state = two();
+    const at = NOW + 2 * H;
     store.state.delegation = {
-      mainWorksItself: false,
+      mainWorksItself: true,
       delegated: { accountId: 's' },
-      mainReason: "Main's usage is unknown, so work goes to the other accounts until Warden is signed in to main.",
-      delegatedReason: 'Second has the most allowance left.',
-      handOffAt: 75,
+      why: 'mainSoonest',
+      handOffAt: 80,
+      order: [
+        { accountId: 's', deadline: at, reset: true },
+        { accountId: 'main', deadline: NOW + 93 * H, reset: false },
+      ],
+      suggestedReset: { accountId: 's', resetId: 'r', title: 'Full reset', expiresAt: at },
     };
     const bar = mount(TopStrip);
-    expect(bar.get('[data-work]').text()).toContain('Second');
-    expect(bar.findComponent({ name: 'WTooltip' }).props('text')).toContain("Main's usage is unknown");
+    const item = bar.get('[data-work]');
+    expect(item.text().replace(/\s+/g, ' ')).toContain("Use Second's Full reset (expires today) to give it the work");
+    expect(item.classes()).toContain('text-attn');
+    expect(bar.findComponent({ name: 'WTooltip' }).props('text')).toBe(
+      'Until then, work stays on Main. Second (its Full reset expires today), then Main (4 days; keeps 20% for you)',
+    );
   });
 
   it('says plainly, in grey, when hooks are off for this run, and nothing otherwise', () => {

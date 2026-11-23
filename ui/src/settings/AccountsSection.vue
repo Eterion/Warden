@@ -286,7 +286,8 @@ function identityLine(a: Account): string | null {
         <div class="flex min-w-0 flex-auto basis-65 flex-col gap-0.5">
           <span id="reserve-label" class="cursor-default text-14 font-medium">Keep for my own work</span>
           <span class="text-13 text-tertiary"
-            >Main's share of its week for your own work. Beyond it, work goes to the other accounts.</span
+            >The share of {{ store.state.main.label }}'s week kept for your own work. It shrinks as
+            {{ store.state.main.label }}'s weekly reset nears, during your work hours when they are set.</span
           >
         </div>
         <div class="flex min-w-0 flex-auto basis-60 flex-col gap-1">
@@ -302,7 +303,9 @@ function identityLine(a: Account): string | null {
             />
             <span class="text-13 whitespace-nowrap text-secondary tabular-nums">{{ reserve }}% of its week</span>
           </span>
-          <span class="text-13 text-secondary tabular-nums" data-hand-off>Hands off at {{ handOffAt }}% now</span>
+          <span class="text-13 text-secondary tabular-nums" data-hand-off
+            >{{ store.state.main.label }} takes delegated work only up to {{ handOffAt }}% now</span
+          >
         </div>
       </div>
 

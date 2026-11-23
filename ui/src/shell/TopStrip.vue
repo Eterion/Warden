@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// The thin top strip. The status bar names the account that gets the work now ("Work goes to Main until 98%"), its
-// reason on hover and focus, then "Usage read N min ago", which reads usage again on click. In the desktop app the strip also
-// moves the window (there is no classic title bar) and ends with the window's own controls, Close in red on hover.
-import { CloudOff, Copy, Minus, RefreshCw, Square, X } from 'lucide-vue-next';
+// The thin top strip. The status bar names the account that gets the work now and why ("Work goes to Claude 2: its week
+// resets in 15 h"), or, in amber, a limit reset to use first; Warden's order of the accounts shows on hover and focus.
+// Then "Usage read N min ago", which reads usage again on click. In the desktop app the strip also moves the window
+// (there is no classic title bar) and ends with the window's own controls, Close in red on hover.
+import { CloudOff, Copy, Hourglass, Minus, RefreshCw, Square, X } from 'lucide-vue-next';
 import { computed } from 'vue';
 import ProviderMark from '../components/ProviderMark.vue';
 import WButton from '../components/WButton.vue';
@@ -16,7 +17,7 @@ const read = computed(() => {
   return at ? `Usage read ${ago(at, store.now)}` : 'Read usage now';
 });
 
-const work = computed(() => (store.state ? workGoesTo(store.state) : null));
+const work = computed(() => (store.state ? workGoesTo(store.state, store.now) : null));
 
 const caption =
   'inline-flex w-11.5 cursor-default items-center justify-center text-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indicator';
@@ -36,19 +37,20 @@ const closeControl = 'hov:bg-close-hover hov:text-on-close press:bg-close-press 
         <span class="text-attn">Warden is not reachable. Showing the last state it sent.</span>
       </template>
       <WTooltip
-        v-else-if="work?.account"
-        :text="work.reason"
-        class="inline-flex min-w-0 items-center gap-1.5"
+        v-else-if="work"
+        :text="work.order"
+        :class="['inline-flex min-w-0 items-center gap-1.5', work.attn ? 'text-attn' : '']"
         data-work
       >
-        Work goes to
+        <Hourglass v-if="work.attn" class="size-3.5 shrink-0 text-attn-icon" aria-hidden="true" />
+        {{ work.lead }}
         <ProviderMark :provider="work.account.provider" size="xs" />
-        <!-- One flex item, so the space before "until" is kept in the text read out. -->
-        <span
-          ><span class="font-medium text-text">{{ work.account.label }}</span
-          >{{ work.until ? ` ${work.until}` : '' }}</span
+        <!-- One flex item, so the text after the name stays with it when read out. -->
+        <span class="min-w-0 truncate"
+          ><span :class="['font-medium', work.attn ? '' : 'text-text']">{{ work.account.label }}</span
+          >{{ work.rest }}</span
         >
-        <span class="sr-only">. {{ work.reason }}</span>
+        <span class="sr-only">. {{ work.order }}</span>
       </WTooltip>
     </div>
     <span v-if="store.state?.hooksOff" class="text-12 text-secondary">Hooks are off for this run</span>

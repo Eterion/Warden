@@ -24,6 +24,7 @@ import UseResetModal from '../components/UseResetModal.vue';
 import WMenuCheckboxItem from '../components/WMenuCheckboxItem.vue';
 import WMenuContent from '../components/WMenuContent.vue';
 import WSwitch from '../components/WSwitch.vue';
+import WTag from '../components/WTag.vue';
 import WTooltip from '../components/WTooltip.vue';
 import { isGone, turnToDust, undoDust } from '../components/dust';
 import WButton from '../components/WButton.vue';
@@ -277,6 +278,12 @@ async function leave(r: ResetRow): Promise<void> {
   (nearestUse(r.key, rows, true) ?? nearestUse(r.key, resets.value, false) ?? filterEl ?? heading.value)?.focus();
 }
 
+/** The row of the limit reset Warden suggests using (the first of its grant's), if any. */
+const suggestedKey = computed(() => {
+  const s = store.state?.delegation.suggestedReset;
+  return s ? `${s.accountId}:${s.resetId}:0` : null;
+});
+
 /** The Extra usage column shows only while some account has spent some. */
 const showExtra = computed(() => accounts.value.some((a) => extraText(a.provider, a.usage) !== null));
 
@@ -499,7 +506,9 @@ function sessionAccount(s: Session): Account | undefined {
                 <span v-if="k === 0 && row(a).note && !row(a).note!.idle" class="sr-only"
                   >{{ [row(a).note!.problem, row(a).note!.age].filter(Boolean).join('. ') }}.</span
                 >
-                <span v-if="mark(a, k) !== undefined" class="sr-only">Hands off at {{ mark(a, k) }}%.</span>
+                <span v-if="mark(a, k) !== undefined" class="sr-only"
+                  >{{ a.label }} takes delegated work only up to {{ mark(a, k) }}% now.</span
+                >
                 <template v-if="limit">
                   <span class="flex flex-wrap justify-between gap-x-2 text-12">
                     <span class="font-semibold whitespace-nowrap tabular-nums">{{ limit.used }}</span>
@@ -768,7 +777,10 @@ function sessionAccount(s: Session): Account | undefined {
           <WListItem v-for="r in resets" :key="r.key" :data-reset-key="r.key">
             <AccountIcon :account="r.account" />
             <span class="flex min-w-0 flex-1 flex-col">
-              <span class="truncate font-semibold">{{ r.account.label }}</span>
+              <span class="flex min-w-0 items-center gap-1.5">
+                <span class="truncate font-semibold">{{ r.account.label }}</span>
+                <WTag v-if="r.key === suggestedKey" data-suggested>Warden's suggestion</WTag>
+              </span>
               <span class="text-12 text-secondary">{{ r.title }}</span>
               <span v-if="r.soon" class="flex items-center gap-1 text-12 font-medium text-attn" data-expires-soon>
                 <Hourglass aria-hidden="true" class="size-3.5 shrink-0 text-attn-icon" />

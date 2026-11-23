@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Account, Main, Problem, State } from './api';
 import {
+  distance,
   IDLE_LOGIN,
   WEEKDAYS,
   accountProblems,
@@ -151,18 +152,80 @@ describe('work hours, the hand-off point and the status bar', () => {
     }
   });
 
-  it('names the account that gets the work now, "until" while it is main, and why', () => {
-    const main = { ...account({ id: 'main', label: 'Main' }), signIn: { state: 'signedIn' as const, email: null } };
-    const second = account({ id: 's', label: 'Second' });
-    const base = { main, accounts: [second] } as Pick<State, 'main' | 'accounts'>;
-    const d = { mainReason: 'Main has room.', delegatedReason: 'Second has the most left.', handOffAt: 98 };
-    expect(workGoesTo({ ...base, delegation: { ...d, mainWorksItself: true, delegated: { accountId: 's' } } })).toEqual(
-      { account: main, until: 'until 98%', reason: 'Main has room.' },
+  it('says who gets the work and why, with the order on hover, and a reset to use first in amber', () => {
+    const H = 3_600_000;
+    const main = { ...account({ id: 'main', label: 'Claude' }), signIn: { state: 'signedIn' as const, email: null } };
+    const second = account({ id: 's', label: 'Claude 2' });
+    const codex = account({ id: 'c', label: 'Codex', provider: 'codex' });
+    const base = { main, accounts: [second, codex] } as Pick<State, 'main' | 'accounts'>;
+    const order = [
+      { accountId: 's', deadline: NOW + 15 * H, reset: false },
+      { accountId: 'c', deadline: NOW + 72 * H, reset: false },
+      { accountId: 'main', deadline: NOW + 93 * H, reset: false },
+    ];
+    const d = {
+      mainWorksItself: false,
+      delegated: { accountId: 's' },
+      why: 'soonest' as const,
+      handOffAt: 80,
+      order,
+      suggestedReset: null,
+    };
+    const said = (delegation: Partial<State['delegation']>) => {
+      const w = workGoesTo({ ...base, delegation: { ...d, ...delegation } }, NOW)!;
+      return [`${w.lead} ${w.account.label}${w.rest}`, w.order, w.attn];
+    };
+    // The rule's example: delegating to the week lost soonest.
+    expect(said({})).toEqual([
+      'Work goes to Claude 2: its week resets in 15 h',
+      'Claude 2 (resets in 15 h), then Codex (3 days), then Claude (4 days; keeps 20% for you)',
+      false,
+    ]);
+    // Main is the pick.
+    expect(said({ mainWorksItself: true, why: 'mainSoonest', order: [order[2]!, order[0]!] })[0]).toBe(
+      'Work stays on Claude: its week resets soonest',
     );
-    expect(workGoesTo({ ...base, delegation: { ...d, mainWorksItself: true, delegated: null } }).until).toBeNull();
+    // Nothing else can take it.
+    expect(said({ mainWorksItself: true, delegated: null, why: 'noOther', order: [order[2]!] })[0]).toBe(
+      'Work stays on Claude: no other account has room',
+    );
+    expect(said({ mainWorksItself: true, delegated: null, why: 'noOther', order: [] })[1]).toBe(
+      'No account has room in its week and 5-hour window now.',
+    );
+    // Main's 5-hour window is full.
+    expect(said({ why: 'mainFiveHourFull', order: order.slice(0, 2) })[0]).toBe(
+      "Work goes to Claude 2 while Claude's 5-hour window is full",
+    );
+    // Main keeps the rest of its week, or its usage is unknown: said first in the tooltip.
+    expect(said({ why: 'mainKeeps', order: order.slice(0, 2) })[1]).toBe(
+      'Claude keeps the rest of its week for you. Claude 2 (resets in 15 h), then Codex (3 days)',
+    );
+    expect(said({ why: 'mainUnknown', order: order.slice(0, 2) })[1]).toMatch(/^Claude's usage is unknown/);
+    // An account without a weekly limit.
+    expect(said({ order: [{ accountId: 's', deadline: null, reset: false }] })).toEqual([
+      'Work goes to Claude 2: it has no weekly limit',
+      'Claude 2 (no weekly limit)',
+      false,
+    ]);
+    // A reset to use: in amber, the work going to the next account meanwhile.
+    const tomorrow = new Date(2026, 10, 10, 12, 0).getTime();
     expect(
-      workGoesTo({ ...base, delegation: { ...d, mainWorksItself: false, delegated: { accountId: 's' } } }),
-    ).toEqual({ account: second, until: null, reason: 'Main has room. Second has the most left.' });
+      said({
+        order: [{ accountId: 'c', deadline: tomorrow, reset: true }, order[0]!, order[2]!],
+        suggestedReset: { accountId: 'c', resetId: 'r1', title: 'Full reset', expiresAt: tomorrow },
+      }),
+    ).toEqual([
+      "Use Codex's Full reset (expires tomorrow) to give it the work",
+      'Until then, work goes to Claude 2. Codex (its Full reset expires tomorrow), then Claude 2 (15 h), then Claude (4 days; keeps 20% for you)',
+      true,
+    ]);
+  });
+
+  it('says how far away a reset is in hours within a day, then in days', () => {
+    expect(distance(NOW + 30 * 60_000, NOW)).toBe('1 h');
+    expect(distance(NOW + 15 * 3_600_000 - 1, NOW)).toBe('15 h');
+    expect(distance(NOW + 24 * 3_600_000, NOW)).toBe('1 day');
+    expect(distance(NOW + 93 * 3_600_000, NOW)).toBe('4 days');
   });
 
   it("shows an expired Warden login as idle, with its age and no amber, but not main's", () => {

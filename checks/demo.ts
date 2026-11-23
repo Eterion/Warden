@@ -452,7 +452,7 @@ async function setUp(): Promise<void> {
     if (!found) throw new Error(`account ${a.label} was not added`);
     ids.set(a.key, found.id);
   }
-  // Work hours, so main's hand-off point (the status bar's 'until N%' and the mark) moves as in real use.
+  // Work hours, so main's hand-off point (in the status bar's tooltip and the mark) moves as in real use.
   await api('PUT', '/settings', { usageIntervalMin: 2, workHours: { days: [1, 2, 3, 4, 5], from: 540, to: 1080 } });
   for (const a of ACCOUNTS) {
     const id = ids.get(a.key) ?? '';

@@ -24,6 +24,7 @@ import {
   problemsState,
   quietHiddenState,
   resetsState,
+  resetSuggestedState,
   setupState,
   treeState,
 } from './fixtures/ui-state.ts';
@@ -57,9 +58,11 @@ type Fixture =
   | 'resetsAllHidden'
   | 'hooks'
   | 'workHours'
-  | 'delegated'
+  | 'mainPick'
+  | 'mainFiveHourFull'
   | 'noTarget'
   | 'mainUnknown'
+  | 'resetSuggested'
   | 'setupFive';
 
 /** What to do on a page once it is ready, to reach a state such as a menu's modal (Playwright selectors). */
@@ -165,10 +168,26 @@ export const PAGES: {
     ready: 'main [role=table]',
   },
   {
-    name: 'overview-work-delegated',
+    // Main's week resets soonest: the work stays on it.
+    name: 'overview-work-stays-on-main',
     path: '/',
-    fixture: 'delegated',
+    fixture: 'mainPick',
     ready: '[data-work]',
+  },
+  {
+    name: 'overview-main-five-hour-full',
+    path: '/',
+    fixture: 'mainFiveHourFull',
+    ready: '[data-work]',
+  },
+  {
+    // A limit reset to use first: the status bar in amber, its order on focus, and the reset's row marked.
+    name: 'overview-reset-suggested',
+    path: '/',
+    fixture: 'resetSuggested',
+    ready: '[aria-labelledby=resets-heading] [data-suggested]',
+    steps: [{ focus: '[data-work]' }, { waitFor: '[role=tooltip]' }],
+    viewport: { width: 1600, height: 900 },
   },
   {
     name: 'overview-no-account-can-take-work',
@@ -850,7 +869,9 @@ function fakeApi(current: () => Fixture): Plugin {
                         fixture === 'resetsFiltered' ||
                         fixture === 'resetsAllHidden'
                       ? resetsState(now)
-                      : normalState(now);
+                      : fixture === 'resetSuggested'
+                        ? resetSuggestedState(now)
+                        : normalState(now);
         if (fixture === 'hooksOff') state.hooksOff = true;
         if (fixture === 'resetsAllHidden') state.settings.hiddenResetAccounts = ['main', 'a3'];
         if (fixture === 'resetsFiltered') {
@@ -885,19 +906,35 @@ function fakeApi(current: () => Fixture): Plugin {
         if (fixture === 'problems') problemsState(state);
         if (fixture === 'hooks') hooksState(state);
         if (fixture === 'workHours') state.settings.workHours = { days: [1, 2, 3, 4, 5], from: 540, to: 1080 };
-        if (fixture === 'delegated')
+        if (fixture === 'mainPick') {
+          // Second's week resets after main's.
+          const second = state.accounts.find((a) => a.id === 'a2');
+          if (second?.usage?.weekly) second.usage.weekly.resetsAt = now + 4 * 24 * 3_600_000;
           state.delegation = {
             ...state.delegation,
-            mainWorksItself: false,
-            mainReason: 'Main is near its reserve (86% of its week; it keeps 14% until Sun 14:15).',
+            mainWorksItself: true,
+            why: 'mainSoonest',
+            order: [
+              { accountId: 'main', deadline: state.main?.usage?.weekly?.resetsAt ?? null, reset: false },
+              { accountId: 'a2', deadline: now + 4 * 24 * 3_600_000, reset: false },
+            ],
+          };
+        }
+        if (fixture === 'mainFiveHourFull' && state.main?.usage?.fiveHour) state.main.usage.fiveHour.usedPercent = 93;
+        if (fixture === 'mainFiveHourFull')
+          state.delegation = {
+            ...state.delegation,
+            why: 'mainFiveHourFull',
+            order: state.delegation.order.filter((r) => r.accountId !== 'main'),
           };
         if (fixture === 'noTarget')
           state.delegation = {
             mainWorksItself: true,
             delegated: null,
-            mainReason: 'No account can take delegated work, so main keeps it.',
-            delegatedReason: 'No account can take delegated work, so main keeps it.',
+            why: 'noOther',
             handOffAt: 84,
+            order: state.delegation.order.filter((r) => r.accountId === 'main'),
+            suggestedReset: null,
           };
         if (fixture === 'mainUnknown' && state.main) {
           state.main.signIn = { state: 'signedOut', email: null };
@@ -906,8 +943,8 @@ function fakeApi(current: () => Fixture): Plugin {
           state.delegation = {
             ...state.delegation,
             mainWorksItself: false,
-            mainReason:
-              "Main's usage is unknown, so work goes to the other accounts until Warden is signed in to main.",
+            why: 'mainUnknown',
+            order: state.delegation.order.filter((r) => r.accountId !== 'main'),
           };
         }
         const url = req.url ?? '';

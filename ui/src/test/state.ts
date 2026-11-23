@@ -46,9 +46,10 @@ export function state(accounts: Account[]): State {
       delegated: accounts.find((a) => a.id !== 'main' && a.enabled)
         ? { accountId: accounts.find((a) => a.id !== 'main' && a.enabled)!.id }
         : null,
-      mainReason: 'Main has room.',
-      delegatedReason: 'Most allowance left.',
+      why: 'mainSoonest',
       handOffAt: 75,
+      order: [],
+      suggestedReset: null,
     },
     routeTool: '%APPDATA%\\Warden\\warden.exe',
     sessions: [],

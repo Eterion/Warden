@@ -67,9 +67,9 @@ describe('AccountsSection', () => {
     const slider = page.getComponent(WSlider);
     expect(slider.props()).toMatchObject({ min: 0, max: 50, step: 5, labelledby: 'reserve-label' });
     expect(page.text()).toContain(
-      "Main's share of its week for your own work. Beyond it, work goes to the other accounts.",
+      "The share of Main's week kept for your own work. It shrinks as Main's weekly reset nears, during your work hours when they are set.",
     );
-    expect(page.get('[data-hand-off]').text()).toBe('Hands off at 75% now');
+    expect(page.get('[data-hand-off]').text()).toBe('Main takes delegated work only up to 75% now');
     expect(page.get('#reserve-label').text()).toBe('Keep for my own work');
     expect(page.get('[role=slider]').attributes('aria-labelledby')).toBe('reserve-label');
     slider.vm.$emit('update:modelValue', 30);
@@ -78,7 +78,7 @@ describe('AccountsSection', () => {
     expect(calls).toEqual([]);
     expect(page.text()).toContain('35% of its week');
     // While dragging, the hand-off point follows the thumb (no weekly reading here: the full reserve counts).
-    expect(page.get('[data-hand-off]').text()).toBe('Hands off at 65% now');
+    expect(page.get('[data-hand-off]').text()).toBe('Main takes delegated work only up to 65% now');
     slider.vm.$emit('commit', 35);
     await flushPromises();
     expect(calls).toEqual([{ method: 'PUT', path: '/api/settings', body: { reserve: 35 } }]);
@@ -93,7 +93,7 @@ describe('AccountsSection', () => {
     expect(calls).toHaveLength(1);
     expect(page.get('[role=alert]').text()).toBe('The reserve must be 0 to 50 in steps of 5.');
     expect(page.text()).toContain('25% of its week');
-    expect(page.get('[data-hand-off]').text()).toBe('Hands off at 75% now');
+    expect(page.get('[data-hand-off]').text()).toBe('Main takes delegated work only up to 75% now');
   });
 
   it('switches an account on and off through the server', async () => {

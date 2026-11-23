@@ -103,11 +103,16 @@ export function normalState(now: number): State {
     revision: 1,
     homeDir: HOME,
     delegation: {
-      mainWorksItself: true,
+      // Second's week resets first (Codex is signed in as someone else): the work goes there, then to main.
+      mainWorksItself: false,
       delegated: { accountId: 'a2' },
-      mainReason: 'Main has used 34% of its week; it keeps 25% for you.',
-      delegatedReason: 'Second has the most allowance left.',
+      why: 'soonest',
       handOffAt: 84,
+      order: [
+        { accountId: 'a2', deadline: now + 26 * HOUR, reset: false },
+        { accountId: 'main', deadline: now + 3 * 24 * HOUR, reset: false },
+      ],
+      suggestedReset: null,
     },
     routeTool: `${HOME}\\AppData\\Local\\Warden\\warden.exe`,
     sessions: sessions(now),
@@ -420,6 +425,30 @@ export function resetsState(now: number): State {
         ? { ...a, resets: [{ id: 'credit-3', title: 'Full reset (Weekly + 5 hr)', expiresAt: now + 2 * day }] }
         : a,
   );
+  return s;
+}
+
+/**
+ * A limit reset to use: main has used 94% of its week, and its Full reset expires in 2 days, before its week resets in
+ * 3 and before Second's in 4. Warden suggests it (the status bar in amber, the row marked) and sends work to Second
+ * meanwhile.
+ */
+export function resetSuggestedState(now: number): State {
+  const s = resetsState(now);
+  const day = 24 * HOUR;
+  if (s.main?.usage?.weekly) s.main.usage.weekly.usedPercent = 94;
+  for (const a of s.accounts) if (a.id === 'a2' && a.usage?.weekly) a.usage.weekly.resetsAt = now + 4 * day;
+  s.delegation = {
+    mainWorksItself: false,
+    delegated: { accountId: 'a2' },
+    why: 'mainKeeps',
+    handOffAt: 84,
+    order: [
+      { accountId: 'main', deadline: now + 2 * day, reset: true },
+      { accountId: 'a2', deadline: now + 4 * day, reset: false },
+    ],
+    suggestedReset: { accountId: 'main', resetId: 'grant-full', title: 'Full reset', expiresAt: now + 2 * day },
+  };
   return s;
 }
 

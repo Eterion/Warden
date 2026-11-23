@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// The Memory page's figures, stretched across the width in equal columns (fewer on a narrow page), with hairlines above
-// and below and thin dividers between. Each has its icon (32 px, a 1.5 stroke, in the secondary text colour), then a
+// The Memory page's figures, stretched across the width in equal columns (fewer on a narrow page), in one rounded
+// bordered box, as the tables, with thin dividers between. Each has its icon (32 px, a 1.5 stroke, in the secondary text colour), then a
 // small label, the number and a muted detail: the AI sessions now (today) and their share of the computer, the peak
 // and its time, the computer's memory in use of its total with a slim meter (the AI sessions' part of it marked in the
 // text colour; the bar, the number and the share amber above 90% in use), and Warden itself.
@@ -22,7 +22,7 @@ const ICON = 'absolute top-1/2 left-4 size-8 -translate-y-1/2 text-secondary';
 </script>
 
 <template>
-  <div class="overflow-hidden border-y border-divider-strong">
+  <div class="overflow-hidden rounded-lg border border-divider-strong">
     <dl class="-mt-px -ml-px grid grid-cols-figures" data-figures>
       <div v-if="props.today" class="relative border-t border-l border-divider py-3 pr-4 pl-16" data-figure="now">
         <dt class="text-12 text-secondary">

@@ -208,7 +208,7 @@ function toggle(key: string): void {
       </div>
       <template v-else>
         <p v-if="noneNow" class="text-14 text-tertiary" data-memory-none-now>No AI sessions are running.</p>
-        <section aria-label="Memory over the day">
+        <section aria-label="Memory over the day" class="py-4">
           <MemoryChart v-if="model" :model="model" :ran="ran" :hovered="hovered" :day="day" />
         </section>
 
@@ -265,9 +265,11 @@ function toggle(key: string): void {
               <span v-else aria-hidden="true" class="size-6 shrink-0"></span>
               <span class="truncate font-semibold">{{ r.band.label }}</span>
             </div>
-            <span v-if="isToday" role="cell" class="text-right tabular-nums">{{ size(r.now ?? 0) }}</span>
-            <span role="cell" class="text-right tabular-nums">{{ size(r.peak) }}</span>
-            <span role="cell" class="text-right text-secondary tabular-nums">{{
+            <span v-if="isToday" role="cell" class="text-right text-12 font-semibold tabular-nums">{{
+              size(r.now ?? 0)
+            }}</span>
+            <span role="cell" class="text-right text-12 font-semibold tabular-nums">{{ size(r.peak) }}</span>
+            <span role="cell" class="text-right text-12 text-secondary tabular-nums">{{
               shareText(isToday ? (r.now ?? 0) : r.peak, total)
             }}</span>
           </WTableRow>

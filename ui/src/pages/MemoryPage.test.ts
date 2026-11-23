@@ -53,7 +53,7 @@ function day(date: string, minutes: MemoryMinute[], extra: Partial<MemoryDay> = 
   };
 }
 
-/** A figure's parts: its label, then each line under it, as the page shows them (the meter's line is empty). */
+/** A figure's parts: its label, then each line under it (the meter's words for screen readers, then the meter, empty). */
 function figure(
   page: { find: (s: string) => { exists: () => boolean; findAll: (s: string) => { text: () => string }[] } },
   key: string,
@@ -128,6 +128,11 @@ describe('the address', () => {
     expect(route.day.value).toBe(PAST);
     go('memory/not-a-day');
     expect(route.day.value).toBeNull();
+    // Written right but no real day: today.
+    go('memory/2026-02-30');
+    expect(route.day.value).toBeNull();
+    go('memory/2024-02-29');
+    expect(route.day.value).toBe('2024-02-29');
     go('');
     expect(route.page.value).toBe('overview');
   });
@@ -141,7 +146,7 @@ describe('MemoryPage', () => {
     expect(page.get('[data-day]').text()).toBe('Monday, 9 November');
     expect(figure(page, 'now')).toEqual(['AI sessions now', '1 GB', '3% of 32 GB']);
     expect(figure(page, 'peak')).toEqual(['Peak today', '3 GB', 'at 09:00']);
-    expect(figure(page, 'computer')).toEqual(['Computer', '30 GB', '', '94% of 32 GB']);
+    expect(figure(page, 'computer')).toEqual(['Computer', '30 GB', 'AI sessions 1 GB of it (3%)', '', '94% of 32 GB']);
     expect(figure(page, 'warden')).toEqual(['Warden itself', '9 MB', '<1% of 32 GB']);
     // Each with its icon, Warden's its own owl.
     expect(page.findAll('[data-figures] dt svg')).toHaveLength(4);
@@ -155,6 +160,8 @@ describe('MemoryPage', () => {
     expect(page.get('[data-meter-ai]').classes()).toContain('bg-text');
     expect(page.get('[data-meter-ai]').attributes('style')).toContain('width: 3.13%');
     expect(page.get('[data-meter-used]').attributes('style')).toContain('width: 90.63%');
+    // Said in words for screen readers.
+    expect(page.get('[data-meter-text]').text()).toBe('AI sessions 1 GB of it (3%)');
     const rows = page.findAll('[data-memory-table] [role=row]');
     expect(rows.map((r) => r.text())).toEqual([
       'Shown in the chartAccountNowPeakShare now',
@@ -178,7 +185,13 @@ describe('MemoryPage', () => {
     // A past day: no AI sessions now, its peak, the computer at its highest and when, Warden at its highest.
     expect(figure(page, 'now')).toBeNull();
     expect(figure(page, 'peak')).toEqual(['Peak', '3 GB', 'at 09:00']);
-    expect(figure(page, 'computer')).toEqual(['Computer', '30 GB', '', '94% of 32 GB at 09:02']);
+    expect(figure(page, 'computer')).toEqual([
+      'Computer',
+      '30 GB',
+      'AI sessions 1 GB of it (3%)',
+      '',
+      '94% of 32 GB at 09:02',
+    ]);
     expect(figure(page, 'warden')).toEqual(['Warden itself', '9 MB', 'at its highest']);
     expect(page.get('button[aria-label="Previous day"]').attributes('aria-disabled')).toBe('true');
     await page.get('button[aria-label="Next day"]').trigger('click');
@@ -447,7 +460,7 @@ describe('MemoryPage', () => {
     const page = mount(MemoryPage, { attachTo: document.body });
     await flushPromises();
     expect(page.get('[data-memory-none]').text()).toBe('No AI sessions are running.');
-    expect(figure(page, 'computer')).toEqual(['Computer', '12 GB', '', '38% of 32 GB']);
+    expect(figure(page, 'computer')).toEqual(['Computer', '12 GB', 'AI sessions 0 MB of it (0%)', '', '38% of 32 GB']);
     expect(page.find('[data-memory-chart]').exists()).toBe(false);
     page.unmount();
   });

@@ -57,8 +57,13 @@ const ICON = 'absolute top-1/2 left-4 size-8 -translate-y-1/2 text-secondary';
         <dd :class="['text-16 font-semibold tabular-nums', props.figures.computer.high && 'text-attn']">
           {{ size(props.figures.computer.used) }}
         </dd>
-        <!-- The meter: the memory in use, the AI sessions' part of it first, in the text colour. Its figures are the
-             text around it. -->
+        <!-- The meter: the memory in use, the AI sessions' part of it first, in the text colour; said in words for
+             screen readers, in the same minute as the figure. -->
+        <dd class="sr-only" data-meter-text>
+          AI sessions {{ size(props.figures.computer.ai) }} of it ({{
+            shareText(props.figures.computer.ai, props.figures.computer.total)
+          }})
+        </dd>
         <dd
           aria-hidden="true"
           class="my-1 flex h-1.5 w-full max-w-40 gap-px overflow-hidden rounded-full bg-track"

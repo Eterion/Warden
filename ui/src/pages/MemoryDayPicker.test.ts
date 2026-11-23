@@ -50,12 +50,19 @@ describe('MemoryDayPicker', () => {
     expect(cell('2026-11-05').hasAttribute('data-selected')).toBe(true);
     expect(cell(TODAY).getAttribute('aria-current')).toBe('date');
     expect(cell(TODAY).classList).toContain('inset-ring-indicator');
+    expect(cell(TODAY).hasAttribute('data-selected')).toBe(false);
     expect(document.querySelectorAll('[data-calendar] [aria-current]')).toHaveLength(1);
     expect(cell(TODAY).hasAttribute('data-disabled')).toBe(false);
     for (const later of ['2026-11-10', '2026-11-30']) {
       expect(cell(later).hasAttribute('data-disabled')).toBe(true);
       expect(cell(later).getAttribute('aria-disabled')).toBe('true');
     }
+  });
+
+  it('rings today inside the fill while it is also the day shown', async () => {
+    await open(TODAY);
+    expect(cell(TODAY).hasAttribute('data-selected')).toBe(true);
+    expect(cell(TODAY).classList).toContain('data-[selected]:shadow-today-selected');
   });
 
   it('goes back a month freely but no further forward than this one', async () => {

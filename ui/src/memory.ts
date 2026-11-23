@@ -378,12 +378,15 @@ const LABEL_STEPS = [15, 30, 60, 120, 180];
 /** At most this many labels across the span, each with this much room (an "08:00" in 12 px text and a gap). */
 const MOST_LABELS = 8;
 const LABEL_ROOM = 48;
-/** Half a label's width: a label nearer either end of the plot than this would be cut, so it is left out. */
+/** Half a label's width: a label nearer the plot's right end than this would be cut, so it moves inward. */
 const LABEL_HALF = 18;
+/** The least distance between two labels' middles, so they never touch. */
+const LABEL_APART = 2 * LABEL_HALF + 4;
 
 export interface Axis {
   /** The label step in minutes; ticks fall at half of it. */
   step: number;
+  /** Each label's minute and middle (`x`; the last moved inward from its tick when it would be cut). */
   labels: { m: number; x: number; label: string }[];
   /** Every tick along the baseline, `major` under a label's step. */
   ticks: { m: number; x: number; major: boolean }[];
@@ -392,13 +395,15 @@ export interface Axis {
 /**
  * The time axis under the chart, over a plot `width` wide: labels at the smallest step (15 min, 30 min, 1 h, 2 h, 3 h)
  * that puts at most eight across the span with room between them, so a short span still gets four or more; ticks at
- * half the step. A label that would be cut at the right end is left out (the left end has the gutter beside it). In a
- * chart too narrow for even the longest step to leave room, only every other label (or fewer) is kept, so none collide.
+ * half the step. A label that would be cut at the right end moves inward from its tick, left out only when that would
+ * crowd the one before (the left end has the gutter beside it). In a chart too narrow for even the longest step to
+ * leave room, only every other label (or fewer) is kept, so none collide.
  */
 export function timeAxis(model: ChartModel, width: number): Axis {
   const span = model.to - model.from;
   const px = (min: number) => (min / span) * width;
-  const count = (step: number) => Math.floor(model.to / step) - Math.ceil(model.from / step) + 1;
+  // Labels within the span [from, to): a whole day's ends at 21:00, never at 24:00.
+  const count = (step: number) => Math.floor((model.to - 1) / step) - Math.ceil(model.from / step) + 1;
   const step =
     LABEL_STEPS.find((s) => count(s) <= MOST_LABELS && px(s) >= LABEL_ROOM) ?? LABEL_STEPS[LABEL_STEPS.length - 1]!;
   const every = Math.max(1, Math.ceil(LABEL_ROOM / Math.max(px(step), 1)));
@@ -408,9 +413,12 @@ export function timeAxis(model: ChartModel, width: number): Axis {
   for (let m = Math.ceil(model.from / half) * half; m <= model.to; m += half)
     ticks.push({ m, x: x(m), major: m % step === 0 });
   const labels: Axis['labels'] = [];
-  for (let m = Math.ceil(model.from / step) * step; m <= model.to; m += step) {
-    if ((m / step) % every !== 0 || x(m) + LABEL_HALF > width) continue;
-    labels.push({ m, x: x(m), label: clock(m) });
+  for (let m = Math.ceil(model.from / step) * step; m < model.to; m += step) {
+    if ((m / step) % every !== 0) continue;
+    const at = Math.min(x(m), width - LABEL_HALF);
+    const before = labels[labels.length - 1];
+    if (before && at - before.x < LABEL_APART) continue;
+    labels.push({ m, x: at, label: clock(m) });
   }
   return { step, labels, ticks };
 }

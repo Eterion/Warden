@@ -65,6 +65,8 @@ function label(d: DateValue): string {
 const trigger = useTemplateRef<{ $el: Node | null }>('trigger');
 const to = usePortalTarget(trigger);
 
+/** Today's ring: in the indicator colour, or, on the filled day shown, in the fill's text colour inside its edge. */
+const TODAY = 'inset-ring-1 inset-ring-indicator data-[selected]:inset-ring-0 data-[selected]:shadow-today-selected';
 const CELL =
   'relative inline-flex size-9 cursor-pointer flex-col items-center justify-center rounded-lg text-13 tabular-nums text-text outline-none hov:bg-chip-off press:bg-press focus-visible:outline-2 focus-visible:outline-indicator data-[selected]:bg-primary data-[selected]:font-semibold data-[selected]:text-on-primary data-[selected]:hov:bg-primary-hover data-[selected]:press:bg-primary-press data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40 data-[outside-view]:invisible';
 </script>
@@ -74,7 +76,7 @@ const CELL =
     <PopoverTrigger ref="trigger" as-child>
       <button
         type="button"
-        class="inline-flex h-9 min-w-60 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-lg px-3 text-16 font-semibold text-text hov:bg-chip-off press:bg-press focus-visible:outline-2 focus-visible:outline-indicator data-[state=open]:bg-chip-off"
+        class="inline-flex h-9 min-w-60 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-lg px-3 text-16 font-semibold text-text hov:bg-chip-off press:bg-press focus-visible:outline-2 focus-visible:outline-indicator data-[state=open]:bg-chip-off data-[state=open]:press:bg-press"
         data-day-picker
       >
         <CalendarDays class="size-4.5 text-icon" aria-hidden="true" />
@@ -130,7 +132,7 @@ const CELL =
                   <CalendarCellTrigger
                     :day="d"
                     :month="m.value"
-                    :class="[CELL, d.toString() === props.today && 'inset-ring-1 inset-ring-indicator']"
+                    :class="[CELL, d.toString() === props.today && TODAY]"
                     :aria-label="label(d)"
                     :aria-current="d.toString() === props.today ? 'date' : undefined"
                   >

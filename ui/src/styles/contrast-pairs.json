@@ -1432,5 +1432,23 @@
     "bg": ["panel", "track"],
     "min": 3,
     "use": "the Memory page Computer meter above 90% in use, against its track"
+  },
+  {
+    "fg": "axis",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "the Memory chart baseline and ticks"
+  },
+  {
+    "fg": "axis",
+    "bg": ["panel", "chart-gap"],
+    "min": 3,
+    "use": "the Memory chart baseline and ticks under the empty band"
+  },
+  {
+    "fg": "on-primary",
+    "bg": ["primary"],
+    "min": 3,
+    "use": "today ring on the filled day shown in the Memory calendar"
   }
 ]

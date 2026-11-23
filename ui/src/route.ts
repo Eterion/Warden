@@ -16,6 +16,14 @@ if (typeof window !== 'undefined') useEventListener(window, 'hashchange', () => 
 
 const parts = computed(() => hash.value.replace(/^#\/?/, '').split('/'));
 
+/** A yyyy-MM-dd that names a real day (not 2026-02-30). */
+function realDay(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y, m, d] = s.split('-').map(Number) as [number, number, number];
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
 interface PageAt {
   page: Page;
   /** The Memory page's day (yyyy-MM-dd); null: today. */
@@ -29,7 +37,7 @@ const lastPage = ref<PageAt>({ page: 'overview', day: null });
 const pageNow = computed<PageAt>(() => {
   const [first, second] = parts.value;
   if (MODALS.includes(first ?? '')) return lastPage.value;
-  if (first === 'memory') return { page: 'memory', day: second && /^\d{4}-\d{2}-\d{2}$/.test(second) ? second : null };
+  if (first === 'memory') return { page: 'memory', day: second && realDay(second) ? second : null };
   return { page: 'overview', day: null };
 });
 // At once, so a modal opened right after a page change keeps that page under it.

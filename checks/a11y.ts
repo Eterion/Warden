@@ -206,6 +206,19 @@ export const PAGES: {
     steps: [{ click: '[data-day-picker]' }, { waitFor: '[data-calendar] [data-recorded]' }],
   },
   {
+    // The calendar on a past day: that day filled, today with its plain ring.
+    name: 'memory-calendar-past-day',
+    path: '/#/memory',
+    fixture: 'memory',
+    ready: '[data-memory-chart]',
+    steps: [
+      { click: 'button[aria-label="Previous day"]' },
+      { waitFor: 'text=Share at peak' },
+      { click: '[data-day-picker]' },
+      { waitFor: '[data-calendar] [data-recorded]' },
+    ],
+  },
+  {
     // The computer above 90% in use: its number, share and meter in amber.
     name: 'memory-computer-high',
     path: '/#/memory',

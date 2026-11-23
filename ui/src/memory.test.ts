@@ -321,7 +321,7 @@ describe('the chart', () => {
     const span = (from: number, to: number) =>
       chartModel({ ...d, minutes: [minute(from, []), minute(to - 1, [])], gaps: [] }, bands, both)!;
     const labels = (a: ReturnType<typeof timeAxis>) => a.labels.map((l) => l.label);
-    // 08:00 to 18:00: two hours; the last label, at the very end, would be cut, so it is left out.
+    // 08:00 to 18:00 (its last minute 17:59): two hours.
     const day10 = timeAxis(span(480, 1080), 800);
     expect(day10.step).toBe(120);
     expect(labels(day10)).toEqual(['08:00', '10:00', '12:00', '14:00', '16:00']);
@@ -354,6 +354,20 @@ describe('the chart', () => {
     expect(axis.labels.map((l) => l.label)).toEqual(['00:15', '00:30', '00:45', '01:00']);
     expect(axis.ticks.map((t) => t.m)).toEqual([7.5, 15, 22.5, 30, 37.5, 45, 52.5, 60]);
     for (const l of axis.labels) expect(l.x + 18).toBeLessThanOrEqual(600);
+    // An hour starting just after a whole one: its last label, at the very end, moves inward rather than going.
+    for (const [from, width, first] of [
+      [1, 600, '00:15'],
+      [481, 934, '08:15'],
+    ] as const) {
+      const hour = chartModel({ ...d, minutes: [minute(from, []), minute(from + 59, [])], gaps: [] }, bands, both)!;
+      const a = timeAxis(hour, width);
+      expect(a.labels.map((l) => l.label)).toHaveLength(4);
+      expect(a.labels[0]!.label).toBe(first);
+      const lastLabel = a.labels[a.labels.length - 1]!;
+      expect(lastLabel.x).toBe(width - 18);
+      // Its tick stays at its time.
+      expect(a.ticks.find((t) => t.m === lastLabel.m)!.x).toBeGreaterThan(lastLabel.x);
+    }
     // Narrower, the step grows so labels keep their room.
     const narrow = timeAxis(model, 300);
     expect(narrow.step).toBe(15);
@@ -361,13 +375,13 @@ describe('the chart', () => {
     expect(roomy.step).toBe(30);
     for (const axis2 of [narrow, roomy, timeAxis(model, 60)]) {
       const xs = axis2.labels.map((l) => l.x);
-      for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(48);
+      for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(40);
     }
     // Too narrow even for three hours over a whole day: every other label, so none collide.
     const wholeDay = chartModel({ ...d, minutes: [minute(0, []), minute(1439, [])], gaps: [] }, bands, both)!;
     const tight = timeAxis(wholeDay, 260);
     const xs = tight.labels.map((l) => l.x);
-    for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(48);
+    for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(40);
     expect(tight.labels.length).toBeGreaterThanOrEqual(3);
   });
 

@@ -498,7 +498,7 @@ export function memoryDays(now: number): string[] {
 }
 
 /**
- * A made-up day of memory (`GET /api/memory/day`): main, Second and Codex working through it, two Codex accounts and
+ * A made-up day of memory (`GET /api/memory/day`): main, Second and Codex working through it, a switched-off and a removed Codex account and
  * one Claude account since removed, a session signed in as someone else in the morning, a process Second left running,
  * Warden itself, and Warden closed over lunch: every colour the chart has. `quiet`: today with only Warden itself, no
  * AI session.
@@ -554,8 +554,8 @@ export function memoryDay(date: string, now: number, quiet = false): unknown {
         s(5, 'warden', null, null, null),
         s(6, 'session', 'gone', 'Old account', 'claude'),
         s(7, 'other-sign-in', null, null, 'claude'),
-        s(8, 'session', 'gone-codex', 'Old Codex', 'codex'),
-        s(9, 'session', 'gone-codex-2', 'Older Codex', 'codex'),
+        s(8, 'session', 'a4', 'Codex personal', 'codex'),
+        s(9, 'session', 'gone-codex', 'Old Codex', 'codex'),
       ];
   // Each series runs part of the day: [series, from, to, its highest in GB].
   const runs: [number, number, number, number][] = quiet

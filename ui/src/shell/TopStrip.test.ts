@@ -94,10 +94,12 @@ describe('TopStrip', () => {
     };
     const bar = mount(TopStrip);
     const item = bar.get('[data-work]');
-    expect(item.text().replace(/\s+/g, ' ')).toContain("Use Second's Full reset (expires today) to give it the work");
+    expect(item.text().replace(/\s+/g, ' ')).toContain(
+      "Use Second's Full reset (expires today): it's the next to reset",
+    );
     expect(item.classes()).toContain('text-attn');
     expect(bar.findComponent({ name: 'WTooltip' }).props('text')).toBe(
-      "Use Second's Full reset (expires today) to give it the work. Until then, work stays on Main. Second (its Full reset expires today), then Main (4 days). Main keeps 25% for you: its weekly reset is not known yet.",
+      "Use Second's Full reset (expires today): it's the next to reset. Until then, work stays on Main. Second (its Full reset expires today), then Main (4 days). Main keeps 25% for you: its weekly reset is not known yet.",
     );
   });
 

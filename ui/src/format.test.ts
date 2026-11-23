@@ -243,7 +243,7 @@ describe('work hours, the hand-off point and the status bar', () => {
         suggestedReset: { accountId: 'c', resetId: 'r1', title: 'Full reset', expiresAt: tomorrow },
       }),
     ).toEqual([
-      "Use Codex's Full reset (expires tomorrow) to give it the work",
+      "Use Codex's Full reset (expires tomorrow): it's the next to reset",
       `Until then, work goes to Claude 2. Codex (its Full reset expires tomorrow), then Claude 2 (15 h), then Claude (4 days). ${keeps}`,
       true,
     ]);

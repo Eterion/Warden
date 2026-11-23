@@ -612,7 +612,7 @@ export function workGoesTo(
     const meanwhile = working
       ? `Until then, work ${working.id === 'main' ? 'stays on' : 'goes to'} ${working.label}. `
       : '';
-    const rest = `'s ${s.title} (expires ${whenText(s.expiresAt, now)}) to give it the work`;
+    const rest = `'s ${s.title} (expires ${whenText(s.expiresAt, now)}): it's the next to reset`;
     return item(resetAccount, 'Use', rest, true, meanwhile);
   }
   if (!working) return null;

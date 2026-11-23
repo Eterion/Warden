@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MemoryDay, MemoryMinute, MemorySeries } from './api';
 import {
+  bandColours,
   bandPaths,
   bandsOf,
   chartModel,
@@ -140,8 +141,47 @@ describe('bands', () => {
     ]);
     expect(bands[0]!.series).toEqual([2, 8]);
     expect(bands.find((b) => b.key === 'left')!.series).toEqual([3]);
-    expect(bands.map((b) => b.tone)).toEqual([1, 2, 3, 4, 5, 1]);
+    // Claude's shades in settings order (Spare, switched off, keeps its place), the account no longer in Settings a
+    // fourth that starts them again, and the groups' greys.
+    expect(bands.map((b) => b.colour)).toEqual([
+      'claude-1',
+      'claude-2',
+      'claude-3',
+      'claude-1',
+      'other-sign-in',
+      'left',
+    ]);
     expect(bands[3]!.account).toEqual({ id: 'gone', provider: 'claude', label: 'Old account' });
+  });
+
+  it('colours an account by its place in Settings among its provider, never by what the day shows', () => {
+    const codex = account({ id: 'c1', label: 'Codex', provider: 'codex' });
+    const quiet = day({ series: [series(1, 'session', 'main')], minutes: [minute(600, [[1, GIB]])] });
+    // Work takes Claude's third shade, after Spare in Settings though Spare does not show; Codex its own first.
+    const settings = [main, off, work, codex];
+    const bands = bandsOf(quiet, [main, work, codex], settings);
+    expect(bands.map((b) => [b.label, b.colour])).toEqual([
+      ['Main', 'claude-1'],
+      ['Work', 'claude-3'],
+      ['Codex', 'codex-1'],
+    ]);
+  });
+
+  it('gives each provider three shades, then starts again, and keeps an account its colour', () => {
+    const a = (id: string, provider: 'claude' | 'codex') => ({ id, provider });
+    const colours = bandColours(
+      [a('m', 'claude'), a('x1', 'codex'), a('c2', 'claude'), a('x2', 'codex'), a('x3', 'codex'), a('x4', 'codex')],
+      [a('gone', 'claude'), a('c2', 'claude')],
+    );
+    expect(Object.fromEntries(colours)).toEqual({
+      m: 'claude-1',
+      x1: 'codex-1',
+      c2: 'claude-2',
+      x2: 'codex-2',
+      x3: 'codex-3',
+      x4: 'codex-1',
+      gone: 'claude-3',
+    });
   });
 
   it('shows a switched-off account only on a day it ran something', () => {

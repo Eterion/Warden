@@ -1,13 +1,23 @@
 <script setup lang="ts">
 // The Memory page's chart, drawn by hand in SVG (no chart library): the minutes across the day's recorded span, memory
-// up with three faint gridlines labelled in GB, a stacked band per account (greys, the band of the hovered table row
-// darkest), each divided from the next by a thin line in the panel's colour, and the minutes Warden was not running as
-// an empty band. A guide follows the pointer with a tooltip of the shown bands and their total at that minute; the chart
+// up with three faint gridlines labelled in GB, a stacked band per account (coloured by provider, greys for the groups,
+// the band of the hovered table row in chart-hover), each divided from the next by a thin line in the panel's colour,
+// and the minutes Warden was not running as an empty band. A guide follows the pointer with a tooltip of the shown bands and their total at that minute; the chart
 // is a slider for the keyboard (the arrow keys move the guide a minute, Page Up and Page Down an hour, Home and End to
 // the first and last recording), its value the same words, so it works without a mouse; Escape hides the tooltip. The table under it is its accessible equivalent.
 import { useElementSize } from '@vueuse/core';
 import { computed, ref, useTemplateRef, watch } from 'vue';
-import { CHART, MISSING_TEXT, bandPaths, guideAt, guideText, hourTicks, size, type ChartModel } from '../memory';
+import {
+  CHART,
+  MISSING_TEXT,
+  bandPaths,
+  guideAt,
+  guideText,
+  hourTicks,
+  size,
+  type BandColour,
+  type ChartModel,
+} from '../memory';
 
 const props = defineProps<{
   model: ChartModel;
@@ -19,7 +29,16 @@ const props = defineProps<{
   day: string;
 }>();
 
-const TONE = ['', 'fill-chart-1', 'fill-chart-2', 'fill-chart-3', 'fill-chart-4', 'fill-chart-5'];
+const FILL: Record<BandColour, string> = {
+  'claude-1': 'fill-chart-claude-1',
+  'claude-2': 'fill-chart-claude-2',
+  'claude-3': 'fill-chart-claude-3',
+  'codex-1': 'fill-chart-codex-1',
+  'codex-2': 'fill-chart-codex-2',
+  'codex-3': 'fill-chart-codex-3',
+  'other-sign-in': 'fill-chart-other-sign-in',
+  left: 'fill-chart-left',
+};
 
 const box = useTemplateRef<HTMLElement>('box');
 const { width: boxWidth } = useElementSize(box);
@@ -170,7 +189,7 @@ function onKey(e: KeyboardEvent): void {
           v-for="p in paths"
           :key="p.key"
           :d="p.area"
-          :class="props.hovered === p.key ? 'fill-chart-hover' : TONE[p.tone]"
+          :class="props.hovered === p.key ? 'fill-chart-hover' : FILL[p.colour]"
           :data-band="p.key"
         />
         <path

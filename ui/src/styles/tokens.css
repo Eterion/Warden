@@ -120,15 +120,20 @@
   /* Main's hand-off point on its weekly bar: a tick taller than the bar, 3:1 on the panel, the track and the rows. */
   --color-bar-mark: light-dark(#18181b, #f4f4f5);
 
-  /* The Memory page's chart: a band per account (and Left running, Other sign-in) in greys, the most prominent first
-     (darkest in light, lightest in dark), each 3:1 against the panel; after the fifth they start again. The band of the
-     table row under the pointer takes chart-hover, a step past the first. Hours Warden was not running are an empty
-     band in chart-gap, labelled in tertiary text. */
-  --color-chart-1: light-dark(#3f3f46, #d4d4d8);
-  --color-chart-2: light-dark(#56565f, #b1b1b8);
-  --color-chart-3: light-dark(#6b6b74, #93939c);
-  --color-chart-4: light-dark(#7e7e87, #7d7d86);
-  --color-chart-5: light-dark(#8e8e97, #6b6b74);
+  /* The Memory page's chart, the one place colour is not status: a band per account in its provider's shades, in
+     settings order (a fourth account of one provider takes the first again), and greys for Other sign-in and Left
+     running. Claude's start from its own orange (main, the same in both themes), then darker in light and lighter, then
+     darker, in dark; muted terracotta, apart from the usage bars' orange and red and from amber. Codex's are a blue
+     slate, apart from the two greys. Each is 3:1 against the panel. The band of the table row under the pointer takes
+     chart-hover. Hours Warden was not running are an empty band in chart-gap, labelled in tertiary text. */
+  --color-chart-claude-1: light-dark(#d97757, #d97757);
+  --color-chart-claude-2: light-dark(#884e44, #f0b39b);
+  --color-chart-claude-3: light-dark(#5a2818, #905846);
+  --color-chart-codex-1: light-dark(#637fa7, #7e9ac4);
+  --color-chart-codex-2: light-dark(#48648e, #aabfde);
+  --color-chart-codex-3: light-dark(#334a70, #5b769e);
+  --color-chart-other-sign-in: light-dark(#8b8b94, #68686f);
+  --color-chart-left: light-dark(#35353a, #d7d7de);
   --color-chart-hover: light-dark(#09090b, #fafafa);
   --color-chart-gap: light-dark(#fafafa, rgba(255, 255, 255, 0.035));
 

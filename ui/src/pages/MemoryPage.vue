@@ -26,6 +26,7 @@ import {
   shareText,
   size,
   stepDays,
+  type BandColour,
 } from '../memory';
 import { clock } from '../format';
 import { go, route } from '../route';
@@ -148,7 +149,16 @@ const hovered = ref<string | null>(null);
 /** Why a share can read a little high. */
 const SHARE_NOTE =
   'Shares count private memory, part of which Windows can page out to disk, so a share can read a little high when memory is short.';
-const SWATCH = ['', 'bg-chart-1', 'bg-chart-2', 'bg-chart-3', 'bg-chart-4', 'bg-chart-5'];
+const SWATCH: Record<BandColour, string> = {
+  'claude-1': 'bg-chart-claude-1',
+  'claude-2': 'bg-chart-claude-2',
+  'claude-3': 'bg-chart-claude-3',
+  'codex-1': 'bg-chart-codex-1',
+  'codex-2': 'bg-chart-codex-2',
+  'codex-3': 'bg-chart-codex-3',
+  'other-sign-in': 'bg-chart-other-sign-in',
+  left: 'bg-chart-left',
+};
 
 function toggle(key: string): void {
   hidden.value = hidden.value.includes(key) ? hidden.value.filter((k) => k !== key) : [...hidden.value, key];
@@ -282,7 +292,10 @@ function toggle(key: string): void {
             <div role="cell" class="flex min-w-0 items-center gap-3">
               <span
                 aria-hidden="true"
-                :class="['size-3 shrink-0 rounded-xs', hovered === r.band.key ? 'bg-chart-hover' : SWATCH[r.band.tone]]"
+                :class="[
+                  'size-3 shrink-0 rounded-xs',
+                  hovered === r.band.key ? 'bg-chart-hover' : SWATCH[r.band.colour],
+                ]"
               ></span>
               <AccountIcon v-if="r.band.account" :account="r.band.account" />
               <span v-else aria-hidden="true" class="size-6 shrink-0"></span>

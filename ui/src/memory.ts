@@ -74,11 +74,15 @@ export interface Band {
   account: { id: string; provider: Provider; label: string } | null;
   /** The day's series it adds up. */
   series: number[];
-  /** Its grey: 1 to 5, by its place in the table. */
-  tone: number;
+  /** Its colour, which follows the account whatever is shown (`bandColours`). */
+  colour: BandColour;
 }
 
-export const TONES = 5;
+/** The shades each provider has; a fourth account of one provider takes the first again. */
+export const SHADES = 3;
+
+/** A band's colour: a shade of its provider for an account, a grey for each group. */
+export type BandColour = `${Provider}-${1 | 2 | 3}` | 'other-sign-in' | 'left';
 
 /**
  * The day's bands: main and the accounts in use always, in the Overview's order, then any other account that ran
@@ -88,8 +92,8 @@ export const TONES = 5;
 export function bandsOf(day: MemoryDay, used: Account[], all: Account[]): Band[] {
   const bands: Band[] = [];
   const byKey = new Map<string, Band>();
-  const add = (band: Omit<Band, 'tone'>) => {
-    const b = { ...band, tone: 0 };
+  const add = (band: Omit<Band, 'colour'>) => {
+    const b: Band = { ...band, colour: 'claude-1' };
     bands.push(b);
     byKey.set(b.key, b);
     return b;
@@ -107,7 +111,7 @@ export function bandsOf(day: MemoryDay, used: Account[], all: Account[]): Band[]
   for (const s of day.series) {
     if (s.kind === 'warden') continue;
     if (s.kind === 'left') {
-      left ??= { key: 'left', kind: 'left', label: 'Left running', account: null, series: [], tone: 0 };
+      left ??= { key: 'left', kind: 'left', label: 'Left running', account: null, series: [], colour: 'left' };
       left.series.push(s.series);
       continue;
     }
@@ -118,7 +122,7 @@ export function bandsOf(day: MemoryDay, used: Account[], all: Account[]): Band[]
         label: 'Other sign-in',
         account: null,
         series: [],
-        tone: 0,
+        colour: 'other-sign-in',
       };
       other.series.push(s.series);
       continue;
@@ -139,8 +143,31 @@ export function bandsOf(day: MemoryDay, used: Account[], all: Account[]): Band[]
   }
   if (other) bands.push(other);
   if (left) bands.push(left);
-  bands.forEach((b, i) => (b.tone = (i % TONES) + 1));
+  const colours = bandColours(
+    all,
+    bands.flatMap((b) => (b.account ? [b.account] : [])),
+  );
+  for (const b of bands) if (b.account) b.colour = colours.get(b.account.id) ?? b.colour;
   return bands;
+}
+
+/**
+ * Each account's colour: its provider's shades in settings order (main first, so Claude's base shade), then the
+ * accounts no longer in Settings in the order they show; a fourth of one provider starts the shades again. It depends
+ * only on the accounts, never on which bands are shown.
+ */
+export function bandColours(
+  settings: { id: string; provider: Provider }[],
+  others: { id: string; provider: Provider }[],
+): Map<string, BandColour> {
+  const colours = new Map<string, BandColour>();
+  const count: Record<Provider, number> = { claude: 0, codex: 0 };
+  for (const a of [...settings, ...others]) {
+    if (colours.has(a.id)) continue;
+    const shade = ((count[a.provider]++ % SHADES) + 1) as 1 | 2 | 3;
+    colours.set(a.id, `${a.provider}-${shade}`);
+  }
+  return colours;
 }
 
 /** A band's memory in one minute: its series added up. */
@@ -286,7 +313,7 @@ export function chartModel(day: MemoryDay, bands: Band[], shown: Set<string>): C
 export function bandPaths(
   model: ChartModel,
   width: number,
-): { key: string; tone: number; area: string; edge: string }[] {
+): { key: string; colour: BandColour; area: string; edge: string }[] {
   const span = model.to - model.from;
   const x = (m: number) => ((m - model.from) / span) * width;
   const y = (kib: number) => CHART.top + (1 - Math.min(kib, model.top) / model.top) * (CHART.height - CHART.top);
@@ -316,7 +343,7 @@ export function bandPaths(
       area += `M${tops.join('L')}L${bottoms.join('L')}Z`;
       edge += `M${tops.join('L')}`;
     }
-    return { key: band.key, tone: band.tone, area, edge };
+    return { key: band.key, colour: band.colour, area, edge };
   });
 }
 

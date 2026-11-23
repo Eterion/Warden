@@ -181,7 +181,24 @@ describe('MemoryPage', () => {
     await page.get('[data-band-row="account:main"]').trigger('pointerenter');
     expect(page.get('[data-band="account:main"]').classes()).toContain('fill-chart-hover');
     await page.get('[data-band-row="account:main"]').trigger('pointerleave');
-    expect(page.get('[data-band="account:main"]').classes()).toContain('fill-chart-1');
+    expect(page.get('[data-band="account:main"]').classes()).toContain('fill-chart-claude-1');
+    page.unmount();
+  });
+
+  it('colours each band by its account, whatever the checkboxes leave out', async () => {
+    server({ [TODAY]: busyDay(TODAY) });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    const swatch = (key: string) => page.get(`[data-band-row="${key}"] [role=cell] > span[aria-hidden]`).classes();
+    expect(page.get('[data-band="account:main"]').classes()).toContain('fill-chart-claude-1');
+    expect(page.get('[data-band="account:a1"]').classes()).toContain('fill-chart-claude-2');
+    expect(swatch('account:a1')).toContain('bg-chart-claude-2');
+    // Main left out: Work keeps its own shade, not the first one.
+    await page.get('[role=checkbox][aria-label="Show Main in the chart"]').trigger('click');
+    expect(page.find('[data-band="account:main"]').exists()).toBe(false);
+    expect(page.get('[data-band="account:a1"]').classes()).toContain('fill-chart-claude-2');
+    expect(swatch('account:a1')).toContain('bg-chart-claude-2');
+    expect(swatch('account:main')).toContain('bg-chart-claude-1');
     page.unmount();
   });
 

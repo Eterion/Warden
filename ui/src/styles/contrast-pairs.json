@@ -1278,61 +1278,97 @@
     "use": "scrollbar thumb in a modal's body (no track of its own)"
   },
   {
-    "fg": "chart-1",
+    "fg": "chart-claude-1",
     "bg": ["panel"],
     "min": 3,
-    "use": "the Memory chart's band 1, against the panel"
+    "use": "the Memory chart's Claude band 1 (main), against the panel"
   },
   {
-    "fg": "chart-1",
+    "fg": "chart-claude-1",
     "bg": ["panel", "row-hover"],
     "min": 3,
     "use": "its swatch in the Memory table, on a hovered row"
   },
   {
-    "fg": "chart-2",
+    "fg": "chart-claude-2",
     "bg": ["panel"],
     "min": 3,
-    "use": "the Memory chart's band 2, against the panel"
+    "use": "the Memory chart's Claude band 2, against the panel"
   },
   {
-    "fg": "chart-2",
+    "fg": "chart-claude-2",
     "bg": ["panel", "row-hover"],
     "min": 3,
     "use": "its swatch in the Memory table, on a hovered row"
   },
   {
-    "fg": "chart-3",
+    "fg": "chart-claude-3",
     "bg": ["panel"],
     "min": 3,
-    "use": "the Memory chart's band 3, against the panel"
+    "use": "the Memory chart's Claude band 3, against the panel"
   },
   {
-    "fg": "chart-3",
+    "fg": "chart-claude-3",
     "bg": ["panel", "row-hover"],
     "min": 3,
     "use": "its swatch in the Memory table, on a hovered row"
   },
   {
-    "fg": "chart-4",
+    "fg": "chart-codex-1",
     "bg": ["panel"],
     "min": 3,
-    "use": "the Memory chart's band 4, against the panel"
+    "use": "the Memory chart's Codex band 1, against the panel"
   },
   {
-    "fg": "chart-4",
+    "fg": "chart-codex-1",
     "bg": ["panel", "row-hover"],
     "min": 3,
     "use": "its swatch in the Memory table, on a hovered row"
   },
   {
-    "fg": "chart-5",
+    "fg": "chart-codex-2",
     "bg": ["panel"],
     "min": 3,
-    "use": "the Memory chart's band 5, against the panel"
+    "use": "the Memory chart's Codex band 2, against the panel"
   },
   {
-    "fg": "chart-5",
+    "fg": "chart-codex-2",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "its swatch in the Memory table, on a hovered row"
+  },
+  {
+    "fg": "chart-codex-3",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "the Memory chart's Codex band 3, against the panel"
+  },
+  {
+    "fg": "chart-codex-3",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "its swatch in the Memory table, on a hovered row"
+  },
+  {
+    "fg": "chart-other-sign-in",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "the Memory chart's Other sign-in band, against the panel"
+  },
+  {
+    "fg": "chart-other-sign-in",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "its swatch in the Memory table, on a hovered row"
+  },
+  {
+    "fg": "chart-left",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "the Memory chart's Left running band, against the panel"
+  },
+  {
+    "fg": "chart-left",
     "bg": ["panel", "row-hover"],
     "min": 3,
     "use": "its swatch in the Memory table, on a hovered row"

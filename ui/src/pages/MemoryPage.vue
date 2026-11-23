@@ -10,7 +10,7 @@
 import { Check, ChevronLeft, ChevronRight } from '@lucide/vue';
 import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue';
 import { ApiError, api, type MemoryDay } from '../api';
-import AccountIcon from '../components/AccountIcon.vue';
+import ProviderMark from '../components/ProviderMark.vue';
 import WButton from '../components/WButton.vue';
 import WIconButton from '../components/WIconButton.vue';
 import WTable from '../components/WTable.vue';
@@ -229,7 +229,7 @@ function toggle(key: string): void {
           <WTableRow
             v-for="r in figs.rows"
             :key="r.band.key"
-            :class="['group cursor-pointer py-2.5', 'hov:bg-row-hover press:bg-row-press']"
+            :class="['group cursor-pointer py-2.25 text-13', 'hov:bg-row-hover press:bg-row-press']"
             :data-band-row="r.band.key"
             @click="toggle(r.band.key)"
             @pointerenter="hovered = r.band.key"
@@ -253,7 +253,7 @@ function toggle(key: string): void {
                 <Check v-if="shown.has(r.band.key)" class="size-3" :stroke-width="3" aria-hidden="true" />
               </button>
             </span>
-            <div role="cell" class="flex min-w-0 items-center gap-3">
+            <div role="cell" class="flex min-w-0 items-center gap-2">
               <span
                 aria-hidden="true"
                 :class="[
@@ -261,15 +261,22 @@ function toggle(key: string): void {
                   hovered === r.band.key ? 'bg-chart-hover' : SWATCH[r.band.colour],
                 ]"
               ></span>
-              <AccountIcon v-if="r.band.account" :account="r.band.account" />
-              <span v-else aria-hidden="true" class="size-6 shrink-0"></span>
-              <span class="truncate font-semibold">{{ r.band.label }}</span>
+              <!-- As the Sessions table's Account column: the provider's small mark, then the name. -->
+              <span class="flex min-w-0 items-center gap-1.5">
+                <ProviderMark
+                  v-if="r.band.account"
+                  :provider="r.band.account.provider"
+                  size="xs"
+                  :label="r.band.account.provider === 'claude' ? 'Claude' : 'Codex'"
+                />
+                <span class="min-w-0 truncate font-medium">{{ r.band.label }}</span>
+              </span>
             </div>
-            <span v-if="isToday" role="cell" class="text-right text-12 font-semibold tabular-nums">{{
+            <span v-if="isToday" role="cell" class="text-right text-secondary tabular-nums">{{
               size(r.now ?? 0)
             }}</span>
-            <span role="cell" class="text-right text-12 font-semibold tabular-nums">{{ size(r.peak) }}</span>
-            <span role="cell" class="text-right text-12 text-secondary tabular-nums">{{
+            <span role="cell" class="text-right text-secondary tabular-nums">{{ size(r.peak) }}</span>
+            <span role="cell" class="text-right text-tertiary tabular-nums">{{
               shareText(isToday ? (r.now ?? 0) : r.peak, total)
             }}</span>
           </WTableRow>

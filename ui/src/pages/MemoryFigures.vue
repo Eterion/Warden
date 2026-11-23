@@ -28,7 +28,7 @@ const ICON = 'absolute top-1/2 left-4 size-8 -translate-y-1/2 text-secondary';
         <dt class="text-12 text-secondary">
           <CpuAi :class="ICON" :stroke-width="1.5" aria-hidden="true" />AI sessions now
         </dt>
-        <dd class="text-16 font-semibold tabular-nums">{{ size(props.figures.now ?? 0) }}</dd>
+        <dd class="text-20 font-semibold tabular-nums">{{ size(props.figures.now ?? 0) }}</dd>
         <dd v-if="props.total" class="text-12 text-tertiary tabular-nums">
           <!-- Said once, where the share first shows. -->
           <WTooltip :text="SHARE_NOTE" class="text-left" data-share-note
@@ -40,7 +40,7 @@ const ICON = 'absolute top-1/2 left-4 size-8 -translate-y-1/2 text-secondary';
         <dt class="text-12 text-secondary">
           <Mountain :class="ICON" :stroke-width="1.5" aria-hidden="true" />{{ props.today ? 'Peak today' : 'Peak' }}
         </dt>
-        <dd class="text-16 font-semibold tabular-nums">{{ size(props.figures.peak ?? 0) }}</dd>
+        <dd class="text-20 font-semibold tabular-nums">{{ size(props.figures.peak ?? 0) }}</dd>
         <dd v-if="props.figures.peakAt !== null && props.figures.peak" class="text-12 text-tertiary tabular-nums">
           at {{ clock(props.figures.peakAt) }}
         </dd>
@@ -52,7 +52,7 @@ const ICON = 'absolute top-1/2 left-4 size-8 -translate-y-1/2 text-secondary';
         data-computer
       >
         <dt class="text-12 text-secondary"><Monitor :class="ICON" :stroke-width="1.5" aria-hidden="true" />Computer</dt>
-        <dd :class="['text-16 font-semibold tabular-nums', props.figures.computer.high && 'text-attn']">
+        <dd :class="['text-20 font-semibold tabular-nums', props.figures.computer.high && 'text-attn']">
           {{ size(props.figures.computer.used) }}
         </dd>
         <!-- The meter: the memory in use, the AI sessions' part of it first, in the text colour; said in words for
@@ -89,7 +89,7 @@ const ICON = 'absolute top-1/2 left-4 size-8 -translate-y-1/2 text-secondary';
         <dt class="text-12 text-secondary">
           <OwlIcon :class="ICON" :size="32" :stroke-width="1.5" aria-hidden="true" />Warden itself
         </dt>
-        <dd class="text-16 font-semibold tabular-nums">{{ size(props.figures.warden) }}</dd>
+        <dd class="text-20 font-semibold tabular-nums">{{ size(props.figures.warden) }}</dd>
         <dd v-if="!props.today" class="text-12 text-tertiary">at its highest</dd>
         <dd v-else-if="props.total" class="text-12 text-tertiary tabular-nums">
           {{ shareText(props.figures.warden, props.total) }} of {{ size(props.total) }}

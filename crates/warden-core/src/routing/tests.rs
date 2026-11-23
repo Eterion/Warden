@@ -56,6 +56,14 @@ fn setup() -> (Settings, Readings) {
 fn target(s: &Settings, r: &Readings) -> Option<String> {
     decide(s, r, NOW).delegated.map(|t| t.account_id)
 }
+/// Whether main is ranked by its own week: below its hand-off point and its 5-hour window.
+fn main_ranked(d: &Decision) -> bool {
+    d.order.iter().any(|e| e.account_id == MAIN_ID && !e.reset)
+}
+/// The ranking, by account id.
+fn order(d: &Decision) -> Vec<&str> {
+    d.order.iter().map(|e| e.account_id.as_str()).collect()
+}
 
 #[test]
 fn reserve_line_shrinks_at_start_middle_and_end_of_week() {
@@ -76,7 +84,7 @@ fn reserve_line_shrinks_at_start_middle_and_end_of_week() {
         );
         let d = decide(&s, &r, NOW);
         assert_eq!(d.hand_off_at, hand_off_at);
-        assert!(d.main_works_itself);
+        assert!(main_ranked(&d));
         // A reset already passed makes the reading zero, irrespective of its previous share.
         if left > 0 {
             usage(
@@ -86,7 +94,7 @@ fn reserve_line_shrinks_at_start_middle_and_end_of_week() {
                 Some(f64::from(hand_off_at)),
                 NOW + left,
             );
-            assert!(!decide(&s, &r, NOW).main_works_itself);
+            assert!(!main_ranked(&decide(&s, &r, NOW)));
         }
     }
     assert_eq!(reserve_now(25, None, Some(NOW + 2 * WEEK_MS), NOW), 25.0);
@@ -202,11 +210,7 @@ fn work_hours_decide_through_the_same_hand_off_point() {
     usage(&mut r, MAIN_ID, Some(10.0), Some(50.0), NOW + 3 * DAY_MS);
     let d = decide(&s, &r, NOW);
     assert!(d.hand_off_at >= 75 && d.hand_off_at <= 100);
-    assert_eq!(d.main_works_itself, 50.0 < f64::from(d.hand_off_at));
-    assert!(
-        d.main_reason
-            .contains(&format!("keeps {}%", 100 - d.hand_off_at))
-    );
+    assert_eq!(main_ranked(&d), 50.0 < f64::from(d.hand_off_at));
 }
 
 #[test]
@@ -317,9 +321,11 @@ fn each_switched_on_account_is_listed_with_why_it_is_skipped() {
 fn main_and_other_five_hour_limits_hand_off_at_ninety() {
     let (s, mut r) = setup();
     usage(&mut r, MAIN_ID, Some(89.99), Some(10.0), NOW + WEEK_MS);
-    assert!(decide(&s, &r, NOW).main_works_itself);
+    assert!(main_ranked(&decide(&s, &r, NOW)));
     usage(&mut r, MAIN_ID, Some(90.0), Some(10.0), NOW + WEEK_MS);
-    assert!(!decide(&s, &r, NOW).main_works_itself);
+    let d = decide(&s, &r, NOW);
+    assert!(!main_ranked(&d));
+    assert_eq!(d.why, Why::MainFiveHourFull);
     usage(&mut r, "second", Some(90.0), Some(45.0), NOW + HOUR_MS);
     assert_eq!(target(&s, &r).as_deref(), Some("third"));
     r.accounts
@@ -367,11 +373,8 @@ fn all_other_weeks_used_up_leave_the_work_with_main() {
     let d = decide(&s, &r, NOW);
     assert!(d.main_works_itself);
     assert!(d.delegated.is_none());
-    assert_eq!(
-        d.main_reason,
-        "No account can take delegated work, so main keeps it."
-    );
-    assert_eq!(d.delegated_reason, d.main_reason);
+    assert_eq!(d.why, Why::NoOther);
+    assert!(d.order.is_empty());
 }
 
 #[test]
@@ -432,7 +435,11 @@ fn expired_logins_keep_the_last_reading_until_its_reset() {
     r.accounts.get_mut(MAIN_ID).expect("main").error =
         Some(UsageError::LoginExpired { status: None });
     assert_eq!(target(&s, &r).as_deref(), Some("second"));
-    assert!(decide(&s, &r, NOW).main_works_itself);
+    // Main still counts on its expired sign-in, after second, whose week resets sooner.
+    let d = decide(&s, &r, NOW);
+    assert_eq!(order(&d), ["second", "third", MAIN_ID]);
+    assert_eq!(d.why, Why::Soonest);
+    assert!(!d.main_works_itself);
     usage(&mut r, "third", Some(10.0), Some(95.0), NOW - 1);
     usage(&mut r, "second", Some(10.0), Some(99.0), NOW + WEEK_MS);
     assert_eq!(target(&s, &r).as_deref(), Some("third"));
@@ -456,10 +463,7 @@ fn unknown_main_delegates_and_nothing_available_keeps_work_on_main() {
         let d = decide(&s, &r, NOW);
         assert!(d.main_works_itself);
         assert!(d.delegated.is_none());
-        assert_eq!(
-            d.main_reason,
-            "No account can take delegated work, so main keeps it."
-        );
+        assert_eq!(d.why, Why::NoOther);
     }
 }
 #[test]
@@ -471,18 +475,18 @@ fn new_readings_count_as_zero_and_accounts_without_weekly_limits_rank_last() {
     assert_eq!(target(&s, &r).as_deref(), Some("second"));
     usage(&mut r, "second", Some(20.0), None, NOW + WEEK_MS);
     assert_eq!(target(&s, &r).as_deref(), Some("third"));
-    assert!(
-        decide(&s, &r, NOW)
-            .delegated_reason
-            .contains("no weekly limit")
-    );
+    let d = decide(&s, &r, NOW);
+    assert_eq!(order(&d), [MAIN_ID, "third", "second"]);
+    assert_eq!(d.order[2].deadline, None);
 }
 #[test]
 fn advice_is_only_for_main_and_changes_only_with_the_decision_or_command() {
     let (s, mut r) = setup();
+    // Main's week resets soonest: it works itself.
+    usage(&mut r, MAIN_ID, Some(10.0), Some(10.0), NOW + 24 * HOUR_MS);
     let g = guidance(&s, &r, Some(MAIN_ID), Bash, Some("session-1"), NOW);
     assert!(g.text.starts_with(
-        "Warden: work in this session. If the user asks to delegate, Warden's pick is second. The user can always choose: work here, or run on whichever account they name.\nRun a delegated command in the background and read its result when it finishes; a long run in the foreground is cut off.\nAnything you start that runs Claude or Codex for you (a review script, say) is delegated work too: run it with the same variables as that account's command above.\nReplace `<name>` with a few words saying what the run does, and `<task>` with the task.\n- second (Warden's pick): WARDEN_PARENT_SESSION='session-1' CLAUDE_CONFIG_DIR="
+        "Warden: work in this session: main's week resets soonest of the accounts with room. If the user asks to delegate, Warden's pick is second. The user can always choose: work here, or run on whichever account they name.\nRun a delegated command in the background and read its result when it finishes; a long run in the foreground is cut off.\nAnything you start that runs Claude or Codex for you (a review script, say) is delegated work too: run it with the same variables as that account's command above.\nReplace `<name>` with a few words saying what the run does, and `<task>` with the task.\n- second (Warden's pick): WARDEN_PARENT_SESSION='session-1' CLAUDE_CONFIG_DIR="
     ), "{}", g.text);
     assert!(
         g.text
@@ -512,7 +516,7 @@ fn advice_is_only_for_main_and_changes_only_with_the_decision_or_command() {
     let after = guidance(&s, &r, Some(MAIN_ID), Bash, Some("session-1"), NOW);
     assert_ne!(g.key, after.key);
     assert!(after.text.starts_with(
-        "Warden: main is handing work off now, so run each task on second (Warden's pick); here, only talk to the user and check results. Whenever the user asks, work in this session instead, or run on the account they name.\nRun a delegated command in the background"
+        "Warden: main is handing work off now (main keeps the rest of its week for the user), so run each task on second (Warden's pick: its week resets soonest of the accounts with room); here, only talk to the user and check results. Whenever the user asks, work in this session instead, or run on the account they name.\nRun a delegated command in the background"
     ), "{}", after.text);
     // Nothing to delegate to: work here, and the user may still name an account.
     let mut none = s.clone();
@@ -588,4 +592,243 @@ fn reading_staleness_uses_interval_plus_one_minute() {
         NOW + (i64::from(s.usage_interval_min) + 2) * 60_000
     ));
     assert!(readings_are_stale(&s, &r, NOW - 1));
+}
+
+/// The rule's example (2026-11-23): Claude 2 used 31% of its week and resets in 15 hours, Codex resets in 72 hours,
+/// main used 24% and resets in 93 hours. The week lost soonest goes first, then the next, then main.
+fn example() -> (Settings, Readings) {
+    let (s, mut r) = setup();
+    usage(&mut r, MAIN_ID, Some(10.0), Some(24.0), NOW + 93 * HOUR_MS);
+    usage(&mut r, "second", Some(10.0), Some(31.0), NOW + 15 * HOUR_MS);
+    usage(&mut r, "third", Some(10.0), Some(40.0), NOW + 72 * HOUR_MS);
+    (s, r)
+}
+
+#[test]
+fn the_week_lost_soonest_takes_the_work_first() {
+    let (s, r) = example();
+    let d = decide(&s, &r, NOW);
+    assert_eq!(order(&d), ["second", "third", MAIN_ID]);
+    assert_eq!(d.order[0].deadline, Some(NOW + 15 * HOUR_MS));
+    assert!(!d.main_works_itself);
+    assert_eq!(target(&s, &r).as_deref(), Some("second"));
+    assert_eq!(d.why, Why::Soonest);
+    assert_eq!(d.suggested_reset, None);
+    // Once Claude 2's week has reset, a fresh week puts it last of the weekly ones: Codex next.
+    let d = decide(&s, &r, NOW + 16 * HOUR_MS);
+    assert_eq!(order(&d), ["third", MAIN_ID, "second"]);
+    assert_eq!(d.delegated.map(|t| t.account_id).as_deref(), Some("third"));
+    // Then main, up to its hand-off point.
+    let d = decide(&s, &r, NOW + 73 * HOUR_MS);
+    assert_eq!(order(&d)[0], MAIN_ID);
+    assert!(d.main_works_itself);
+    assert_eq!(d.why, Why::MainSoonest);
+    // Warden's pick among the others stays known, for when the user asks to delegate.
+    assert!(d.delegated.is_some());
+}
+
+#[test]
+fn main_works_itself_as_the_pick_or_when_nothing_else_has_room() {
+    let (s, mut r) = example();
+    usage(&mut r, MAIN_ID, Some(10.0), Some(24.0), NOW + 10 * HOUR_MS);
+    let d = decide(&s, &r, NOW);
+    assert!(d.main_works_itself);
+    assert_eq!(d.why, Why::MainSoonest);
+    assert_eq!(d.delegated.map(|t| t.account_id).as_deref(), Some("second"));
+    // Nothing else with room: main keeps the work, even past its hand-off point.
+    for id in ["second", "third"] {
+        usage(&mut r, id, Some(10.0), Some(100.0), NOW + WEEK_MS);
+    }
+    let d = decide(&s, &r, NOW);
+    assert!(d.main_works_itself);
+    assert_eq!((d.why, d.delegated.clone()), (Why::NoOther, None));
+    assert_eq!(order(&d), [MAIN_ID]);
+    usage(&mut r, MAIN_ID, Some(10.0), Some(99.0), NOW + 10 * HOUR_MS);
+    let d = decide(&s, &r, NOW);
+    assert!(d.main_works_itself && d.order.is_empty());
+    assert_eq!(d.why, Why::NoOther);
+}
+
+#[test]
+fn main_delegates_while_its_five_hour_window_is_full_even_resetting_soonest() {
+    let (s, mut r) = example();
+    usage(&mut r, MAIN_ID, Some(90.0), Some(24.0), NOW + 10 * HOUR_MS);
+    let d = decide(&s, &r, NOW);
+    assert!(!d.main_works_itself);
+    assert_eq!(d.why, Why::MainFiveHourFull);
+    assert_eq!(order(&d), ["second", "third"]);
+    let text = guidance(&s, &r, Some(MAIN_ID), Bash, None, NOW).text;
+    assert!(
+        text.starts_with("Warden: main is handing work off now (main's 5-hour window is full), so run each task on second (Warden's pick: its week resets soonest of the accounts with room);"),
+        "{text}"
+    );
+    // Above its hand-off point main keeps the rest of its week for the user.
+    usage(&mut r, MAIN_ID, Some(10.0), Some(90.0), NOW + 93 * HOUR_MS);
+    assert_eq!(decide(&s, &r, NOW).why, Why::MainKeeps);
+}
+
+#[test]
+fn within_the_same_hour_more_room_wins_then_settings_order_with_main_first() {
+    let (s, mut r) = setup();
+    let hour = (NOW / HOUR_MS + 30) * HOUR_MS;
+    usage(
+        &mut r,
+        "second",
+        Some(10.0),
+        Some(50.0),
+        hour + 50 * MINUTE_MS,
+    );
+    usage(
+        &mut r,
+        "third",
+        Some(10.0),
+        Some(60.0),
+        hour + 5 * MINUTE_MS,
+    );
+    // Third resets 45 minutes sooner, in the same hour, but second has more room.
+    assert_eq!(target(&s, &r).as_deref(), Some("second"));
+    usage(
+        &mut r,
+        "third",
+        Some(10.0),
+        Some(40.0),
+        hour + 5 * MINUTE_MS,
+    );
+    assert_eq!(target(&s, &r).as_deref(), Some("third"));
+    // The next hour is later, whatever the room.
+    usage(&mut r, "third", Some(10.0), Some(0.0), hour + HOUR_MS);
+    assert_eq!(target(&s, &r).as_deref(), Some("second"));
+    // The same room: settings order.
+    usage(
+        &mut r,
+        "third",
+        Some(10.0),
+        Some(50.0),
+        hour + 10 * MINUTE_MS,
+    );
+    let d = decide(&s, &r, NOW);
+    assert_eq!(order(&d)[..2], ["second", "third"]);
+    // Main first among equals: with no reserve its room goes up to 100%, so 50% used leaves it 50 too.
+    let (mut main_first, _) = setup();
+    main_first.reserve = 0;
+    usage(
+        &mut r,
+        MAIN_ID,
+        Some(10.0),
+        Some(50.0),
+        hour + 20 * MINUTE_MS,
+    );
+    let d = decide(&main_first, &r, NOW);
+    assert_eq!(d.hand_off_at, 100);
+    assert_eq!(order(&d)[..3], [MAIN_ID, "second", "third"]);
+    assert!(d.main_works_itself);
+}
+
+#[test]
+fn accounts_without_a_weekly_limit_come_after_every_one_with_one() {
+    let (s, mut r) = example();
+    usage(&mut r, "second", Some(5.0), None, NOW + WEEK_MS);
+    let d = decide(&s, &r, NOW);
+    assert_eq!(order(&d), ["third", MAIN_ID, "second"]);
+    assert_eq!(d.order[2].deadline, None);
+}
+
+fn resets(r: &mut Readings, id: &str, list: &[(&str, i64)]) {
+    r.accounts.entry(id.into()).or_default().resets = list
+        .iter()
+        .map(|(title, at)| Reset {
+            id: Some(format!("{id}-{title}")),
+            title: Some((*title).into()),
+            expires_at: Some(*at),
+        })
+        .collect();
+}
+
+#[test]
+fn a_reset_that_expires_soonest_is_suggested_and_the_work_goes_on_meanwhile() {
+    let (s, mut r) = example();
+    // Codex has used 95% of its week (resets in 72 hours); its Full reset expires in 10 hours, before Claude 2's week.
+    usage(&mut r, "third", Some(10.0), Some(95.0), NOW + 72 * HOUR_MS);
+    resets(
+        &mut r,
+        "third",
+        &[("Full reset (Weekly + 5 hr)", NOW + 10 * HOUR_MS)],
+    );
+    let d = decide(&s, &r, NOW);
+    assert_eq!(order(&d), ["third", "second", MAIN_ID]);
+    assert!(d.order[0].reset);
+    assert_eq!(
+        d.suggested_reset,
+        Some(Suggested {
+            account_id: "third".into(),
+            reset_id: "third-Full reset (Weekly + 5 hr)".into(),
+            title: "Full reset (Weekly + 5 hr)".into(),
+            expires_at: NOW + 10 * HOUR_MS,
+        })
+    );
+    // Meanwhile the work goes to the next account.
+    assert_eq!(target(&s, &r).as_deref(), Some("second"));
+    assert!(!d.main_works_itself);
+    let text = guidance(&s, &r, Some(MAIN_ID), Bash, None, NOW).text;
+    assert!(
+        text.contains("\nTell the user: Warden suggests using third's Full reset (Weekly + 5 hr) on Warden's Overview, as it expires before third's week resets. Once it is used, third takes the work; until then, work goes as above.\n"),
+        "{text}"
+    );
+    // A week used up counts too, and a full 5-hour window.
+    usage(&mut r, "third", Some(95.0), Some(100.0), NOW + 72 * HOUR_MS);
+    assert!(decide(&s, &r, NOW).suggested_reset.is_some());
+    // Once used: the reset is gone and the readings refill, so it is ranked by its week as usual.
+    r.use_reset("third", "third-Full reset (Weekly + 5 hr)");
+    usage(&mut r, "third", Some(0.0), Some(0.0), NOW + 72 * HOUR_MS);
+    let d = decide(&s, &r, NOW);
+    assert_eq!(d.suggested_reset, None);
+    assert_eq!(order(&d), ["second", "third", MAIN_ID]);
+    assert!(!d.order.iter().any(|e| e.reset));
+}
+
+#[test]
+fn only_a_usable_week_reset_before_the_weekly_one_on_a_nearly_used_week_counts() {
+    let (s, mut r) = example();
+    let suggested = |r: &Readings| decide(&s, r, NOW).suggested_reset.map(|x| x.account_id);
+    usage(&mut r, "third", Some(10.0), Some(90.0), NOW + 72 * HOUR_MS);
+    resets(&mut r, "third", &[("Weekly reset", NOW + 10 * HOUR_MS)]);
+    assert_eq!(suggested(&r).as_deref(), Some("third"));
+    // Below 90%: ranked by its week, and the reset waits.
+    usage(&mut r, "third", Some(10.0), Some(89.0), NOW + 72 * HOUR_MS);
+    assert_eq!(suggested(&r), None);
+    usage(&mut r, "third", Some(10.0), Some(95.0), NOW + 72 * HOUR_MS);
+    // A 5-hour or Fable reset gives no week back; one expiring after the week resets is not lost; an expired one is
+    // gone.
+    for (title, at) in [
+        ("5-hour reset", NOW + 10 * HOUR_MS),
+        ("Fable reset", NOW + 10 * HOUR_MS),
+        ("Full reset", NOW + 80 * HOUR_MS),
+        ("Full reset", NOW - 1),
+    ] {
+        resets(&mut r, "third", &[(title, at)]);
+        assert_eq!(suggested(&r), None, "{title}");
+    }
+    // One without an id cannot be used.
+    resets(&mut r, "third", &[("Full reset", NOW + 10 * HOUR_MS)]);
+    r.accounts.get_mut("third").expect("third").resets[0].id = None;
+    assert_eq!(suggested(&r), None);
+    // Ranked after another account's week: listed, not suggested.
+    resets(&mut r, "third", &[("Full reset", NOW + 20 * HOUR_MS)]);
+    let d = decide(&s, &r, NOW);
+    assert_eq!(order(&d), ["second", "third", MAIN_ID]);
+    assert_eq!(d.suggested_reset, None);
+    // Signed out: no reset counts.
+    r.accounts.get_mut("third").expect("third").error = Some(UsageError::SignedOut);
+    resets(&mut r, "third", &[("Full reset", NOW + 10 * HOUR_MS)]);
+    assert_eq!(suggested(&r), None);
+    // Main's own reset counts the same way.
+    usage(&mut r, MAIN_ID, Some(10.0), Some(95.0), NOW + 93 * HOUR_MS);
+    resets(&mut r, MAIN_ID, &[("Full reset", NOW + 5 * HOUR_MS)]);
+    let d = decide(&s, &r, NOW);
+    assert_eq!(
+        d.suggested_reset.map(|x| x.account_id).as_deref(),
+        Some(MAIN_ID)
+    );
+    assert_eq!(d.why, Why::MainKeeps);
+    assert_eq!(target(&s, &r).as_deref(), Some("second"));
 }

@@ -29,6 +29,7 @@ const APP = 'crates/warden-server/src/app.rs';
 const MODEL = 'crates/warden-core/src/model.rs';
 const SESSIONS = 'crates/warden-core/src/sessions.rs';
 const MEMORY = 'crates/warden-core/src/memory.rs';
+const ROUTING = 'crates/warden-core/src/routing.rs';
 const s = (file: string, type: string, ...where: string[]): ApiType => ({ file, type, kind: 'struct', in: where });
 const e = (file: string, type: string, ...where: string[]): ApiType => ({ file, type, kind: 'enum', in: where });
 
@@ -47,6 +48,9 @@ export const API_TYPES: ApiType[] = [
   s(APP, 'StateView', 'State'),
   s(APP, 'DelegationView', 'Delegation'),
   s(APP, 'DelegatedView', 'Delegation'),
+  e(ROUTING, 'Why', 'Delegation'),
+  s(ROUTING, 'Ranked', 'Delegation'),
+  s(ROUTING, 'Suggested', 'Delegation'),
   s(APP, 'ActivityView', 'State'),
   s(APP, 'Candidate', 'Candidate'),
   s(ROUTES_FILE, 'AddBody', 'POST /api/accounts'),

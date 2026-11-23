@@ -97,8 +97,10 @@ fn route_uses_the_same_normalised_reserve_as_the_server() {
         read_at: now,
         five_hour: None,
         weekly: Some(warden_core::model::Limit {
-            used_percent: 64.0,
-            resets_at: Some(now + 7 * 24 * 3_600_000),
+            used_percent: 69.0,
+            // Six days left: the reserve of 35 (37 normalised) keeps 30%, so main takes work up to 70%; 37 would
+            // keep 31.7% (up to 68%). Main resets before Second's fresh week, so it is the pick.
+            resets_at: Some(now + 6 * 24 * 3_600_000),
         }),
         per_model_weekly: Vec::new(),
         extra: None,
@@ -107,7 +109,7 @@ fn route_uses_the_same_normalised_reserve_as_the_server() {
     store::save(&data, READINGS_FILE, &readings).expect("readings");
     let (out, _) = route(&data, "main", r#"{"session_id":"normalised-reserve"}"#);
     assert!(
-        text(&out).starts_with("Warden: work in this session."),
+        text(&out).starts_with("Warden: work in this session: main's week resets soonest"),
         "{}",
         text(&out)
     );
@@ -185,7 +187,7 @@ fn tells_each_session_once_and_stays_silent_while_nothing_changes() {
     let t = text(&first);
     assert!(
         t.starts_with(
-            "Warden: main is handing work off now, so run each task on Second (Warden's pick)"
+            "Warden: main is handing work off now (main's usage is unknown), so run each task on Second (Warden's pick: its week resets soonest of the accounts with room)"
         ),
         "{t}"
     );
@@ -277,7 +279,7 @@ fn used_up_delegated_weeks_tell_main_to_keep_work_once_until_the_decision_change
         .used_percent = 99.0;
     store::save(&data, READINGS_FILE, &readings).expect("readings");
     assert!(text(&route(&data, "main", input).0).starts_with(
-        "Warden: main is handing work off now, so run each task on Second (Warden's pick)"
+        "Warden: main is handing work off now (main's usage is unknown), so run each task on Second (Warden's pick:"
     ));
     assert!(text(&route(&data, "main", input).0).is_empty());
 }
@@ -353,7 +355,8 @@ fn known_main_usage_changes_its_advice_at_the_reserve_line() {
         five_hour: None,
         weekly: Some(warden_core::model::Limit {
             used_percent: 10.0,
-            resets_at: Some(now + 7 * 24 * 3_600_000),
+            // Before Second's fresh week: main is the pick below its hand-off point (78% with six days left).
+            resets_at: Some(now + 6 * 24 * 3_600_000),
         }),
         per_model_weekly: vec![],
         extra: None,
@@ -362,7 +365,7 @@ fn known_main_usage_changes_its_advice_at_the_reserve_line() {
     store::save(&data, READINGS_FILE, &readings).expect("save");
     let input = r#"{"session_id":"main-session"}"#;
     let (first, _) = route(&data, "main", input);
-    assert!(text(&first).starts_with("Warden: work in this session."));
+    assert!(text(&first).starts_with("Warden: work in this session: main's week resets soonest"));
     let usage = readings
         .accounts
         .get_mut("main")
@@ -374,7 +377,7 @@ fn known_main_usage_changes_its_advice_at_the_reserve_line() {
     store::save(&data, READINGS_FILE, &readings).expect("save");
     let (changed, _) = route(&data, "main", input);
     assert!(text(&changed).starts_with(
-        "Warden: main is handing work off now, so run each task on Second (Warden's pick)"
+        "Warden: main is handing work off now (main keeps the rest of its week for the user), so run each task on Second (Warden's pick:"
     ));
     let (same, _) = route(&data, "main", input);
     assert_eq!(text(&same), "");

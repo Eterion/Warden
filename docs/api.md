@@ -96,10 +96,14 @@ type Problem =
 interface Delegation {
   mainWorksItself: boolean;
   delegated: { accountId: string } | null;
-  mainReason: string;
-  delegatedReason: string;
-  /** Main's hand-off point: the whole percent of its week from which it delegates (100 less the reserve now, rounded down); the same number decides. */
+  /** Why the work goes where it goes: `mainSoonest` main is the pick, `noOther` nothing else can take it (main keeps it), `soonest` the pick's week resets before main's, `mainKeeps` main is at its hand-off point, `mainFiveHourFull` main has used 90% or more of its 5-hour window, `mainUnknown` main's usage is unknown. */
+  why: 'mainSoonest' | 'noOther' | 'soonest' | 'mainKeeps' | 'mainFiveHourFull' | 'mainUnknown';
+  /** Main's hand-off point: the whole percent of its week up to which it takes work (100 less the reserve now, rounded down); the same number decides. */
   handOffAt: number;
+  /** The accounts that can take work, main too, in Warden's order: earliest deadline first (the same hour a tie, then more room, then settings order with main first); those without a weekly limit last. */
+  order: { accountId: string; deadline: number | null; reset: boolean }[];
+  /** A limit reset Warden suggests using: ranked first, it expires before its account's week resets. The work goes to the next account until the user uses it. */
+  suggestedReset: { accountId: string; resetId: string; title: string; expiresAt: number } | null;
 }
 
 type Theme = 'system' | 'light' | 'dark';
@@ -342,7 +346,13 @@ In the data folder: `--data-dir`, or `%APPDATA%\Warden`, shared by the server, t
 
 ## The routing hook
 
-Main works itself while it has used less of its week than its hand-off point, 100 less its reserve now, rounded down to a whole percent (`handOffAt`; the same number decides). The reserve shrinks with what is left of main's week before its weekly reset: the time left (a reset more than 7 days away counts as 7 days), or, with `workHours` set, the work hours left (each work day's window in local time, with Windows' offset at that moment) out of the work hours in a week. With no weekly reset known, main keeps its full reserve. Delegated work skips accounts at 100% or more of their week, as well as those switched off or at 90% or more of their 5-hour window. A weekly reset that has passed counts as 0%, including for an expired login; an account with no reading yet is eligible. When nothing can take delegated work, main keeps it and the advice says so once per decision change.
+Work goes to the account whose week resets soonest and still has room, so the allowance lost soonest is spent first (`delegation.order`):
+
+- Who can take work: each switched-on Warden account that can run (not signed out, not signed in as someone else, not on main's own Claude account) below 90% of its 5-hour window and 100% of its week; and main while its usage is known, its 5-hour window below 90% and its week below its hand-off point, 100 less its reserve now, rounded down to a whole percent (`handOffAt`; the same number decides). The reserve shrinks with what is left of main's week before its weekly reset: the time left (a reset more than 7 days away counts as 7 days), or, with `workHours` set, the work hours left (each work day's window in local time, with Windows' offset at that moment) out of the work hours in a week. With no weekly reset known, main keeps its full reserve.
+- Its deadline: its weekly reset. With no reading yet, or a weekly reset that has passed (it counts as 0%, including for an expired login), a week from now. An account with no weekly limit comes after every account with one, by its 5-hour room.
+- The pick: the earliest deadline. Deadlines in the same hour tie: then the one with more room left (main's up to its hand-off point), then settings order, main first.
+- Main works itself when it is the pick, or when no other account can take work; otherwise it delegates to the pick.
+- Limit resets: an account (main too) whose week is at 90% or more, with a usable full or weekly limit reset that expires before its weekly reset, is ranked by that reset's expiry instead. Ranked first, the reset is suggested (`suggestedReset`) and the work goes to the next account until the user uses it in the app; Warden never uses one itself. Once used, the account's readings refill and it is ranked by its week again.
 
 One group of two command handlers on `UserPromptSubmit` (every message), in the account's `settings.json` (Claude) or `hooks.json` (Codex), added after the user's own groups:
 
@@ -356,10 +366,10 @@ How the CLIs run Warden's handlers (all three hooks):
 
 Which shell Claude Code runs the AI's commands in is decided as Claude Code decides it, from files only (nothing is started), for the routing guidance's commands: Git Bash when `CLAUDE_CODE_GIT_BASH_PATH` (the account's `settings.json` `env`, then Warden's environment) names an existing `bash.exe`, `sh.exe`, `bash` or `sh`, when `Git\bin\bash.exe` is in `Program Files` or `Program Files (x86)` on the C: drive (Claude Code looks there whatever `%ProgramFiles%` says), or when `bin\bash.exe` sits beside the folder of the first `git` on PATH; PowerShell otherwise.
 
-The routing advice runs only in main and stays silent while the decision and commands are unchanged: it names Warden's pick, then lists every switched-on Warden account, one line each, with its command and, for one Warden skips, why. Accounts skipped for their limits keep their command (the user may still choose them); one signed out, signed in as someone else, or on main's own Claude account gets no command. It says the user can always choose: work in main, or run on the account they name. Whenever it lists a command, its second line says to run a delegated command in the background and read its result when it finishes, since Claude Code stops waiting for a long command in the foreground, and its third that anything the session starts that runs Claude or Codex for it (a review script) is delegated work too, run with that account's variables, so it never falls back to a CLI's default folder, and its fourth what to put in the placeholders: `<name>`, a few words saying what the run does, and `<task>`, the task (only `<task>` when no Claude command is listed, as Codex's command has no name). It holds no percentages, times or ages, so it changes only with the pick, the mode, a skip, the accounts or a command. For example, below the hand-off point, in Git Bash:
+The routing advice runs only in main and stays silent while the decision and commands are unchanged: it names Warden's pick and why, in plain words, then a suggested limit reset for the session to tell the user about, then lists every switched-on Warden account, one line each, with its command and, for one Warden skips, why. Accounts skipped for their limits keep their command (the user may still choose them); one signed out, signed in as someone else, or on main's own Claude account gets no command. It says the user can always choose: work in main, or run on the account they name. Whenever it lists a command, its second line says to run a delegated command in the background and read its result when it finishes, since Claude Code stops waiting for a long command in the foreground, and its third that anything the session starts that runs Claude or Codex for it (a review script) is delegated work too, run with that account's variables, so it never falls back to a CLI's default folder, and its fourth what to put in the placeholders: `<name>`, a few words saying what the run does, and `<task>`, the task (only `<task>` when no Claude command is listed, as Codex's command has no name). It holds no percentages, times or ages, so it changes only with the pick and why, the mode, a suggested reset, a skip, the accounts or a command. For example, while main's week resets soonest, in Git Bash:
 
 ```text
-Warden: work in this session. If the user asks to delegate, Warden's pick is Second. The user can always choose: work here, or run on whichever account they name.
+Warden: work in this session: main's week resets soonest of the accounts with room. If the user asks to delegate, Warden's pick is Second. The user can always choose: work here, or run on whichever account they name.
 Run a delegated command in the background and read its result when it finishes; a long run in the foreground is cut off.
 Anything you start that runs Claude or Codex for you (a review script, say) is delegated work too: run it with the same variables as that account's command above.
 Replace `<name>` with a few words saying what the run does, and `<task>` with the task.
@@ -368,7 +378,7 @@ Replace `<name>` with a few words saying what the run does, and `<task>` with th
 - Spare (skipped: signed out)
 ```
 
-Past the hand-off point the first line is "Warden: main is handing work off now, so run each task on <account> (Warden's pick); here, only talk to the user and check results. Whenever the user asks, work in this session instead, or run on the account they name."; with nothing to delegate to, "Warden: no other account can take delegated work now, so work in this session. If the user names an account, run it there." Parent ids come only from hook stdin: ASCII letters, digits, `-` and `_`, at most 128 characters; a missing or invalid id omits the variable.
+While main delegates the first line is "Warden: main is handing work off now (<why>), so run each task on <account> (Warden's pick: its week resets soonest of the accounts with room); here, only talk to the user and check results. Whenever the user asks, work in this session instead, or run on the account they name.", where <why> is "another account's week resets sooner than main's", "main keeps the rest of its week for the user", "main's 5-hour window is full" or "main's usage is unknown" (and the pick's, for an account without a weekly limit, "no account with a weekly limit has room, and it has none"). A suggested reset adds a second line: "Tell the user: Warden suggests using <account>'s <reset> on Warden's Overview, as it expires before <account>'s week resets. Once it is used, <account> takes the work; until then, work goes as above." With nothing to delegate to, "Warden: no other account can take delegated work now, so work in this session. If the user names an account, run it there." Parent ids come only from hook stdin: ASCII letters, digits, `-` and `_`, at most 128 characters; a missing or invalid id omits the variable.
 
 The guidance names the exact command for each account it sends work to, written for the shell the session's AI runs commands in, with the account's folder in single quotes and the CLI as found on PATH:
 

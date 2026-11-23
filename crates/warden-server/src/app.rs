@@ -357,9 +357,10 @@ pub struct DelegatedView {
 pub struct DelegationView {
     main_works_itself: bool,
     delegated: Option<DelegatedView>,
-    main_reason: String,
-    delegated_reason: String,
+    why: routing::Why,
     hand_off_at: u8,
+    order: Vec<routing::Ranked>,
+    suggested_reset: Option<routing::Suggested>,
 }
 impl From<routing::Decision> for DelegationView {
     fn from(d: routing::Decision) -> Self {
@@ -368,9 +369,10 @@ impl From<routing::Decision> for DelegationView {
             delegated: d.delegated.map(|t| DelegatedView {
                 account_id: t.account_id,
             }),
-            main_reason: d.main_reason,
-            delegated_reason: d.delegated_reason,
+            why: d.why,
             hand_off_at: d.hand_off_at,
+            order: d.order,
+            suggested_reset: d.suggested_reset,
         }
     }
 }

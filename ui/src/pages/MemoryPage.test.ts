@@ -202,6 +202,47 @@ describe('MemoryPage', () => {
     page.unmount();
   });
 
+  it('gives Codex accounts its three slate shades, the fourth the first again, kept when one is left out', async () => {
+    const codex = ['x1', 'x2', 'x3', 'x4'];
+    store.state = state([
+      account({ id: 'main', label: 'Main' }),
+      ...codex.map((id) => account({ id, label: id, provider: 'codex' })),
+    ]);
+    const all = ['main', ...codex];
+    server({
+      [TODAY]: day(
+        TODAY,
+        [
+          minute(
+            540,
+            all.map((_, i) => [i + 1, GIB] as [number, number]),
+          ),
+        ],
+        {
+          series: all.map((id, i) => ({
+            ...series(i + 1, 'session', id),
+            provider: id === 'main' ? 'claude' : 'codex',
+          })),
+        },
+      ),
+    });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    const swatch = (key: string) => page.get(`[data-band-row="${key}"] [role=cell] > span[aria-hidden]`).classes();
+    const expectShades = (ids: string[]) => {
+      for (const id of ids) {
+        const shade = { x1: 'codex-1', x2: 'codex-2', x3: 'codex-3', x4: 'codex-1' }[id];
+        expect(page.get(`[data-band="account:${id}"]`).classes()).toContain(`fill-chart-${shade}`);
+        expect(swatch(`account:${id}`)).toContain(`bg-chart-${shade}`);
+      }
+    };
+    expectShades(codex);
+    await page.get('[role=checkbox][aria-label="Show x1 in the chart"]').trigger('click');
+    expect(page.find('[data-band="account:x1"]').exists()).toBe(false);
+    expectShades(['x2', 'x3', 'x4']);
+    page.unmount();
+  });
+
   it('moves the guide with the keyboard, saying what it shows', async () => {
     server({ [TODAY]: busyDay(TODAY) });
     const page = mount(MemoryPage, { attachTo: document.body });

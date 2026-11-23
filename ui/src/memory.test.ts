@@ -334,6 +334,16 @@ describe('the chart', () => {
       { m: 700, x: 300, label: '11:40', anchor: 'end' },
     ]);
     expect(axis.ticks.map((t) => t.x)).toEqual([0, 300]);
+    // Ten minutes recorded: the small chart spans only them (the page's widens to an hour), its labels the real times.
+    const tenMinutes = { ...d, minutes: [minute(540, [[1, GIB]]), minute(549, [[1, GIB]])], gaps: [] };
+    expect(chartModel(tenMinutes, bands, both)!.to).toBe(600);
+    const short = chartModel(tenMinutes, bands, both, 2, 1)!;
+    expect([short.from, short.to]).toEqual([540, 550]);
+    expect(endAxis(short, 300).labels.map((l) => l.label)).toEqual(['09:00', '09:09']);
+    // One minute recorded: one label.
+    const one = chartModel({ ...d, minutes: [minute(540, [[1, GIB]])], gaps: [] }, bands, both, 2, 1)!;
+    expect([one.from, one.to]).toEqual([540, 541]);
+    expect(endAxis(one, 300).labels.map((l) => l.label)).toEqual(['09:00']);
   });
 
   it('labels the axis at a step giving four to eight labels, with ticks at half the step', () => {

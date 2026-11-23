@@ -404,12 +404,12 @@ export const PAGES: {
     viewport: { width: 1600, height: 900 },
   },
   {
-    // A narrow window: the card under the accounts and sessions.
+    // A narrow window: the card under the accounts and sessions (a tall one, so the screenshot shows it whole).
     name: 'overview-memory-narrow',
     path: '/',
     fixture: 'normal',
     ready: '[data-memory-card-chart] [data-band]',
-    viewport: { width: 800, height: 900 },
+    viewport: { width: 800, height: 1240 },
   },
   {
     // No AI session ran today: the line in the chart's place.
@@ -434,7 +434,7 @@ export const PAGES: {
     path: '/',
     fixture: 'resets',
     ready: '[data-memory-card-chart] [data-band]',
-    steps: [{ focus: '[data-memory-card-chart]' }],
+    steps: [{ focus: '[data-memory-card-chart]' }, { focused: '[data-memory-card-chart]:focus-visible' }],
     viewport: { width: 1600, height: 900 },
   },
   {

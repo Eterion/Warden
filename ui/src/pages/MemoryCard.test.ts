@@ -77,9 +77,9 @@ function today(extra: Partial<MemoryDay> = {}): MemoryDay {
   };
 }
 
-/** A stand-in server: today's day, the Overview's state, and today's waits from a queue (or held open). */
+/** A stand-in server: today's day, the Overview's state, and today's waits from a queue (or held open, their signals kept). */
 function server(day: MemoryDay, waits: MemoryWait[] = []) {
-  const asked: string[] = [];
+  const asked = Object.assign([] as string[], { held: [] as AbortSignal[] });
   vi.stubGlobal('fetch', (path: string, init: RequestInit = {}) => {
     asked.push(path);
     const ok = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
@@ -87,6 +87,7 @@ function server(day: MemoryDay, waits: MemoryWait[] = []) {
     if (!path.startsWith('/api/memory/today/wait')) return ok(store.state);
     const next = waits.shift();
     if (next) return ok(next);
+    if (init.signal) asked.held.push(init.signal);
     return new Promise((_resolve, reject) =>
       init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))),
     );
@@ -193,11 +194,19 @@ describe('MemoryCard', () => {
     expect(card.get('[data-card-figure="now"]').text()).toBe('4 GB now (13%)');
     expect(card.get('[data-card-figure="peak"]').text()).toBe('4 GB peak at 13:02');
     expect(card.findAll('[data-axis-label]').map((l) => l.text())).toEqual(['09:00', '13:02']);
+    // The wait under way is ended while the window is away, and none follows.
+    const wait = asked.held[asked.held.length - 1]!;
+    expect(wait.aborted).toBe(false);
     store.away = true;
     await nextTick();
+    expect(wait.aborted).toBe(true);
     const count = asked.length;
     await flushPromises();
     expect(asked.length).toBe(count);
+    // Back in sight, it reads today again and waits anew.
+    store.away = false;
+    await flushPromises();
+    expect(asked.length).toBeGreaterThan(count);
     card.unmount();
   });
 
@@ -221,7 +230,11 @@ describe('MemoryCard', () => {
     ]);
     const count = asked.length;
     expect(asked[count - 1]).toContain('/api/memory/today/wait');
+    const wait = asked.held[asked.held.length - 1]!;
+    expect(wait.aborted).toBe(false);
     page.unmount();
+    // Leaving ends the wait under way, and nothing asks again.
+    expect(wait.aborted).toBe(true);
     store.away = true;
     await flushPromises();
     store.away = false;

@@ -300,7 +300,7 @@ export const CHART: ChartSize = { height: 200, gutter: 52, axis: 24, top: 8, tic
 export const CHART_SMALL: ChartSize = { height: 84, gutter: 52, axis: 20, top: 6, tick: 4, line: 16 };
 
 export interface ChartModel {
-  /** The minutes across, from the day's first recording to its last (at least an hour): [from, to). */
+  /** The minutes across, from the day's first recording to its last (on the Memory page at least an hour): [from, to). */
   from: number;
   to: number;
   /** The recorded minutes, in order. */
@@ -316,15 +316,25 @@ export interface ChartModel {
 /** Gridline steps in GB: `lines` of the smallest that reaches the peak make the scale. */
 const STEPS = [0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100];
 
-export function chartModel(day: MemoryDay, bands: Band[], shown: Set<string>, lines: 2 | 3 = 3): ChartModel | null {
+/**
+ * The chart of a day: its span the recorded minutes, widened to `least` (an hour on the Memory page; the Overview's
+ * small chart spans only what was recorded, `least` 1), and `lines` gridlines.
+ */
+export function chartModel(
+  day: MemoryDay,
+  bands: Band[],
+  shown: Set<string>,
+  lines: 2 | 3 = 3,
+  least = 60,
+): ChartModel | null {
   const first = day.minutes[0];
   const last = day.minutes[day.minutes.length - 1];
   if (!first || !last) return null;
   let from = first.m;
   let to = last.m + 1;
-  if (to - from < 60) {
-    to = Math.min(1440, from + 60);
-    from = Math.max(0, to - 60);
+  if (to - from < least) {
+    to = Math.min(1440, from + least);
+    from = Math.max(0, to - least);
   }
   const visible = bands.filter((b) => shown.has(b.key));
   let peak = 0;
@@ -444,7 +454,8 @@ export function timeAxis(model: ChartModel, width: number): Axis {
 
 /**
  * The Overview's small chart's time axis, over a plot `width` wide: only its two ends, each ticked and labelled inside
- * the plot, the span's first minute at the left and its last at the right (today, the latest sample's).
+ * the plot, the first recorded minute at the left and the last at the right (today, the latest sample's); one label
+ * when only one minute was recorded.
  */
 export function endAxis(model: ChartModel, width: number): Axis {
   const last = model.to - 1;
@@ -452,7 +463,7 @@ export function endAxis(model: ChartModel, width: number): Axis {
     step: model.to - model.from,
     labels: [
       { m: model.from, x: 0, label: clock(model.from), anchor: 'start' },
-      { m: last, x: width, label: clock(last), anchor: 'end' },
+      ...(last > model.from ? [{ m: last, x: width, label: clock(last), anchor: 'end' as const }] : []),
     ],
     ticks: [
       { m: model.from, x: 0, major: true },

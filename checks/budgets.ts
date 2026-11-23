@@ -479,10 +479,10 @@ function closeWindow(pid: number): void {
 }
 
 /**
- * Opens the window's Memory page as a user would: its sidebar link, invoked through Windows UI Automation (the
- * WebView2's accessibility tree), then waits for the page's chart. No debugging port is opened.
+ * Runs `steps` (PowerShell) on the window's Windows UI Automation tree (the WebView2's accessibility tree: `$root`, `$T`
+ * for its descendants, `$named` for a name condition); they end by printing `done`. No debugging port is opened.
  */
-function openMemoryPage(pid: number): void {
+function inWindow(pid: number, steps: string[], done: string): void {
   const script = [
     'Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes',
     'Add-Type -Namespace W -Name U -MemberDefinition \'public delegate bool P(System.IntPtr h, System.IntPtr l); [DllImport("user32.dll")] public static extern bool EnumWindows(P f, System.IntPtr l); [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr h, out uint p); [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr h, System.Text.StringBuilder s, int n);\'',
@@ -492,17 +492,44 @@ function openMemoryPage(pid: number): void {
     '$A = [System.Windows.Automation.AutomationElement]; $T = [System.Windows.Automation.TreeScope]::Descendants',
     '$root = $A::FromHandle($script:win)',
     '$named = { param($n) New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $n) }',
-    '$link = $null; for ($i = 0; $i -lt 60 -and -not $link; $i++) { $link = $root.FindFirst($T, (New-Object System.Windows.Automation.AndCondition((& $named "Memory"), (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Hyperlink))))); if (-not $link) { Start-Sleep -Milliseconds 500 } }',
-    'if (-not $link) { throw "the sidebar link to the Memory page was not found" }',
-    '$link.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()',
-    '$chart = $null; for ($i = 0; $i -lt 60 -and -not $chart; $i++) { $chart = $root.FindFirst($T, (& $named "Memory over the day")); if (-not $chart) { Start-Sleep -Milliseconds 500 } }',
-    'if (-not $chart) { throw "the Memory page did not show its chart" }',
-    '"opened"',
+    ...steps,
   ].join('; ');
   const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
     encoding: 'utf8',
   }).trim();
-  if (!out.endsWith('opened')) throw new Error(`could not open the Memory page: ${out}`);
+  if (!out.endsWith(done)) throw new Error(`could not reach ${done}: ${out}`);
+}
+
+/**
+ * Waits for the Overview's Memory card to draw today: its chart, a link named by what it shows ("AI sessions' memory
+ * today: …").
+ */
+function waitForMemoryCard(pid: number): void {
+  inWindow(
+    pid,
+    [
+      `$card = $null; for ($i = 0; $i -lt 60 -and -not $card; $i++) { $card = $root.FindAll($T, (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Hyperlink))) | Where-Object { $_.Current.Name -like "AI sessions' memory today*" } | Select-Object -First 1; if (-not $card) { Start-Sleep -Milliseconds 500 } }`,
+      'if (-not $card) { throw "the Overview did not show its Memory card\'s chart" }',
+      '"the Memory card"',
+    ],
+    'the Memory card',
+  );
+}
+
+/** Opens the window's Memory page as a user would: its sidebar link, invoked; then waits for the page's chart. */
+function openMemoryPage(pid: number): void {
+  inWindow(
+    pid,
+    [
+      '$link = $null; for ($i = 0; $i -lt 60 -and -not $link; $i++) { $link = $root.FindFirst($T, (New-Object System.Windows.Automation.AndCondition((& $named "Memory"), (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Hyperlink))))); if (-not $link) { Start-Sleep -Milliseconds 500 } }',
+      'if (-not $link) { throw "the sidebar link to the Memory page was not found" }',
+      '$link.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()',
+      '$chart = $null; for ($i = 0; $i -lt 60 -and -not $chart; $i++) { $chart = $root.FindFirst($T, (& $named "Memory over the day")); if (-not $chart) { Start-Sleep -Milliseconds 500 } }',
+      'if (-not $chart) { throw "the Memory page did not show its chart" }',
+      '"the Memory page"',
+    ],
+    'the Memory page',
+  );
 }
 
 function alive(pid: number): boolean {
@@ -570,6 +597,7 @@ async function measureDesktop(): Promise<{ window: number; tray: number; trayCpu
     [],
     async (pid, log) => {
       await opened(pid, log);
+      waitForMemoryCard(pid);
       await sleep((WINDOW_LOAD_SECONDS + IDLE_SECONDS) * 1000);
       const overview = sample(pid, true).privateMB;
       openMemoryPage(pid);

@@ -27,7 +27,7 @@ const every = computed(() => new Set(bands.value.map((b) => b.key)));
 const figs = computed(() => (data.value ? figures(data.value, bands.value, every.value) : null));
 /** Some AI session ran today: the figures and the chart show, else the line saying none is running. */
 const ran = computed(() => !!figs.value && anyRan(figs.value.rows));
-const model = computed(() => (data.value ? chartModel(data.value, bands.value, every.value, 2) : null));
+const model = computed(() => (data.value ? chartModel(data.value, bands.value, every.value, 2, 1) : null));
 
 const box = useTemplateRef<HTMLElement>('box');
 const { width: boxWidth } = useElementSize(box);
@@ -51,7 +51,7 @@ const label = computed(
       <h2 id="memory-heading" class="text-16 font-semibold">
         <a
           href="#/memory"
-          class="group inline-flex items-center gap-0.5 rounded-xs underline-offset-2 outline-none hov:underline press:text-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator"
+          class="group inline-flex items-center gap-0.5 rounded-xs underline-offset-2 hov:underline press:text-secondary focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-indicator"
           >Memory<ChevronRight
             aria-hidden="true"
             class="size-4 text-icon group-hov:text-icon-hover group-press:text-text"
@@ -94,7 +94,7 @@ const label = computed(
       v-else
       ref="box"
       href="#/memory"
-      class="-mx-2 block rounded-lg p-2 outline-none hov:bg-row-hover press:bg-row-press focus-visible:outline-2 focus-visible:outline-indicator"
+      class="-mx-2 block rounded-lg p-2 hov:bg-row-hover press:bg-row-press focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-indicator"
       data-memory-card-chart
     >
       <!-- Its name, what it shows, in words; the drawing itself is hidden from screen readers. -->

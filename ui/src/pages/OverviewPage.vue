@@ -777,11 +777,11 @@ function sessionAccount(s: Session): Account | undefined {
           <WListItem v-for="r in resets" :key="r.key" :data-reset-key="r.key">
             <AccountIcon :account="r.account" />
             <span class="flex min-w-0 flex-1 flex-col">
-              <span class="flex min-w-0 items-center gap-1.5">
-                <span class="truncate font-semibold">{{ r.account.label }}</span>
+              <span class="truncate font-semibold">{{ r.account.label }}</span>
+              <span class="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                <span class="text-12 text-secondary">{{ r.title }}</span>
                 <WTag v-if="r.key === suggestedKey" data-suggested>Warden's suggestion</WTag>
               </span>
-              <span class="text-12 text-secondary">{{ r.title }}</span>
               <span v-if="r.soon" class="flex items-center gap-1 text-12 font-medium text-attn" data-expires-soon>
                 <Hourglass aria-hidden="true" class="size-3.5 shrink-0 text-attn-icon" />
                 {{ expiryText(r.expiresAt, store.now, warnDays) }}

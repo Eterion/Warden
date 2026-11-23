@@ -28,7 +28,24 @@ const IDLE_SECONDS = 5;
  * a whole tick: over 5 s one tick is 0.31% of a core and two are 0.62%, over budget. Over 20 s a tick is 0.08%.
  */
 const IDLE_CPU_SECONDS = 20;
-const ROUTE_RUNS = 21;
+const ROUTE_RUNS = 41;
+/**
+ * The pause after each round of `warden route` runs, so the rounds spread over about 12 s. Windows Defender looks at
+ * every program Windows starts, and while it falls behind (a build or another check writing many new files can keep
+ * it busy for seconds) any program, `warden route` or Windows' own hostname.exe alike, takes 20 to 70 ms to start
+ * instead of 7 to 9. Back to back, 21 runs took 0.15 s, so one such burst could hold the whole median; spread out, a
+ * burst of a few seconds holds a few runs, and the median is Warden's own time.
+ */
+const ROUTE_PAUSE_MS = 250;
+/**
+ * A busier computer (another check's build) can slow every program start for minutes, longer than the rounds last. A
+ * route run is mostly a program start: hostname.exe, which does next to nothing, takes about as long. So when the route
+ * times are over budget while hostname.exe's median in the same rounds is over half the budget, the computer was
+ * slowing every program, and the rounds are measured again after ROUTE_SETTLE_SECONDS, up to ROUTE_ATTEMPTS times
+ * (about 5 minutes). Over budget while hostname.exe is quick fails at once, and so does a computer that never settles.
+ */
+const ROUTE_ATTEMPTS = 8;
+const ROUTE_SETTLE_SECONDS = 30;
 const HOOK_RUNS = 21;
 /** The core's session cap (warden_core::sessions::MAX_SESSIONS). */
 const SESSIONS = 200;
@@ -142,8 +159,7 @@ function measureHook(data: string, running: boolean): number {
     if (r.status !== 0 || r.stdout.length > 0)
       throw new Error(`warden event exited with ${r.status} while Warden was ${running ? 'running' : 'stopped'}`);
   }
-  times.sort((a, b) => a - b);
-  return times[Math.floor(times.length / 2)] ?? NaN;
+  return median(times);
 }
 
 /**
@@ -642,14 +658,21 @@ async function measureDesktop(): Promise<{ window: number; tray: number; trayCpu
   return { window, tray, trayCpu };
 }
 
+/** The middle value (the upper one of an even count). */
+function median(values: number[]): number {
+  return [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? NaN;
+}
+
+interface RouteFixture {
+  data: string;
+  env: NodeJS.ProcessEnv;
+}
+
 /**
- * Median time of `warden route` as the hook runs it: the hook's JSON on stdin, three fixture accounts (no logins, so
- * nothing is ever requested) and fresh readings. `silent`: the same session each time, so after the first run it
- * prints nothing (every message while nothing changes). Otherwise a new session each time, so it prints the guidance
- * (a session's first message, or a change).
+ * A throwaway data and home folder for `warden route`: three fixture accounts (no logins, so nothing is ever
+ * requested) and fresh readings.
  */
-function measureRoute(silent: boolean): number {
-  const exe = join(RELEASE, 'warden.exe');
+function routeFixture(): RouteFixture {
   const data = tempDataDir('route');
   try {
     const now = Date.now();
@@ -695,32 +718,96 @@ function measureRoute(silent: boolean): number {
     const env: NodeJS.ProcessEnv = { ...process.env, USERPROFILE: home, HOME: home };
     delete env.CLAUDE_CONFIG_DIR;
     delete env.CODEX_HOME;
-    const times: number[] = [];
-    for (let i = 0; i <= ROUTE_RUNS; i++) {
-      const input = JSON.stringify({
-        session_id: silent ? 'budget' : `budget-${i}`,
-        hook_event_name: 'UserPromptSubmit',
-        prompt: 'hi',
-      });
-      const start = performance.now();
-      const r = spawnSync(exe, ['route', '--account', 'main', '--data-dir', data], { input, encoding: 'utf8', env });
-      const took = performance.now() - start;
-      if (r.status !== 0) throw new Error(`warden route exited with ${r.status}`);
-      const printed = r.stdout.length > 0;
-      if (i === 0) {
-        if (!printed) throw new Error('warden route printed nothing for a new session');
-        continue; // the first run warms the file cache and tells the session
-      }
-      if (printed === silent)
-        throw new Error(
-          `warden route ${silent ? 'printed while nothing changed' : 'printed nothing for a new session'}`,
-        );
-      times.push(took);
-    }
-    times.sort((a, b) => a - b);
-    return times[Math.floor(times.length / 2)] ?? NaN;
-  } finally {
+    return { data, env };
+  } catch (e) {
     rmSync(data, { recursive: true, force: true });
+    throw e;
+  }
+}
+
+/** One `warden route` run as the hook runs it, the hook's JSON on stdin: how long it took and whether it printed. */
+function runRoute(fixture: RouteFixture, session: string): { took: number; printed: boolean } {
+  const input = JSON.stringify({ session_id: session, hook_event_name: 'UserPromptSubmit', prompt: 'hi' });
+  const args = ['route', '--account', 'main', '--data-dir', fixture.data];
+  const start = performance.now();
+  const r = spawnSync(join(RELEASE, 'warden.exe'), args, { input, encoding: 'utf8', env: fixture.env });
+  const took = performance.now() - start;
+  if (r.error) throw r.error;
+  if (r.status !== 0) throw new Error(`warden route exited with ${r.status}`);
+  return { took, printed: r.stdout.length > 0 };
+}
+
+/** How long Windows takes to start one of its own programs right now: hostname.exe, which only prints a name. */
+function controlRun(): number {
+  const systemRoot = process.env.SystemRoot;
+  if (!systemRoot) throw new Error('SystemRoot is not set, so hostname.exe cannot be found');
+  const start = performance.now();
+  const r = spawnSync(join(systemRoot, 'System32', 'hostname.exe'), [], { stdio: 'ignore' });
+  const took = performance.now() - start;
+  if (r.error) throw r.error;
+  if (r.status !== 0) throw new Error(`hostname.exe exited with ${r.status}`);
+  return took;
+}
+
+interface RouteTimes {
+  silent: number;
+  print: number;
+  control: number;
+  seconds: number;
+  attempts: number;
+}
+
+/**
+ * Median times of `warden route`, in ROUTE_RUNS rounds spread over time (ROUTE_PAUSE_MS), each round one run of each
+ * kind: `silent` the same session each time, so after its first run it prints nothing (every message while nothing
+ * changes); `print` a new session each time, so it prints the guidance (a session's first message, or a change). Each
+ * kind has its own fixture. `control` is hostname.exe started in the same rounds, with no budget of its own: it shows
+ * whether the computer was slowing every program start (ROUTE_ATTEMPTS). `budget` holds each kind's budget.
+ */
+async function measureRoute(budget: { silent: number; print: number }): Promise<RouteTimes> {
+  const fixtures: RouteFixture[] = [];
+  try {
+    const silentFixture = routeFixture();
+    fixtures.push(silentFixture);
+    const printFixture = routeFixture();
+    fixtures.push(printFixture);
+    // The first run of each warms the file cache and tells the session; it is not timed.
+    if (!runRoute(silentFixture, 'budget').printed || !runRoute(printFixture, 'budget-0').printed)
+      throw new Error('warden route printed nothing for a new session');
+    let session = 0;
+    const rounds = async (attempts: number): Promise<RouteTimes> => {
+      const silent: number[] = [];
+      const print: number[] = [];
+      const control: number[] = [];
+      const start = performance.now();
+      for (let i = 0; i < ROUTE_RUNS; i++) {
+        const quiet = runRoute(silentFixture, 'budget');
+        if (quiet.printed) throw new Error('warden route printed while nothing changed');
+        silent.push(quiet.took);
+        const guided = runRoute(printFixture, `budget-${++session}`);
+        if (!guided.printed) throw new Error('warden route printed nothing for a new session');
+        print.push(guided.took);
+        control.push(controlRun());
+        await sleep(ROUTE_PAUSE_MS);
+      }
+      const seconds = (performance.now() - start) / 1000;
+      return { silent: median(silent), print: median(print), control: median(control), seconds, attempts };
+    };
+    for (let attempt = 1; ; attempt++) {
+      const times = await rounds(attempt);
+      const over = times.silent > budget.silent || times.print > budget.print;
+      const busy = times.control > Math.min(budget.silent, budget.print) / 2;
+      const said = `route: ${times.silent.toFixed(2)} and ${times.print.toFixed(2)} ms while hostname.exe took ${times.control.toFixed(2)} ms`;
+      if (!over || !busy) return times;
+      if (attempt === ROUTE_ATTEMPTS) {
+        console.log(`${said}: the computer still slows every program start after ${ROUTE_ATTEMPTS} attempts`);
+        return times;
+      }
+      console.log(`${said}: the computer slows every program start; measuring again in ${ROUTE_SETTLE_SECONDS} s`);
+      await sleep(ROUTE_SETTLE_SECONDS * 1000);
+    }
+  } finally {
+    for (const fixture of fixtures) rmSync(fixture.data, { recursive: true, force: true });
   }
 }
 
@@ -765,14 +852,22 @@ async function main(): Promise<void> {
   const perSample = await measureSampling(1000);
   const sampling = await measureSampling(10_000);
   const desktop = await measureDesktop();
+  // A placeholder budget (null) never fails, so it never needs measuring again.
+  const route = await measureRoute({
+    silent: budgets.routeHookMs?.budget ?? Infinity,
+    print: budgets.routeHookPrintMs?.budget ?? Infinity,
+  });
+  console.log(
+    `route: ${ROUTE_RUNS} runs of each over ${route.seconds.toFixed(0)} s (attempt ${route.attempts}); Windows' hostname.exe started in ${route.control.toFixed(2)} ms (median) in the same rounds`,
+  );
   const measured: Record<string, Measured> = {
     coreIdleMemoryMB: core.memory,
     coreIdleCpuPercent: core.cpu,
     windowMemoryMB: desktop.window,
     desktopTrayMemoryMB: desktop.tray,
     desktopTrayCpuPercent: desktop.trayCpu,
-    routeHookMs: measureRoute(true),
-    routeHookPrintMs: measureRoute(false),
+    routeHookMs: route.silent,
+    routeHookPrintMs: route.print,
     statusHookMs: core.hook,
     statusHookDownMs: core.hookDown,
     statusEventCpuMs: events,

@@ -867,6 +867,15 @@ impl Recorder {
         day
     }
 
+    /// The minute being gathered on `date`, if any: after the clock goes back an hour it can come before minutes
+    /// already recorded.
+    pub fn gathering_minute(&self, date: &str) -> Option<u16> {
+        self.gathering
+            .as_ref()
+            .filter(|g| g.date == date)
+            .map(|g| g.m)
+    }
+
     /// Whether anything was recorded on `date` so far (today's).
     pub fn has(&self, date: &str) -> bool {
         self.today
@@ -1530,7 +1539,14 @@ mod tests {
             r.record_in(&reading(two + minute * 60_000, vec![]), 0)
                 .expect("record");
         }
-        // The clock goes back an hour: the same local minutes, an hour later in UTC.
+        let (date, _) = local_minute(two, 0);
+        assert_eq!(r.gathering_minute(&date), Some(2 * 60 + 59));
+        // The clock goes back an hour: the same local minutes, an hour later in UTC; the minute being gathered comes
+        // before minutes already recorded.
+        r.record_in(&reading(two + 60 * 60_000, vec![]), -3600)
+            .expect("record");
+        assert_eq!(r.gathering_minute(&date), Some(2 * 60));
+        assert_eq!(r.gathering_minute("1999-01-01"), None);
         for minute in 0..61 {
             r.record_in(
                 &reading(two + (60 + minute) * 60_000, vec![(info("b"), MIB)]),

@@ -8,7 +8,8 @@ import { useTemplateRef } from 'vue';
 import { usePortalTarget } from './portal';
 
 defineOptions({ inheritAttrs: false });
-const props = defineProps<{ text: string; asChild?: boolean }>();
+/** `disabled`: nothing shows (its trigger stays as it is, so a control that only sometimes explains itself keeps its focus). */
+const props = defineProps<{ text: string; asChild?: boolean; disabled?: boolean }>();
 
 const trigger = useTemplateRef<{ $el: Node | null }>('trigger');
 const to = usePortalTarget(trigger);
@@ -16,7 +17,7 @@ const to = usePortalTarget(trigger);
 
 <template>
   <TooltipProvider :delay-duration="300">
-    <TooltipRoot>
+    <TooltipRoot :disabled="props.disabled">
       <TooltipTrigger v-if="props.asChild" ref="trigger" v-bind="$attrs" as-child>
         <slot />
       </TooltipTrigger>

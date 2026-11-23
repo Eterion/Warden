@@ -2,7 +2,8 @@
 // A button with text. Primary comes first in a group; outline is the everyday one (sm: small, on a list row); quiet
 // sits among chips (md) or, small as the legends' text (sm), on the window background or, `on="panel"`, on the
 // content panel (the Limit resets filter), lighting with the panel's hover; link is underlined text. An icon, when
-// given, comes before the text; busy sets aria-busy and turns the icon slowly.
+// given, comes before the text; busy sets aria-busy and turns the icon slowly. One that cannot be used says why
+// (`disabledReason`); one usable only sometimes passes `null` while it is, so it stays the same element and keeps focus.
 import type { Component } from 'vue';
 import { vSyncSpin } from './spin';
 import WTooltip from './WTooltip.vue';
@@ -17,7 +18,7 @@ const props = withDefaults(
     icon?: Component;
     busy?: boolean;
     type?: 'button' | 'submit';
-    disabledReason?: string;
+    disabledReason?: string | null;
     /** What a small quiet button sits on: the window background (default) or the content panel. */
     on?: 'win' | 'panel';
   }>(),
@@ -61,9 +62,21 @@ function iconClass(): string {
 </script>
 
 <template>
-  <WTooltip v-if="props.disabledReason" :text="props.disabledReason" as-child>
-    <button v-bind="$attrs" type="button" aria-disabled="true" :class="[BASE, look(), 'cursor-not-allowed']">
-      <span class="inline-flex items-center gap-1.5 opacity-40">
+  <!-- One element whether or not it can be used now (`null`: it can), so focus stays on it as that changes. -->
+  <WTooltip
+    v-if="props.disabledReason !== undefined"
+    :text="props.disabledReason ?? ''"
+    :disabled="!props.disabledReason"
+    as-child
+  >
+    <button
+      v-bind="$attrs"
+      :type="props.disabledReason ? 'button' : props.type"
+      :aria-disabled="props.disabledReason ? 'true' : undefined"
+      :class="[BASE, look(), props.disabledReason && 'cursor-not-allowed']"
+      @click="!props.disabledReason && emit('click', $event)"
+    >
+      <span :class="['inline-flex items-center gap-1.5', props.disabledReason && 'opacity-40']">
         <component :is="props.icon" v-if="props.icon" :class="iconClass()" aria-hidden="true" />
         <slot />
       </span>

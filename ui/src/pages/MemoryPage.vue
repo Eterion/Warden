@@ -7,13 +7,14 @@
 // hovering a row darkening its band. Today's page follows each new sample through its own long poll, paused while the
 // window is hidden; a past day is read once.
 import { Check, ChevronLeft, ChevronRight } from 'lucide-vue-next';
-import { computed, ref, shallowRef, watch } from 'vue';
+import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue';
 import { ApiError, api, type MemoryDay } from '../api';
 import AccountIcon from '../components/AccountIcon.vue';
 import WButton from '../components/WButton.vue';
 import WIconButton from '../components/WIconButton.vue';
 import WTable from '../components/WTable.vue';
 import WTableRow from '../components/WTableRow.vue';
+import WTooltip from '../components/WTooltip.vue';
 import {
   anyRan,
   bandsOf,
@@ -50,7 +51,17 @@ const data = shallowRef<MemoryDay | null>(null);
 const error = ref<string | null>(null);
 let controller: AbortController | null = null;
 const RETRY_MS = 5000;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Waits before trying again; leaving the page or the day ends the wait at once. */
+const sleep = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+/** The days with recordings, kept while another day loads so Previous and Next stay as they were. */
+const days = ref<string[]>([]);
 
 /** Reads the day shown, then (today, while the window is in sight) follows each new sample. */
 async function read(): Promise<void> {
@@ -62,14 +73,17 @@ async function read(): Promise<void> {
   if (data.value?.date !== d) data.value = null;
   while (!mine.signal.aborted) {
     try {
-      data.value = await api.memoryDay(d, mine.signal);
+      const answer = await api.memoryDay(d, mine.signal);
+      if (mine.signal.aborted) return;
+      data.value = answer;
+      days.value = answer.days;
       error.value = null;
       break;
     } catch (e) {
       if (mine.signal.aborted) return;
       error.value = e instanceof ApiError ? e.message : 'Warden could not be reached.';
       if (e instanceof ApiError) return;
-      await sleep(RETRY_MS);
+      await sleep(RETRY_MS, mine.signal);
     }
   }
   if (d !== today.value) return;
@@ -88,11 +102,12 @@ async function read(): Promise<void> {
         return;
       }
       data.value = held && held.date === d ? mergeToday(held, later) : later;
+      days.value = later.days;
       error.value = null;
     } catch (e) {
       if (mine.signal.aborted) return;
       if (!(e instanceof ApiError)) error.value = 'Warden could not be reached.';
-      await sleep(RETRY_MS);
+      await sleep(RETRY_MS, mine.signal);
     }
   }
 }
@@ -105,6 +120,8 @@ watch(
   },
   { immediate: true },
 );
+// Leaving the page ends its requests and waits.
+onScopeDispose(() => controller?.abort());
 
 // ---- What is shown ----
 
@@ -118,11 +135,19 @@ const shown = computed(() => new Set(bands.value.filter((b) => !hidden.value.inc
 const figs = computed(() => (data.value ? figures(data.value, bands.value, shown.value) : null));
 const ran = computed(() => new Set((figs.value?.rows ?? []).filter((r) => r.peak > 0).map((r) => r.band.key)));
 const model = computed(() => (data.value ? chartModel(data.value, bands.value, shown.value) : null));
-const steps = computed(() => stepDays(data.value?.days ?? [], day.value, today.value));
+const steps = computed(() => stepDays(days.value, day.value, today.value));
 const nothing = computed(() => !!data.value && data.value.minutes.length === 0 && !isToday.value);
+/** Today, nothing ran all day: the message takes the chart's and the table's place. */
 const noSessions = computed(() => !!data.value && isToday.value && !anyRan(figs.value?.rows ?? []));
+/** Today, nothing runs now (some did earlier): the message shows above the day's chart. */
+const noneNow = computed(
+  () => !!data.value && isToday.value && !noSessions.value && (figs.value?.rows ?? []).every((r) => !r.now),
+);
 const total = computed(() => data.value?.summary.computerTotal ?? null);
 const hovered = ref<string | null>(null);
+/** Why a share can read a little high. */
+const SHARE_NOTE =
+  'Shares count private memory, part of which Windows can page out to disk, so a share can read a little high when memory is short.';
 const SWATCH = ['', 'bg-chart-1', 'bg-chart-2', 'bg-chart-3', 'bg-chart-4', 'bg-chart-5'];
 
 function toggle(key: string): void {
@@ -138,17 +163,17 @@ function toggle(key: string): void {
         <WIconButton
           label="Previous day"
           :icon="ChevronLeft"
-          :disabled-reason="steps.prev ? undefined : 'No earlier day was recorded.'"
+          :disabled-reason="steps.prev ? null : 'No earlier day was recorded.'"
           @click="steps.prev && show(steps.prev)"
         />
         <h2 class="min-w-52 text-center text-16 font-semibold" data-day>{{ title }}</h2>
         <WIconButton
           label="Next day"
           :icon="ChevronRight"
-          :disabled-reason="steps.next ? undefined : 'This is today: there is no later day.'"
+          :disabled-reason="steps.next ? null : 'This is today: there is no later day.'"
           @click="steps.next && show(steps.next)"
         />
-        <WButton variant="quiet" :disabled-reason="isToday ? 'This is today.' : undefined" @click="show(today)"
+        <WButton variant="quiet" :disabled-reason="isToday ? 'This is today.' : null" @click="show(today)"
           >Today</WButton
         >
       </div>
@@ -171,7 +196,12 @@ function toggle(key: string): void {
         <div v-if="isToday" class="flex flex-col">
           <dt class="text-12 text-secondary">Now</dt>
           <dd class="text-16 font-semibold tabular-nums">{{ size(figs.now ?? 0) }}</dd>
-          <dd v-if="total" class="text-12 text-secondary tabular-nums">{{ figs.nowShare }} of {{ size(total) }}</dd>
+          <dd v-if="total" class="text-12 text-secondary tabular-nums">
+            <!-- Said once, where the share first shows. -->
+            <WTooltip :text="SHARE_NOTE" class="text-left" data-share-note
+              >{{ figs.nowShare }} of {{ size(total) }}</WTooltip
+            >
+          </dd>
         </div>
         <div class="flex flex-col">
           <dt class="text-12 text-secondary">Peak</dt>
@@ -203,6 +233,7 @@ function toggle(key: string): void {
         No AI sessions are running.
       </div>
       <template v-else>
+        <p v-if="noneNow" class="text-14 text-tertiary" data-memory-none-now>No AI sessions are running.</p>
         <section aria-label="Memory over the day" class="rounded-lg border border-divider-strong px-4 pt-4 pb-2">
           <MemoryChart v-if="model" :model="model" :ran="ran" :hovered="hovered" :day="day" />
         </section>

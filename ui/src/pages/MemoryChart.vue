@@ -4,11 +4,10 @@
 // darkest), each divided from the next by a thin line in the panel's colour, and the minutes Warden was not running as
 // an empty band. A guide follows the pointer with a tooltip of the shown bands and their total at that minute; the chart
 // is a slider for the keyboard (the arrow keys move the guide a minute, Page Up and Page Down an hour, Home and End to
-// the ends), its value the same words, so it works without a mouse. The table under it is its accessible equivalent.
+// the first and last recording), its value the same words, so it works without a mouse; Escape hides the tooltip. The table under it is its accessible equivalent.
 import { useElementSize } from '@vueuse/core';
 import { computed, ref, useTemplateRef, watch } from 'vue';
-import type { MemoryMinute } from '../api';
-import { CHART, bandPaths, guideAt, guideText, hourTicks, size, type ChartModel } from '../memory';
+import { CHART, MISSING_TEXT, bandPaths, guideAt, guideText, hourTicks, size, type ChartModel } from '../memory';
 
 const props = defineProps<{
   model: ChartModel;
@@ -35,43 +34,33 @@ const gaps = computed(() =>
   props.model.gaps.map((g) => ({ ...g, x: x(g.from), w: x(g.to) - x(g.from) })).filter((g) => g.w > 0),
 );
 
-/** The guide's minute: an index into the recorded minutes, or a minute in a gap (from the pointer only). */
-const at = ref<{ index: number } | { gap: number } | null>(null);
+/** The guide's minute, any minute of the span: in a gap the guide says Warden was not running. */
+const at = ref<number | null>(null);
 const focused = ref(false);
+/** Escape hides the tooltip (the guide stays) until the guide moves again. */
+const dismissed = ref(false);
 watch(
   () => props.day,
   () => (at.value = null),
 );
+watch(at, () => (dismissed.value = false));
 
-const minute = computed<MemoryMinute | null>(() =>
-  at.value && 'index' in at.value ? (props.model.minutes[at.value.index] ?? null) : null,
-);
-const guideMinute = computed(() =>
-  minute.value ? minute.value.m : at.value && 'gap' in at.value ? at.value.gap : null,
-);
-const guide = computed(() => (minute.value ? guideAt(props.model, minute.value, props.ran) : null));
-const valueText = computed(() =>
-  guide.value ? guideText(guide.value) : guideMinute.value !== null ? 'Warden not running' : 'No minute chosen',
-);
+const first = computed(() => props.model.minutes[0]?.m ?? props.model.from);
+const last = computed(() => props.model.minutes[props.model.minutes.length - 1]?.m ?? props.model.to - 1);
+const guide = computed(() => (at.value === null ? null : guideAt(props.model, at.value, props.ran)));
+const valueText = computed(() => (guide.value ? guideText(guide.value) : 'No minute chosen'));
 /** The guide's place, and which side of it the tooltip opens on so it stays inside the chart. */
-const guideX = computed(() => (guideMinute.value === null ? null : x(guideMinute.value + 0.5)));
+const guideX = computed(() => (at.value === null ? null : x(at.value + 0.5)));
 const tipLeft = computed(() => guideX.value !== null && guideX.value < CHART.gutter + width.value / 2);
 
-function nearest(m: number): number {
-  const list = props.model.minutes;
-  let best = 0;
-  for (let i = 0; i < list.length; i++) if (Math.abs(list[i]!.m - m) < Math.abs(list[best]!.m - m)) best = i;
-  return best;
-}
+const clamp = (m: number) => Math.max(props.model.from, Math.min(props.model.to - 1, m));
 
 function onPointer(e: PointerEvent): void {
   const rect = box.value?.getBoundingClientRect();
   if (!rect || width.value <= 0) return;
   const px = e.clientX - rect.left - CHART.gutter;
   if (px < 0 || px > width.value) return;
-  const m = Math.min(props.model.to - 1, Math.floor(props.model.from + (px / width.value) * span.value));
-  const gap = props.model.gaps.find((g) => m >= g.from && m < g.to);
-  at.value = gap ? { gap: m } : { index: nearest(m) };
+  at.value = clamp(Math.floor(props.model.from + (px / width.value) * span.value));
 }
 
 function onLeave(): void {
@@ -80,7 +69,7 @@ function onLeave(): void {
 
 function onFocus(): void {
   focused.value = true;
-  if (!at.value) at.value = { index: props.model.minutes.length - 1 };
+  if (at.value === null) at.value = last.value;
 }
 
 function onBlur(): void {
@@ -89,23 +78,28 @@ function onBlur(): void {
 }
 
 function onKey(e: KeyboardEvent): void {
-  const list = props.model.minutes;
-  const current = at.value && 'index' in at.value ? at.value.index : at.value ? nearest(at.value.gap) : list.length - 1;
-  const by = (minutes: number) => nearest((list[current]?.m ?? 0) + minutes);
+  if (e.key === 'Escape') {
+    if (at.value !== null && !dismissed.value) {
+      dismissed.value = true;
+      e.preventDefault();
+    }
+    return;
+  }
+  const current = at.value ?? last.value;
   const next: Record<string, () => number> = {
-    ArrowLeft: () => Math.max(0, current - 1),
-    ArrowDown: () => Math.max(0, current - 1),
-    ArrowRight: () => Math.min(list.length - 1, current + 1),
-    ArrowUp: () => Math.min(list.length - 1, current + 1),
-    PageUp: () => by(60),
-    PageDown: () => by(-60),
-    Home: () => 0,
-    End: () => list.length - 1,
+    ArrowLeft: () => current - 1,
+    ArrowDown: () => current - 1,
+    ArrowRight: () => current + 1,
+    ArrowUp: () => current + 1,
+    PageUp: () => current + 60,
+    PageDown: () => current - 60,
+    Home: () => first.value,
+    End: () => last.value,
   };
   const go = next[e.key];
   if (!go) return;
   e.preventDefault();
-  at.value = { index: go() };
+  at.value = clamp(go());
 }
 </script>
 
@@ -118,7 +112,7 @@ function onKey(e: KeyboardEvent): void {
     aria-orientation="horizontal"
     :aria-valuemin="props.model.from"
     :aria-valuemax="props.model.to - 1"
-    :aria-valuenow="guideMinute ?? props.model.minutes[props.model.minutes.length - 1]?.m"
+    :aria-valuenow="at ?? last"
     :aria-valuetext="valueText"
     class="relative rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-indicator"
     data-memory-chart
@@ -199,20 +193,14 @@ function onKey(e: KeyboardEvent): void {
       >
         {{ t.label }}
       </text>
-      <!-- The guide. -->
-      <line
-        v-if="guideX !== null"
-        :x1="guideX"
-        :x2="guideX"
-        :y1="CHART.top"
-        :y2="CHART.height"
-        class="stroke-text"
-        stroke-width="1"
-        data-guide
-      />
+      <!-- The guide: a line in the text colour on a wider one in the panel's, so it stands out on every band. -->
+      <g v-if="guideX !== null" data-guide>
+        <line :x1="guideX" :x2="guideX" :y1="CHART.top" :y2="CHART.height" class="stroke-panel" stroke-width="3" />
+        <line :x1="guideX" :x2="guideX" :y1="CHART.top" :y2="CHART.height" class="stroke-text" stroke-width="1" />
+      </g>
     </svg>
     <div
-      v-if="guideX !== null"
+      v-if="guide && guideX !== null && !dismissed"
       aria-hidden="true"
       :class="[
         'pointer-events-none absolute top-0 z-10 min-w-40 rounded-md bg-primary px-2.5 py-1.5 text-12 text-on-primary shadow-modal',
@@ -221,8 +209,9 @@ function onKey(e: KeyboardEvent): void {
       :style="{ left: `${guideX}px` }"
       data-guide-tip
     >
-      <template v-if="guide">
-        <p class="font-semibold">{{ guide.time }}</p>
+      <p class="font-semibold">{{ guide.time }}</p>
+      <p v-if="guide.missing">{{ MISSING_TEXT[guide.missing] }}</p>
+      <template v-else>
         <p v-for="r in guide.rows" :key="r.key" class="flex justify-between gap-4">
           <span class="truncate">{{ r.label }}</span
           ><span class="tabular-nums">{{ size(r.kib) }}</span>
@@ -231,7 +220,6 @@ function onKey(e: KeyboardEvent): void {
           <span>Total</span><span class="tabular-nums">{{ size(guide.total) }}</span>
         </p>
       </template>
-      <p v-else>Warden not running</p>
     </div>
   </div>
 </template>

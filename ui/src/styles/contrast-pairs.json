@@ -1366,5 +1366,11 @@
     "bg": ["panel", "chart-gap"],
     "min": 3,
     "use": "the Memory chart's guide line across the empty band"
+  },
+  {
+    "fg": "text",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "the Memory chart's guide line, on its halo in the panel's colour, wherever it crosses the bands"
   }
 ]

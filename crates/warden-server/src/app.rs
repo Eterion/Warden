@@ -1503,8 +1503,9 @@ impl App {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Today's memory from minute `after` on, once a sample newer than `since` has landed (at once without `since`),
-    /// or after `timeout` either way (a long poll: the Memory page asks again). The figures are the whole day's.
+    /// Today's memory from minute `after` on (and the minute being gathered), once a sample newer than `since` has
+    /// landed (at once without `since`), or after `timeout` either way (a long poll: the Memory page asks again). The
+    /// figures are the whole day's.
     pub fn memory_today_after(
         &self,
         since: Option<u64>,
@@ -1528,7 +1529,10 @@ impl App {
         let mut day = self
             .memory_day(Some(&today))
             .unwrap_or_else(|_| MemoryDay::new(&today, true, Vec::new(), memory::Day::default()));
-        day.minutes.retain(|m| u64::from(m.m) >= after);
+        // The minute being gathered always comes too: after the clock goes back an hour it can be an earlier one.
+        let gathering = self.memory_lock().gathering_minute(&today);
+        day.minutes
+            .retain(|m| u64::from(m.m) >= after || Some(m.m) == gathering);
         MemoryWait { sample, day }
     }
 

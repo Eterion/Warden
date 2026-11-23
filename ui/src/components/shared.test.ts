@@ -177,6 +177,30 @@ describe('WIconButton', () => {
   });
 });
 
+describe('a button usable only sometimes', () => {
+  it('stays the same element as its reason comes and goes, and a click while it has one does nothing', async () => {
+    let clicks = 0;
+    const button = mount(WButton, {
+      props: { disabledReason: null, onClick: () => clicks++ },
+      slots: { default: 'Today' },
+    });
+    const el = button.get('button').element;
+    await button.get('button').trigger('click');
+    expect(clicks).toBe(1);
+    expect(button.get('button').attributes('aria-disabled')).toBeUndefined();
+    await button.setProps({ disabledReason: 'This is today.' });
+    expect(button.get('button').element).toBe(el);
+    expect(button.get('button').attributes('aria-disabled')).toBe('true');
+    await button.get('button').trigger('click');
+    expect(clicks).toBe(1);
+    const icon = mount(WIconButton, { props: { label: 'Next day', icon: Folder, disabledReason: null } });
+    const iconEl = icon.get('button').element;
+    await icon.setProps({ disabledReason: 'This is today.' });
+    expect(icon.get('button').element).toBe(iconEl);
+    expect(icon.get('button').attributes('aria-disabled')).toBe('true');
+  });
+});
+
 describe('NavItem', () => {
   it('is a link with href and a button without, marked aria-current only when current', () => {
     const link = mount(NavItem, {

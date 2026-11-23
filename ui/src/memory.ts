@@ -184,13 +184,18 @@ export function figures(day: MemoryDay, bands: Band[], shown: Set<string>): Figu
   const visible = bands.filter((b) => shown.has(b.key));
   let peak: number | null = null;
   let peakAt: number | null = null;
-  for (const m of day.minutes) {
-    const total = visible.reduce((sum, b) => sum + bandAt(b, m), 0);
-    if (peak === null || total > peak) {
-      peak = total;
-      peakAt = m.m;
+  if (visible.length === bands.length && day.summary.peak !== null) {
+    // Every band: the total Warden recorded at once, not the bands' own highs in a minute added up.
+    peak = day.summary.peak;
+    peakAt = day.summary.peakAt;
+  } else
+    for (const m of day.minutes) {
+      const total = visible.reduce((sum, b) => sum + bandAt(b, m), 0);
+      if (peak === null || total > peak) {
+        peak = total;
+        peakAt = m.m;
+      }
     }
-  }
   const now = day.today && last ? visible.reduce((sum, b) => sum + bandAt(b, last), 0) : null;
   const total = day.summary.computerTotal;
   let used: number | null = null;
@@ -328,28 +333,44 @@ export function hourTicks(model: ChartModel, width: number): { m: number; x: num
   return ticks;
 }
 
-/** What the guide says at a recorded minute: the time, each shown band and their total. */
-export function guideAt(
-  model: ChartModel,
-  minute: MemoryMinute,
-  ran: Set<string>,
-): { time: string; rows: { key: string; label: string; kib: number }[]; total: number } {
+export interface Guide {
+  time: string;
+  /** Each shown band that ran that day, top first; empty in a minute with no recording. */
+  rows: { key: string; label: string; kib: number }[];
+  total: number;
+  /** A minute with no recording: Warden was not running (a gap), or nothing was recorded (before the first). */
+  missing: 'not-running' | 'nothing' | null;
+}
+
+/** What the guide says at a minute of the span: the time, each shown band and their total, or why there is none. */
+export function guideAt(model: ChartModel, m: number, ran: Set<string>): Guide {
+  const minute = model.minutes.find((x) => x.m === m);
+  if (!minute) {
+    const gap = model.gaps.some((g) => m >= g.from && m < g.to);
+    return { time: clock(m), rows: [], total: 0, missing: gap ? 'not-running' : 'nothing' };
+  }
   const rows = model.bands
     .filter((b) => ran.has(b.key))
     .map((b) => ({ key: b.key, label: b.label, kib: bandAt(b, minute) }))
     .reverse();
-  return { time: clock(minute.m), rows, total: rows.reduce((sum, r) => sum + r.kib, 0) };
+  return { time: clock(m), rows, total: rows.reduce((sum, r) => sum + r.kib, 0), missing: null };
 }
 
+export const MISSING_TEXT = { 'not-running': 'Warden not running', nothing: 'Nothing recorded' } as const;
+
 /** The guide's words for assistive technology: "14:12: Main 2.1 GB, Claude 2 1.2 GB, total 3.3 GB". */
-export function guideText(g: ReturnType<typeof guideAt>): string {
+export function guideText(g: Guide): string {
+  if (g.missing) return `${g.time}: ${MISSING_TEXT[g.missing]}`;
   const parts = g.rows.map((r) => `${r.label} ${size(r.kib)}`);
   return `${g.time}: ${[...parts, `total ${size(g.total)}`].join(', ')}`;
 }
 
-/** Merges a later answer of today into what the page holds: its minutes from the first it brings on replace those. */
+/**
+ * Merges a later answer of today into what the page holds: each minute it brings replaces the one held (an earlier
+ * minute too, when the clock went back an hour), the rest stay, in order.
+ */
 export function mergeToday(day: MemoryDay, later: MemoryDay): MemoryDay {
-  const from = later.minutes[0]?.m;
-  const kept = from === undefined ? day.minutes : day.minutes.filter((m) => m.m < from);
-  return { ...later, minutes: [...kept, ...later.minutes] };
+  const brought = new Set(later.minutes.map((m) => m.m));
+  const minutes = [...day.minutes.filter((m) => !brought.has(m.m)), ...later.minutes].sort((a, b) => a.m - b.m);
+  return { ...later, minutes };
 }

@@ -178,6 +178,10 @@ describe('figures', () => {
   const bands = bandsOf(d, [main, work], [main, work]);
 
   it('adds up the bands shown: now and its share, the peak and its minute, each row', () => {
+    // Every band: the peak Warden recorded at once (the server's), not the bands' highs added up.
+    const recorded = { ...d, summary: { ...d.summary, peak: 3.5 * GIB, peakAt: 600 } };
+    expect(figures(recorded, bands, new Set(['account:main', 'account:a1'])).peak).toBe(3.5 * GIB);
+    expect(figures(recorded, bands, new Set(['account:main'])).peak).toBe(2 * GIB);
     const f = figures(d, bands, new Set(['account:main', 'account:a1']));
     expect(f.now).toBe(4 * GIB);
     expect(f.nowShare).toBe('13%');
@@ -274,7 +278,7 @@ describe('the chart', () => {
 
   it('says what the guide shows: the bands that ran that day, top first, and their total', () => {
     const model = chartModel(d, bands, both)!;
-    const g = guideAt(model, d.minutes[1]!, new Set(['account:main', 'account:a1']));
+    const g = guideAt(model, 601, new Set(['account:main', 'account:a1']));
     expect(g).toEqual({
       time: '10:01',
       rows: [
@@ -282,8 +286,13 @@ describe('the chart', () => {
         { key: 'account:main', label: 'Main', kib: GIB },
       ],
       total: GIB,
+      missing: null,
     });
     expect(guideText(g)).toBe('10:01: Work 0 MB, Main 1 GB, total 1 GB');
+    // In a gap, and after the last recording of a span stretched to an hour.
+    expect(guideText(guideAt(model, 650, new Set()))).toBe('10:50: Warden not running');
+    const short = chartModel({ ...d, minutes: [minute(600, [[1, GIB]])], gaps: [] }, bands, both)!;
+    expect(guideText(guideAt(short, 630, new Set()))).toBe('10:30: Nothing recorded');
   });
 });
 
@@ -302,6 +311,13 @@ describe('following today', () => {
       [602, []],
     ]);
     expect(merged.series).toHaveLength(1);
+    // The clock went back an hour: an earlier minute comes again and replaces the one held, in its place.
+    const back = mergeToday(merged, { ...later, minutes: [minute(600, [[1, 7]])] });
+    expect(back.minutes.map((m) => [m.m, m.s])).toEqual([
+      [600, [[1, 7]]],
+      [601, [[1, 9]]],
+      [602, []],
+    ]);
     // Nothing new: the minutes stay.
     expect(mergeToday(held, { ...later, minutes: [] }).minutes).toHaveLength(2);
   });

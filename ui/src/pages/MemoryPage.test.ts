@@ -200,8 +200,19 @@ describe('MemoryPage', () => {
     expect(chart.attributes('aria-valuenow')).toBe('541');
     await chart.trigger('keydown', { key: 'End' });
     expect(chart.attributes('aria-valuenow')).toBe('542');
+    // Past the last recording (the span is at least an hour), a minute at a time, up to its end.
     await chart.trigger('keydown', { key: 'ArrowRight' });
-    expect(chart.attributes('aria-valuenow')).toBe('542');
+    expect(chart.attributes('aria-valuetext')).toBe('09:03: Nothing recorded');
+    await chart.trigger('keydown', { key: 'PageUp' });
+    expect(chart.attributes('aria-valuenow')).toBe('599');
+    await chart.trigger('keydown', { key: 'PageDown' });
+    expect(chart.attributes('aria-valuenow')).toBe('540');
+    // Escape hides the tooltip; the guide stays, and moving it brings the tooltip back.
+    await chart.trigger('keydown', { key: 'Escape' });
+    expect(page.find('[data-guide-tip]').exists()).toBe(false);
+    expect(page.find('[data-guide]').exists()).toBe(true);
+    await chart.trigger('keydown', { key: 'ArrowRight' });
+    expect(page.find('[data-guide-tip]').exists()).toBe(true);
     await chart.trigger('blur');
     expect(page.find('[data-guide]').exists()).toBe(false);
     page.unmount();
@@ -228,6 +239,67 @@ describe('MemoryPage', () => {
     const count = asked.length;
     await flushPromises();
     expect(asked.length).toBe(count);
+    page.unmount();
+  });
+
+  it('steps through a gap a minute at a time, saying Warden was not running', async () => {
+    const gappy = busyDay(TODAY);
+    gappy.minutes = [gappy.minutes[0]!, { ...gappy.minutes[2]!, m: 545 }];
+    gappy.gaps = [{ from: 541, to: 545 }];
+    server({ [TODAY]: gappy });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    const chart = page.get('[data-memory-chart]');
+    await chart.trigger('focus');
+    await chart.trigger('keydown', { key: 'Home' });
+    await chart.trigger('keydown', { key: 'ArrowRight' });
+    expect(chart.attributes('aria-valuetext')).toBe('09:01: Warden not running');
+    expect(page.get('[data-guide-tip]').text()).toBe('09:01Warden not running');
+    for (let i = 0; i < 4; i++) await chart.trigger('keydown', { key: 'ArrowRight' });
+    expect(chart.attributes('aria-valuetext')).toMatch(/^09:05: Work 0 MB, Main 1 GB/);
+    page.unmount();
+  });
+
+  it('stops asking once the page is left, a wait under way included', async () => {
+    const asked = server({ [TODAY]: busyDay(TODAY) });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    const count = asked.length;
+    expect(asked[count - 1]).toContain('/today/wait');
+    page.unmount();
+    store.away = true;
+    await flushPromises();
+    store.away = false;
+    await flushPromises();
+    expect(asked.length).toBe(count);
+  });
+
+  it('keeps focus on Next as it turns off on arriving at today', async () => {
+    server({ [TODAY]: busyDay(TODAY), [PAST]: busyDay(PAST) });
+    go(`memory/${PAST}`);
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    const next = page.get('button[aria-label="Next day"]');
+    (next.element as HTMLElement).focus();
+    await next.trigger('click');
+    await flushPromises();
+    expect(location.hash).toBe('#/memory');
+    const after = page.get('button[aria-label="Next day"]');
+    expect(after.attributes('aria-disabled')).toBe('true');
+    expect(after.element).toBe(next.element);
+    expect(document.activeElement).toBe(next.element);
+    page.unmount();
+  });
+
+  it('today, once nothing runs any more, says so above the chart of the day', async () => {
+    const idle = busyDay(TODAY);
+    idle.minutes = [...idle.minutes, minute(543, [[3, 9 * 1024]])];
+    server({ [TODAY]: idle });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    expect(page.get('[data-memory-none-now]').text()).toBe('No AI sessions are running.');
+    expect(page.find('[data-memory-chart]').exists()).toBe(true);
+    expect(page.get('[data-figures]').text()).toContain('Now0 MB');
     page.unmount();
   });
 

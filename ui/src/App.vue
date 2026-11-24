@@ -5,7 +5,8 @@
 // The shell is exactly the window's height and never wraps, and the sidebar and the panel each scroll what does not
 // fit, so the page itself never scrolls. The panel is `relative`: what is positioned inside it (screen-reader-only
 // text in a long table) is then clipped by its scrolling, instead of reaching below the window and making the page
-// taller.
+// taller. The page sits in a box of its own: the page's tooltips and menus are drawn into <main> beside it, and Vue
+// puts the next page before whatever follows the old one, which would be one of those, gone with the old page.
 import MemoryPage from './pages/MemoryPage.vue';
 import OverviewPage from './pages/OverviewPage.vue';
 import { route } from './route';
@@ -23,8 +24,10 @@ import TopStrip from './shell/TopStrip.vue';
       <main
         class="relative min-h-0 flex-auto overflow-y-auto rounded-tl-lg border-t border-l border-ring bg-panel px-9 py-6"
       >
-        <MemoryPage v-if="route.page.value === 'memory'" />
-        <OverviewPage v-else />
+        <div>
+          <MemoryPage v-if="route.page.value === 'memory'" />
+          <OverviewPage v-else />
+        </div>
       </main>
     </div>
   </div>

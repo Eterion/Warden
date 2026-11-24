@@ -1,9 +1,10 @@
 <script setup lang="ts">
-// A plain list in one bordered box, its `WListItem` rows divided by faint lines.
+// A plain list with faint dividers between rows. A widget supplies the frame for a bare list.
+const props = defineProps<{ bare?: boolean }>();
 </script>
 
 <template>
-  <ul class="overflow-hidden rounded-lg border border-divider-strong">
+  <ul class="overflow-hidden" :class="!props.bare && 'rounded-lg border border-divider-strong'">
     <slot />
   </ul>
 </template>

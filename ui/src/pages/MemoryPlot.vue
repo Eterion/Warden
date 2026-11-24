@@ -97,7 +97,7 @@ const middle = computed(() => props.chart.top + (props.chart.height - props.char
         </tspan>
       </text>
     </g>
-    <!-- Faint gridlines, labelled in GB. -->
+    <!-- Faint gridlines, labelled in GB when there is a gutter. -->
     <g v-for="line in props.model.grid" :key="line.kib" data-gridline>
       <line
         :x1="props.chart.gutter"
@@ -108,6 +108,7 @@ const middle = computed(() => props.chart.top + (props.chart.height - props.char
         stroke-dasharray="2 3"
       />
       <text
+        v-if="props.chart.gutter > 0"
         :x="props.chart.gutter - 8"
         :y="y(line.kib)"
         text-anchor="end"

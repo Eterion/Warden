@@ -296,8 +296,8 @@ export interface ChartSize {
 
 /** The Memory page's chart. */
 export const CHART: ChartSize = { height: 200, gutter: 52, axis: 24, top: 8, tick: 6, line: 18 };
-/** The Overview's small chart (its Memory card): shorter, its ticks shorter. */
-export const CHART_SMALL: ChartSize = { height: 84, gutter: 52, axis: 20, top: 6, tick: 4, line: 16 };
+/** The Overview's small chart (its Memory card): shorter, shorter ticks, and no gridline labels. */
+export const CHART_SMALL: ChartSize = { height: 84, gutter: 0, axis: 20, top: 6, tick: 4, line: 16 };
 
 export interface ChartModel {
   /** The minutes across, from the day's first recording to its last (on the Memory page at least an hour): [from, to). */
@@ -360,6 +360,43 @@ export function chartModel(
   };
 }
 
+/** Runs of recorded minutes, so a path never joins the samples on either side of a gap. */
+function recordedRuns(minutes: MemoryMinute[]): MemoryMinute[][] {
+  const runs: MemoryMinute[][] = [];
+  for (const m of minutes) {
+    const run = runs[runs.length - 1];
+    const prev = run?.[run.length - 1];
+    if (run && prev && m.m === prev.m + 1) run.push(m);
+    else runs.push([m]);
+  }
+  return runs;
+}
+
+/** The shown bands' total over the recorded span, in a 100 by 24 SVG view box. */
+export function memoryTrend(model: ChartModel): { line: string; area: string } {
+  const from = model.minutes[0]!.m;
+  const to = model.minutes[model.minutes.length - 1]!.m + 1;
+  const x = (m: number) => (((m - from) / (to - from)) * 100).toFixed(2);
+  const runs = recordedRuns(model.minutes).map((run) =>
+    run.map((m) => ({ m: m.m, total: model.bands.reduce((sum, b) => sum + bandAt(b, m), 0) })),
+  );
+  const peak = Math.max(1, ...runs.flat().map((run) => run.total));
+  const y = (total: number) => (22 - (total / peak) * 20).toFixed(2);
+  let line = '';
+  let area = '';
+  for (const run of runs) {
+    const first = run[0]!;
+    const last = run[run.length - 1]!;
+    const start = x(first.m);
+    const end = x(last.m + 1);
+    const points = run.map(({ m, total }) => `L${x(m + 0.5)},${y(total)}`).join('');
+    const segment = `M${start},${y(first.total)}${points}H${end}`;
+    line += segment;
+    area += `${segment}V24H${start}Z`;
+  }
+  return { line, area };
+}
+
 /** Each shown band's area, as SVG paths over a plot `width` wide: a step per minute, broken where nothing was recorded. */
 export function bandPaths(
   model: ChartModel,
@@ -369,14 +406,7 @@ export function bandPaths(
   const span = model.to - model.from;
   const x = (m: number) => ((m - model.from) / span) * width;
   const y = (kib: number) => chart.top + (1 - Math.min(kib, model.top) / model.top) * (chart.height - chart.top);
-  // Runs of consecutive minutes.
-  const runs: MemoryMinute[][] = [];
-  for (const m of model.minutes) {
-    const run = runs[runs.length - 1];
-    const prev = run?.[run.length - 1];
-    if (run && prev && m.m === prev.m + 1) run.push(m);
-    else runs.push([m]);
-  }
+  const runs = recordedRuns(model.minutes);
   const base = new Map<number, number>();
   const n = (v: number) => Math.round(v * 100) / 100;
   return model.bands.map((band) => {

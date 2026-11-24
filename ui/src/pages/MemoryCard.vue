@@ -1,14 +1,9 @@
 <script setup lang="ts">
-// The Overview's Memory card, above the limit resets: today's AI sessions' memory at a glance. Its heading is a link to
-// the Memory page, with today's figures beside it in the legends' type (the AI sessions now with their share of the
-// computer, and the day's peak with its time); under it the Memory page's chart made small (MemoryPlot: the same bands,
-// colours and gaps, two gridlines, the times only at its ends), one link to the Memory page named by what it shows (the
-// minute-by-minute guide stays on that page). Nothing ran today: a line says so in its place. Today follows each sample
-// through the same wait as the Memory page (useMemoryDay), paused while the window is hidden, ended when the Overview is
-// left.
-import { ChevronRight, CpuAi, Mountain } from '@lucide/vue';
+// The Overview's Memory widget links to the Memory page. It follows today's samples while the window is visible.
+import { Mountain } from '@lucide/vue';
 import { useElementSize } from '@vueuse/core';
 import { computed, useTemplateRef } from 'vue';
+import WWidget from '../components/WWidget.vue';
 import { clock } from '../format';
 import { CHART_SMALL, anyRan, bandsOf, chartModel, endAxis, figures, isoDay, size } from '../memory';
 import { useMemoryDay } from '../memoryDay';
@@ -38,76 +33,52 @@ const now = computed(() => size(figs.value?.now ?? 0));
 const peak = computed(() =>
   figs.value?.peak && figs.value.peakAt !== null ? { size: size(figs.value.peak), at: clock(figs.value.peakAt) } : null,
 );
-/** The chart link's name: what it shows. */
-const label = computed(
-  () =>
-    `AI sessions' memory today: now ${now.value}` + (peak.value ? `, peak ${peak.value.size} at ${peak.value.at}` : ''),
-);
+const message = computed(() => {
+  if (error.value && !data.value) return store.connected ? error.value : "Warden's core is not running.";
+  if (!data.value) return 'Reading the day…';
+  return ran.value ? null : 'No AI sessions are running.';
+});
+const label = computed(() => {
+  const title = "AI sessions' memory today";
+  if (message.value) return `${title}: ${message.value}`;
+  const current = `${title}: now ${now.value}`;
+  return peak.value ? `${current}, peak ${peak.value.size} at ${peak.value.at}` : current;
+});
 </script>
 
 <template>
-  <section aria-labelledby="memory-heading" class="flex flex-col gap-3" data-memory-card>
-    <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-      <h2 id="memory-heading" class="text-16 font-semibold">
-        <a
-          href="#/memory"
-          class="group inline-flex items-center gap-0.5 rounded-xs underline-offset-2 hov:underline press:text-secondary focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-indicator"
-          >Memory<ChevronRight
-            aria-hidden="true"
-            class="size-4 text-icon group-hov:text-icon-hover group-press:text-text"
-        /></a>
-      </h2>
-      <div
-        v-if="ran && figs"
-        aria-label="Memory today"
-        class="ml-auto flex flex-wrap items-center gap-x-3.5 gap-y-1 text-12 text-secondary"
-        data-memory-card-figures
-      >
-        <span class="inline-flex items-center gap-1.5" data-card-figure="now">
-          <CpuAi aria-hidden="true" class="size-3.5 text-icon" />
-          <span
-            ><strong class="font-semibold text-text tabular-nums">{{ now }}</strong> now<span
-              v-if="figs.nowShare"
-              class="tabular-nums"
-            >
-              ({{ figs.nowShare }})</span
-            ></span
-          >
-        </span>
-        <span v-if="peak" class="inline-flex items-center gap-1.5" data-card-figure="peak">
-          <Mountain aria-hidden="true" class="size-3.5 text-icon" />
-          <span
-            ><strong class="font-semibold text-text tabular-nums">{{ peak.size }}</strong> peak at
-            <span class="tabular-nums">{{ peak.at }}</span></span
-          >
-        </span>
+  <WWidget title="Memory" href="#/memory" :label="label" data-memory-card>
+    <template #body>
+      <div class="flex flex-col gap-3">
+        <p v-if="message" class="text-13 text-tertiary" :data-card-none="data && !ran ? '' : undefined">
+          {{ message }}
+        </p>
+        <template v-else-if="figs">
+          <p class="flex flex-wrap items-baseline gap-x-2 gap-y-1 tabular-nums" data-card-figure="now">
+            <strong class="text-24 font-semibold">{{ now }}</strong>
+            <span v-if="figs.nowShare && data?.summary.computerTotal" class="text-13 text-secondary">
+              {{ figs.nowShare }} of {{ size(data.summary.computerTotal) }}
+            </span>
+          </p>
+          <div ref="box" data-memory-card-chart>
+            <MemoryPlot
+              v-if="model && axis"
+              :model="model"
+              :width="width"
+              :chart="CHART_SMALL"
+              :axis="axis"
+              :hovered="null"
+              :guide-x="null"
+            />
+          </div>
+        </template>
       </div>
-    </div>
-
-    <p v-if="error && !data" class="text-13 text-tertiary">
-      {{ store.connected ? error : "Warden's core is not running." }}
-    </p>
-    <p v-else-if="!data" class="text-13 text-tertiary">Reading the day…</p>
-    <p v-else-if="!ran" class="text-13 text-tertiary" data-card-none>No AI sessions are running.</p>
-    <!-- The whole chart is one link to the Memory page, lit as a row that acts. -->
-    <a
-      v-else
-      ref="box"
-      href="#/memory"
-      class="-mx-2 block rounded-lg p-2 hov:bg-row-hover press:bg-row-press focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-indicator"
-      data-memory-card-chart
-    >
-      <!-- Its name, what it shows, in words; the drawing itself is hidden from screen readers. -->
-      <span class="sr-only" data-chart-name>{{ label }}</span>
-      <MemoryPlot
-        v-if="model && axis"
-        :model="model"
-        :width="width"
-        :chart="CHART_SMALL"
-        :axis="axis"
-        :hovered="null"
-        :guide-x="null"
-      />
-    </a>
-  </section>
+    </template>
+    <template v-if="ran && peak" #footer>
+      <p class="flex items-center gap-1.5 text-12 text-tertiary tabular-nums" data-card-figure="peak">
+        <Mountain aria-hidden="true" class="size-3.5 text-icon" />
+        <span>{{ peak.size }} peak at {{ peak.at }}</span>
+      </p>
+    </template>
+  </WWidget>
 </template>

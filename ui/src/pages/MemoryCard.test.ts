@@ -9,7 +9,7 @@ import { NOW, account, state } from '../test/state';
 import MemoryCard from './MemoryCard.vue';
 import OverviewPage from './OverviewPage.vue';
 
-// The chart's box as the window lays it out: 52 px of gutter and a 300 px plot.
+// The chart uses the full 352 px of its box.
 vi.mock('@vueuse/core', async (original) => ({
   ...(await original<typeof import('@vueuse/core')>()),
   useElementSize: () => ({ width: ref(352), height: ref(120), stop: () => {} }),
@@ -110,13 +110,21 @@ afterEach(() => {
 });
 
 describe('MemoryCard', () => {
-  it("shows today's figures beside its heading: the AI sessions now with their share, and the peak with its time", async () => {
+  it("shows today's figure with its share above the chart and the peak in the footer", async () => {
     server(today());
     const card = mount(MemoryCard, { attachTo: document.body });
     await flushPromises();
     expect(card.get('h2').text()).toBe('Memory');
-    expect(card.get('[data-card-figure="now"]').text()).toBe('1 GB now (3%)');
-    expect(card.get('[data-card-figure="peak"]').text()).toBe('3 GB peak at 09:01');
+    const now = card.get('[data-card-figure="now"]');
+    expect(now.get('strong').text()).toBe('1 GB');
+    expect(now.get('strong').classes()).toEqual(['text-24', 'font-semibold']);
+    expect(now.get('.text-secondary').text()).toBe('3% of 32 GB');
+    const peak = card.get('[data-card-figure="peak"]');
+    expect(peak.text()).toBe('3 GB peak at 09:01');
+    expect(peak.find('svg').exists()).toBe(true);
+    const body = now.element.parentElement!;
+    expect([...body.children]).toEqual([now.element, card.get('[data-memory-card-chart]').element]);
+    expect(card.get('header + div + .border-t').element).toBe(peak.element.parentElement);
     card.unmount();
   });
 
@@ -129,16 +137,22 @@ describe('MemoryCard', () => {
       ['account:main', 'fill-chart-claude-1'],
       ['account:a1', 'fill-chart-claude-2'],
     ]);
-    // Shorter than the page's: an 84 px plot, its gridlines at 2 and 4 GB.
+    // The shorter plot keeps both gridlines and uses the card's full chart width.
     expect(chart.get('svg').attributes('height')).toBe('104');
-    expect(chart.findAll('[data-gridline]').map((g) => g.text())).toEqual(['2 GB', '4 GB']);
+    expect(chart.findAll('[data-gridline]').map((g) => g.text())).toEqual(['', '']);
+    expect(chart.findAll('[data-gridline] line').map((line) => [line.attributes('x1'), line.attributes('x2')])).toEqual(
+      [
+        ['0', '352'],
+        ['0', '352'],
+      ],
+    );
     // Warden closed from 10:00 to 12:00: an empty band, named.
     expect(chart.findAll('[data-gap]')).toHaveLength(1);
     expect(chart.get('[data-not-running]').text()).toBe('Warden not running');
     // The times only at its ends, inside the plot: the first minute and the latest sample's.
     const labels = chart.findAll('[data-axis-label]');
     expect(labels.map((l) => [l.text(), l.attributes('text-anchor'), l.attributes('x')])).toEqual([
-      ['09:00', 'start', '52'],
+      ['09:00', 'start', '0'],
       ['13:01', 'end', '352'],
     ]);
     // No guide or tooltip here: the minute-by-minute guide stays on the Memory page.
@@ -147,17 +161,27 @@ describe('MemoryCard', () => {
     card.unmount();
   });
 
-  it('leads to the Memory page: the heading and the chart, each one link, the chart named by what it shows', async () => {
+  it('is one link to the Memory page, named by what it shows and styled as one focusable card', async () => {
     server(today());
     const card = mount(MemoryCard, { attachTo: document.body });
     await flushPromises();
     const links = card.findAll('a');
-    expect(links.map((a) => a.attributes('href'))).toEqual(['#/memory', '#/memory']);
-    expect(links[1]!.get('svg').attributes('aria-hidden')).toBe('true');
-    expect(links[1]!.get('[data-chart-name]').text()).toBe("AI sessions' memory today: now 1 GB, peak 3 GB at 09:01");
-    // Nothing in the chart takes focus of its own: the link is the one stop.
-    expect(links[1]!.findAll('[tabindex]')).toHaveLength(0);
-    location.hash = links[1]!.attributes('href')!;
+    expect(links).toHaveLength(1);
+    const link = links[0]!;
+    expect(link.attributes('href')).toBe('#/memory');
+    expect(link.attributes('aria-label')).toBe("AI sessions' memory today: now 1 GB, peak 3 GB at 09:01");
+    expect(card.get('h2').text()).toBe('Memory');
+    expect(card.get('[data-memory-card-chart] svg').attributes('aria-hidden')).toBe('true');
+    const frame = card.get('.border-divider-strong');
+    expect(frame.classes()).toEqual(expect.arrayContaining(['hov:bg-row-hover', 'press:bg-row-press', 'border']));
+    expect(link.element.parentElement).toBe(frame.element);
+    expect(link.classes()).toEqual(
+      expect.arrayContaining(['-inset-px', 'focus-visible:outline-offset-2', 'focus-visible:outline-indicator']),
+    );
+    expect(
+      card.findAll('a, button, input, select, textarea, [tabindex], [contenteditable]').map((item) => item.element),
+    ).toEqual([link.element]);
+    location.hash = link.attributes('href')!;
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     await nextTick();
     expect(route.page.value).toBe('memory');
@@ -176,8 +200,8 @@ describe('MemoryCard', () => {
     await flushPromises();
     expect(card.get('[data-card-none]').text()).toBe('No AI sessions are running.');
     expect(card.find('[data-memory-card-chart]').exists()).toBe(false);
-    expect(card.find('[data-memory-card-figures]').exists()).toBe(false);
-    expect(card.get('h2 a').attributes('href')).toBe('#/memory');
+    expect(card.find('[data-card-figure]').exists()).toBe(false);
+    expect(card.get('a').attributes('aria-label')).toBe("AI sessions' memory today: No AI sessions are running.");
     card.unmount();
   });
 
@@ -191,7 +215,8 @@ describe('MemoryCard', () => {
     const waits = asked.filter((p) => p.includes('/today/wait'));
     expect(waits[0]).toBe('/api/memory/today/wait?after=781');
     expect(waits[1]).toBe('/api/memory/today/wait?after=782&sample=7');
-    expect(card.get('[data-card-figure="now"]').text()).toBe('4 GB now (13%)');
+    expect(card.get('[data-card-figure="now"] strong').text()).toBe('4 GB');
+    expect(card.get('[data-card-figure="now"] .text-secondary').text()).toBe('13% of 32 GB');
     expect(card.get('[data-card-figure="peak"]').text()).toBe('4 GB peak at 13:02');
     expect(card.findAll('[data-axis-label]').map((l) => l.text())).toEqual(['09:00', '13:02']);
     // The wait under way is ended while the window is away, and none follows.

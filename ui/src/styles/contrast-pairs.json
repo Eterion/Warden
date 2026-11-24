@@ -61,6 +61,12 @@
   },
   {
     "fg": "secondary",
+    "bg": ["modal", "head-bg"],
+    "min": 4.5,
+    "use": "the current hand-off point in the reserve explanation"
+  },
+  {
+    "fg": "secondary",
     "bg": ["nav"],
     "min": 4.5,
     "use": "secondary text in the modal sidebar"
@@ -88,6 +94,12 @@
     "bg": ["modal"],
     "min": 4.5,
     "use": "tertiary text in modals"
+  },
+  {
+    "fg": "tertiary",
+    "bg": ["modal", "head-bg"],
+    "min": 4.5,
+    "use": "the reason for the hand-off point in the reserve explanation"
   },
   {
     "fg": "tertiary",
@@ -1464,9 +1476,159 @@
     "use": "the Overview's small Memory chart baseline and ticks, its link pressed"
   },
   {
-    "fg": "icon-hover",
-    "bg": ["panel"],
+    "fg": "icon",
+    "bg": ["panel", "row-hover"],
     "min": 3,
-    "use": "the chevron of the Overview's Memory heading link, hovered"
+    "use": "the peak icon in the Overview's Memory widget, hovered"
+  },
+  {
+    "fg": "icon",
+    "bg": ["panel", "row-press"],
+    "min": 3,
+    "use": "the peak icon in the Overview's Memory widget, pressed"
+  },
+  {
+    "fg": "chart-claude-1",
+    "bg": ["panel", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge at rest"
+  },
+  {
+    "fg": "chart-claude-2",
+    "bg": ["panel", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge at rest"
+  },
+  {
+    "fg": "chart-claude-3",
+    "bg": ["panel", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge at rest"
+  },
+  {
+    "fg": "chart-codex-1",
+    "bg": ["panel", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge at rest"
+  },
+  {
+    "fg": "chart-codex-2",
+    "bg": ["panel", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge at rest"
+  },
+  {
+    "fg": "chart-codex-3",
+    "bg": ["panel", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge at rest"
+  },
+  {
+    "fg": "chart-other-sign-in",
+    "bg": ["panel", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge at rest"
+  },
+  {
+    "fg": "chart-left",
+    "bg": ["panel", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge at rest"
+  },
+  {
+    "fg": "chart-claude-1",
+    "bg": ["panel", "row-hover", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a hovered row"
+  },
+  {
+    "fg": "chart-claude-2",
+    "bg": ["panel", "row-hover", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a hovered row"
+  },
+  {
+    "fg": "chart-claude-3",
+    "bg": ["panel", "row-hover", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a hovered row"
+  },
+  {
+    "fg": "chart-codex-1",
+    "bg": ["panel", "row-hover", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a hovered row"
+  },
+  {
+    "fg": "chart-codex-2",
+    "bg": ["panel", "row-hover", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a hovered row"
+  },
+  {
+    "fg": "chart-codex-3",
+    "bg": ["panel", "row-hover", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a hovered row"
+  },
+  {
+    "fg": "chart-other-sign-in",
+    "bg": ["panel", "row-hover", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a hovered row"
+  },
+  {
+    "fg": "chart-left",
+    "bg": ["panel", "row-hover", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a hovered row"
+  },
+  {
+    "fg": "chart-claude-1",
+    "bg": ["panel", "row-press", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a pressed row"
+  },
+  {
+    "fg": "chart-claude-2",
+    "bg": ["panel", "row-press", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a pressed row"
+  },
+  {
+    "fg": "chart-claude-3",
+    "bg": ["panel", "row-press", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a pressed row"
+  },
+  {
+    "fg": "chart-codex-1",
+    "bg": ["panel", "row-press", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a pressed row"
+  },
+  {
+    "fg": "chart-codex-2",
+    "bg": ["panel", "row-press", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a pressed row"
+  },
+  {
+    "fg": "chart-codex-3",
+    "bg": ["panel", "row-press", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a pressed row"
+  },
+  {
+    "fg": "chart-other-sign-in",
+    "bg": ["panel", "row-press", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a pressed row"
+  },
+  {
+    "fg": "chart-left",
+    "bg": ["panel", "row-press", "track", "panel"],
+    "min": 3,
+    "use": "Now bar against its panel-colour edge on a pressed row"
   }
 ]

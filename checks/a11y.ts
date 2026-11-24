@@ -75,6 +75,8 @@ type Fixture =
 /** `hover` rests the pointer on an element; `press` also holds the button down on it, until the page is checked. */
 type Step =
   | { click: string }
+  /** Checks that a click leaves the target's vertical position in the layout alone. */
+  | { clickKeepingTop: string; target: string }
   | { focus: string }
   | { hover: string }
   | { press: string }
@@ -249,6 +251,17 @@ export const PAGES: {
     steps: [{ hover: '[data-band-row="account:a2"]' }, { waitFor: '[data-band="account:a2"].fill-chart-hover' }],
   },
   {
+    // The legend uses a hollow swatch for the band unchecked in the table.
+    name: 'memory-band-hidden',
+    path: '/#/memory',
+    fixture: 'memory',
+    ready: '[data-memory-chart]',
+    steps: [
+      { click: '[data-band-row="account:a2"] [role=checkbox]' },
+      { waitFor: '[data-legend-band="account:a2"] .border-control' },
+    ],
+  },
+  {
     name: 'overview',
     path: '/',
     fixture: 'normal',
@@ -420,21 +433,24 @@ export const PAGES: {
     viewport: { width: 1600, height: 900 },
   },
   {
-    // The pointer on the small chart: the link lit as a row that acts.
+    // The pointer on the Memory widget: the whole card lit as a row that acts.
     name: 'overview-memory-hover',
     path: '/',
     fixture: 'resets',
     ready: '[data-memory-card-chart] [data-band]',
-    steps: [{ hover: '[data-memory-card-chart]' }],
+    steps: [{ hover: '[data-memory-card] a' }],
     viewport: { width: 1600, height: 900 },
   },
   {
-    // The small chart from the keyboard: one link, its focus ring.
+    // The Memory widget from the keyboard: one link, its focus ring.
     name: 'overview-memory-focus',
     path: '/',
     fixture: 'resets',
     ready: '[data-memory-card-chart] [data-band]',
-    steps: [{ focus: '[data-memory-card-chart]' }, { focused: '[data-memory-card-chart]:focus-visible' }],
+    steps: [
+      { focus: "[data-memory-card] >> role=link[name=/^AI sessions' memory today: now .*, peak .* at /]" },
+      { focused: '[data-memory-card] a:focus-visible' },
+    ],
     viewport: { width: 1600, height: 900 },
   },
   {
@@ -528,11 +544,14 @@ export const PAGES: {
     ready: 'main [role=table]',
     steps: [
       {
-        click: 'button[role=checkbox][aria-label$="of Second"]',
+        clickKeepingTop: 'button[role=checkbox][aria-label$="of Second"]',
+        target: '[role=table][aria-labelledby=sessions-heading]',
       },
-      {
-        waitFor: 'text=Show all',
-      },
+      { waitFor: 'text=Show all' },
+      { clickKeepingTop: 'text=Show all', target: '[role=table][aria-labelledby=sessions-heading]' },
+      { waitGone: 'text=Show all' },
+      { click: 'button[role=checkbox][aria-label$="of Second"]' },
+      { waitFor: 'text=Show all' },
     ],
   },
   {
@@ -1198,7 +1217,14 @@ async function main(): Promise<void> {
         await page.locator(p.ready).first().waitFor({ timeout: 10_000 });
         for (const step of p.steps ?? []) {
           if ('click' in step) await page.locator(step.click).click({ timeout: 10_000 });
-          else if ('focus' in step) {
+          else if ('clickKeepingTop' in step) {
+            const target = page.locator(step.target);
+            const top = () => target.evaluate((el) => (el as HTMLElement).offsetTop);
+            const before = await top();
+            await page.locator(step.clickKeepingTop).click({ timeout: 10_000 });
+            const after = await top();
+            if (after !== before) throw new Error(`${p.name}: ${step.target} moved from ${before} to ${after}`);
+          } else if ('focus' in step) {
             // Scrolled into view first, and the scroll let settle: a tooltip closes when the page scrolls under it.
             const target = page.locator(step.focus);
             await target.scrollIntoViewIfNeeded({ timeout: 10_000 });

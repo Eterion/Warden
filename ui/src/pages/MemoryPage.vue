@@ -3,8 +3,8 @@
 // and forward go through the days seen. Previous and Next go to the nearest day with recordings (Next stops at today,
 // saying why); between them the day opens a calendar to pick any day (MemoryDayPicker). The figures (MemoryFigures:
 // the AI sessions now and their share of the computer, today only; the peak and its time; the computer's memory in use
-// with its meter, amber above 90%; Warden itself), then the chart of the AI sessions' memory stacked by account, on the
-// panel without a box, and the table: the chart's legend and accessible equivalent, a checkbox per row leaving its band out (on this page only),
+// with its meter, amber above 90%; Warden itself), then the chart of the AI sessions' memory stacked by account and the
+// table, each in a widget. The table is the chart's accessible equivalent, with a checkbox per row leaving its band out,
 // hovering a row darkening its band. Today's page follows each new sample through the long poll (useMemoryDay, which
 // the Overview's Memory card shares), paused while the window is hidden; a past day is read once.
 import { Check, ChevronLeft, ChevronRight } from '@lucide/vue';
@@ -14,6 +14,7 @@ import WButton from '../components/WButton.vue';
 import WIconButton from '../components/WIconButton.vue';
 import WTable from '../components/WTable.vue';
 import WTableRow from '../components/WTableRow.vue';
+import WWidget from '../components/WWidget.vue';
 import { anyRan, bandsOf, chartModel, figures, isoDay, shareText, size, stepDays, type BandColour } from '../memory';
 import { useMemoryDay } from '../memoryDay';
 import { go, route } from '../route';
@@ -63,6 +64,7 @@ const noneNow = computed(
   () => !!data.value && isToday.value && !noSessions.value && (figs.value?.rows ?? []).every((r) => !r.now),
 );
 const total = computed(() => data.value?.summary.computerTotal ?? null);
+const maxNow = computed(() => Math.max(0, ...(figs.value?.rows ?? []).map((r) => r.now ?? 0)));
 const hovered = ref<string | null>(null);
 const SWATCH: Record<BandColour, string> = {
   'claude-1': 'bg-chart-claude-1',
@@ -115,8 +117,8 @@ function toggle(key: string): void {
     >
       Nothing recorded on this day.
     </div>
-    <template v-else-if="figs">
-      <MemoryFigures :figures="figs" :today="isToday" :total="total" />
+    <div v-else-if="figs" class="flex flex-col gap-4">
+      <MemoryFigures :figures="figs" :today="isToday" :total="total" :model="model" />
 
       <div
         v-if="noSessions"
@@ -126,81 +128,126 @@ function toggle(key: string): void {
         No AI sessions are running.
       </div>
       <template v-else>
-        <p v-if="noneNow" class="text-14 text-tertiary" data-memory-none-now>No AI sessions are running.</p>
-        <section aria-label="Memory over the day" class="py-4">
-          <MemoryChart v-if="model" :model="model" :ran="ran" :hovered="hovered" :day="day" />
-        </section>
-
-        <WTable
-          on="panel"
-          aria-label="Memory by account"
-          cols="grid-cols-memory gap-x-4"
-          class="min-w-memory"
-          data-memory-table
-        >
-          <template #head>
-            <span role="columnheader"><span class="sr-only">Shown in the chart</span></span>
-            <span role="columnheader">Account</span>
-            <span v-if="isToday" role="columnheader" class="text-right">Now</span>
-            <span role="columnheader" class="text-right">Peak</span>
-            <span role="columnheader" class="text-right">{{ isToday ? 'Share now' : 'Share at peak' }}</span>
-          </template>
-          <WTableRow
-            v-for="r in figs.rows"
-            :key="r.band.key"
-            :class="['group cursor-pointer py-2.25 text-13', 'hov:bg-row-hover press:bg-row-press']"
-            :data-band-row="r.band.key"
-            @click="toggle(r.band.key)"
-            @pointerenter="hovered = r.band.key"
-            @pointerleave="hovered = null"
-          >
-            <span role="cell" class="inline-flex items-center justify-center">
-              <button
-                type="button"
-                role="checkbox"
-                :aria-checked="shown.has(r.band.key)"
-                :aria-label="`Show ${r.band.label} in the chart`"
-                :class="[
-                  'inline-flex size-4 cursor-pointer items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator',
-                  shown.has(r.band.key)
-                    ? 'bg-primary text-on-primary group-hov:bg-primary-hover group-press:bg-primary-press'
-                    : 'border-2 border-control group-hov:bg-chip-off group-press:bg-press',
-                ]"
-                @focus="hovered = r.band.key"
-                @blur="hovered = null"
+        <WWidget title="By account">
+          <template #header>
+            <ul
+              class="ml-auto flex min-w-0 flex-wrap gap-x-3.5 gap-y-1 text-12 text-secondary"
+              aria-label="Chart legend"
+            >
+              <li
+                v-for="band in bands"
+                :key="band.key"
+                :class="['inline-flex min-w-0 items-center gap-1.5', !shown.has(band.key) && 'text-tertiary']"
+                :data-legend-band="band.key"
               >
-                <Check v-if="shown.has(r.band.key)" class="size-3" :stroke-width="3" aria-hidden="true" />
-              </button>
-            </span>
-            <div role="cell" class="flex min-w-0 items-center gap-2">
-              <span
-                aria-hidden="true"
-                :class="[
-                  'size-3 shrink-0 rounded-xs',
-                  hovered === r.band.key ? 'bg-chart-hover' : SWATCH[r.band.colour],
-                ]"
-              ></span>
-              <!-- As the Sessions table's Account column: the provider's small mark, then the name. -->
-              <span class="flex min-w-0 items-center gap-1.5">
-                <ProviderMark
-                  v-if="r.band.account"
-                  :provider="r.band.account.provider"
-                  size="xs"
-                  :label="r.band.account.provider === 'claude' ? 'Claude' : 'Codex'"
-                />
-                <span class="min-w-0 truncate font-medium">{{ r.band.label }}</span>
-              </span>
+                <span
+                  aria-hidden="true"
+                  :class="[
+                    'size-2.5 shrink-0 rounded-xs',
+                    shown.has(band.key) ? SWATCH[band.colour] : 'border border-control',
+                  ]"
+                ></span>
+                <span class="wrap-anywhere"
+                  >{{ band.label }}<span v-if="!shown.has(band.key)" class="sr-only"> (hidden)</span></span
+                >
+              </li>
+            </ul>
+          </template>
+          <template #body>
+            <div class="flex flex-col gap-4">
+              <p v-if="noneNow" class="text-14 text-tertiary" data-memory-none-now>No AI sessions are running.</p>
+              <MemoryChart v-if="model" :model="model" :ran="ran" :hovered="hovered" :day="day" />
             </div>
-            <span v-if="isToday" role="cell" class="text-right text-secondary tabular-nums">{{
-              size(r.now ?? 0)
-            }}</span>
-            <span role="cell" class="text-right text-secondary tabular-nums">{{ size(r.peak) }}</span>
-            <span role="cell" class="text-right text-tertiary tabular-nums">{{
-              shareText(isToday ? (r.now ?? 0) : r.peak, total)
-            }}</span>
-          </WTableRow>
-        </WTable>
+          </template>
+        </WWidget>
+
+        <WWidget title="Accounts">
+          <WTable
+            bare
+            on="panel"
+            aria-label="Memory by account"
+            cols="grid-cols-memory gap-x-4"
+            class="min-w-memory"
+            data-memory-table
+          >
+            <template #head>
+              <span role="columnheader"><span class="sr-only">Shown in the chart</span></span>
+              <span role="columnheader">Account</span>
+              <span v-if="isToday" role="columnheader" class="text-right">Now</span>
+              <span role="columnheader" class="text-right">Peak</span>
+              <span role="columnheader" class="text-right">{{ isToday ? 'Share now' : 'Share at peak' }}</span>
+            </template>
+            <WTableRow
+              v-for="r in figs.rows"
+              :key="r.band.key"
+              :class="['group cursor-pointer py-2.25 text-13', 'hov:bg-row-hover press:bg-row-press']"
+              :data-band-row="r.band.key"
+              @click="toggle(r.band.key)"
+              @pointerenter="hovered = r.band.key"
+              @pointerleave="hovered = null"
+            >
+              <span role="cell" class="inline-flex items-center justify-center">
+                <button
+                  type="button"
+                  role="checkbox"
+                  :aria-checked="shown.has(r.band.key)"
+                  :aria-label="`Show ${r.band.label} in the chart`"
+                  :class="[
+                    'inline-flex size-4 cursor-pointer items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator',
+                    shown.has(r.band.key)
+                      ? 'bg-primary text-on-primary group-hov:bg-primary-hover group-press:bg-primary-press'
+                      : 'border-2 border-control group-hov:bg-chip-off group-press:bg-press',
+                  ]"
+                  @focus="hovered = r.band.key"
+                  @blur="hovered = null"
+                >
+                  <Check v-if="shown.has(r.band.key)" class="size-3" :stroke-width="3" aria-hidden="true" />
+                </button>
+              </span>
+              <div role="cell" class="flex min-w-0 items-center gap-2">
+                <span
+                  aria-hidden="true"
+                  :class="[
+                    'size-3 shrink-0 rounded-xs',
+                    hovered === r.band.key ? 'bg-chart-hover' : SWATCH[r.band.colour],
+                  ]"
+                ></span>
+                <!-- As the Sessions table's Account column: the provider's small mark, then the name. -->
+                <span class="flex min-w-0 items-center gap-1.5">
+                  <ProviderMark
+                    v-if="r.band.account"
+                    :provider="r.band.account.provider"
+                    size="xs"
+                    :label="r.band.account.provider === 'claude' ? 'Claude' : 'Codex'"
+                  />
+                  <span class="min-w-0 truncate font-medium">{{ r.band.label }}</span>
+                </span>
+              </div>
+              <span
+                v-if="isToday"
+                role="cell"
+                class="flex items-center justify-end gap-1.5 text-secondary tabular-nums"
+              >
+                <span aria-hidden="true" class="relative h-2 w-8 shrink-0 rounded-full bg-track" data-now-track>
+                  <!-- The panel-colour edge separates the fill from the grey track in every row state. -->
+                  <span v-if="r.now && maxNow" class="absolute inset-px">
+                    <span
+                      :class="['block h-full rounded-full ring-1 ring-panel', SWATCH[r.band.colour]]"
+                      :style="{ width: `${(r.now / maxNow) * 100}%` }"
+                      data-now-meter
+                    ></span>
+                  </span>
+                </span>
+                <span class="w-14 shrink-0 text-right whitespace-nowrap">{{ size(r.now ?? 0) }}</span>
+              </span>
+              <span role="cell" class="text-right text-secondary tabular-nums">{{ size(r.peak) }}</span>
+              <span role="cell" class="text-right text-tertiary tabular-nums">{{
+                shareText(isToday ? (r.now ?? 0) : r.peak, total)
+              }}</span>
+            </WTableRow>
+          </WTable>
+        </WWidget>
       </template>
-    </template>
+    </div>
   </div>
 </template>

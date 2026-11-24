@@ -93,7 +93,7 @@ const handOffAt = computed(() => {
   return handOffPreview(reserve.value, s.settings.workHours, s.main?.usage?.weekly?.resetsAt ?? null, store.now);
 });
 
-/** Under the slider: up to where main takes work and what it keeps, then why, with the core's figures. */
+/** Below the reserve row: up to where main takes work and what it keeps, then why, with the core's figures. */
 const reserveLines = computed(() => {
   const s = store.state;
   if (!s?.main) return null;
@@ -289,17 +289,17 @@ function identityLine(a: Account): string | null {
       </WTableRow>
     </WTable>
 
-    <section v-if="store.state?.main" aria-label="Main's reserve" class="mt-4 flex flex-col">
-      <div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b border-divider py-4">
-        <div class="flex min-w-0 flex-auto basis-65 flex-col gap-0.5">
-          <span id="reserve-label" class="cursor-default text-14 font-medium">Keep for my own work</span>
-          <span class="text-13 text-tertiary"
-            >The share of {{ store.state.main.label }}'s week kept for your own work. It shrinks as
-            {{ store.state.main.label }}'s weekly reset nears, during your work hours when they are set.</span
-          >
-        </div>
-        <div class="flex min-w-0 flex-auto basis-60 flex-col gap-1">
-          <span class="flex items-center gap-3">
+    <section v-if="store.state?.main" aria-labelledby="main-reserve-heading" class="mt-4 flex flex-col">
+      <h3 id="main-reserve-heading" class="text-14 font-semibold">{{ store.state.main.label }}'s reserve</h3>
+      <div class="flex flex-col gap-3 border-b border-divider pt-3 pb-4">
+        <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
+          <div class="flex min-w-0 flex-auto basis-60 flex-col gap-0.5">
+            <span id="reserve-label" class="cursor-default text-14 font-medium">Keep for my own work</span>
+            <span class="text-13 text-tertiary"
+              >The share of {{ store.state.main.label }}'s week kept for your own work.</span
+            >
+          </div>
+          <div class="ml-auto flex w-64 max-w-full shrink-0 items-center gap-3">
             <WSlider
               v-model="reserve"
               labelledby="reserve-label"
@@ -310,9 +310,11 @@ function identityLine(a: Account): string | null {
               @commit="saveReserve"
             />
             <span class="text-13 whitespace-nowrap text-secondary tabular-nums">{{ reserve }}% of its week</span>
-          </span>
-          <span class="text-13 text-secondary tabular-nums" data-hand-off>{{ reserveLines?.point }}</span>
-          <span class="text-13 text-tertiary tabular-nums" data-reserve-why>{{ reserveLines?.why }}</span>
+          </div>
+        </div>
+        <div class="flex flex-col gap-1 rounded-lg bg-head-bg p-3 tabular-nums" data-reserve-explanation>
+          <p class="text-13 text-secondary" data-hand-off>{{ reserveLines?.point }}</p>
+          <p class="text-12 text-tertiary" data-reserve-why>{{ reserveLines?.why }}</p>
         </div>
       </div>
 
@@ -332,7 +334,8 @@ function identityLine(a: Account): string | null {
             @update:model-value="saveWorkHours($event ? FIRST : null)"
           />
         </div>
-        <template v-if="workHours">
+        <div v-if="workHours" class="grid grid-cols-work-hours items-center gap-x-3 gap-y-3">
+          <span class="text-12 text-tertiary">Days</span>
           <div role="group" aria-label="Work days" class="flex flex-wrap gap-2">
             <template v-for="(name, k) in WEEKDAYS" :key="name">
               <WTooltip v-if="days.length === 1 && days.includes(k + 1)" text="At least one day" as-child>
@@ -341,6 +344,7 @@ function identityLine(a: Account): string | null {
               <ToggleChip v-else :pressed="days.includes(k + 1)" @click="toggleDay(k + 1)">{{ name }}</ToggleChip>
             </template>
           </div>
+          <span class="text-12 text-tertiary">Hours</span>
           <span class="flex items-center gap-3">
             <WSlider
               :model-value="hours"
@@ -359,7 +363,7 @@ function identityLine(a: Account): string | null {
               workHoursText({ from: hours[0] ?? 0, to: hours[1] ?? 0 })
             }}</span>
           </span>
-        </template>
+        </div>
       </div>
     </section>
   </div>

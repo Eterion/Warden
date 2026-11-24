@@ -504,16 +504,21 @@ describe('OverviewPage', () => {
 
   it('filters the sessions by the checked accounts, with chips and Show all', async () => {
     const page = withSessions();
+    const strip = page.get('[data-session-filters]');
+    expect(strip.classes()).toEqual(expect.arrayContaining(['h-9', 'min-w-32', 'overflow-x-auto']));
+    expect(strip.find('button').exists()).toBe(false);
     expect(page.text()).not.toContain('Stop showing only');
     await page.findAll('[aria-labelledby=accounts-heading] [role=row]')[2]!.trigger('click');
     expect(page.get('button[role=checkbox][aria-checked=true]').attributes('aria-label')).toBe(
       'Show only the sessions of Second',
     );
     expect(sessionRows(page)).toHaveLength(1);
-    expect(page.get('[aria-label="Stop showing only the sessions of Second"]').text()).toBe('Second');
-    await page.get('button:not([role])').trigger('click');
+    expect(strip.get('[aria-label="Stop showing only the sessions of Second"]').text()).toBe('Second');
+    expect(strip.findAll('button').every((b) => b.classes().includes('h-6'))).toBe(true);
+    await strip.get('[aria-label="Stop showing only the sessions of Second"]').trigger('click');
     const showAll = page.findAll('button').find((b) => b.text() === 'Show all');
     expect(showAll).toBeUndefined();
+    expect(page.get('[data-session-filters]').element).toBe(strip.element);
     expect(sessionRows(page)).toHaveLength(3);
   });
 
@@ -1224,25 +1229,26 @@ describe('OverviewPage', () => {
       expect(document.querySelectorAll('[aria-hidden=true].fixed')).toHaveLength(0);
     });
 
-    it('draws the dust in the panel that scrolls the row, in even columns no narrower than the list corners', async () => {
+    it.each(['first', 'last'])('clips dust from the %s reset row to the widget frame', async (edge) => {
       const px = (n: number) => `${n}px`;
       let finish: () => void = () => {};
       stubMotion(false, new Promise<void>((r) => (finish = r)));
       store.state = withResets();
       fakeServer(() => withResets([FULL, FULL, { id: null, title: 'Old', expiresAt: NOW + 4 * DAY }]));
       const page = mount(OverviewPage, { attachTo: document.body });
-      // The page stands in for the content panel that scrolls it; the list box has rounded corners inside its border.
+      // The page stands in for the scrolling panel. The bare list gets its corners from the widget frame.
       const panel = page.element as HTMLElement;
       Object.assign(panel.style, { overflowY: 'auto', position: 'relative' });
-      const list = page.get('[aria-labelledby=resets-heading] ul').element as HTMLElement;
-      Object.assign(list.style, {
+      const frame = page.get('[aria-labelledby=resets-heading] > .border-divider-strong').element as HTMLElement;
+      Object.assign(frame.style, {
         borderTopLeftRadius: px(20),
         borderBottomLeftRadius: px(20),
         borderTopWidth: px(1),
         borderBottomWidth: px(1),
       });
-      // The first row: its top corners are the list's.
-      await page.findAll('[data-use-reset]')[0]!.trigger('click');
+      await useButtons(page)
+        .at(edge === 'first' ? 0 : -1)!
+        .trigger('click');
       await flushPromises();
       dialog()!.querySelector<HTMLButtonElement>('button[type=submit]')!.click();
       await flushPromises();
@@ -1251,12 +1257,16 @@ describe('OverviewPage', () => {
       expect(layer.classList).toContain('absolute');
       expect(layer.classList).toContain('overflow-hidden');
       expect(document.querySelectorAll('[aria-hidden=true].fixed')).toHaveLength(0);
-      // Fragments at least the 19 px corner: 3 high and 15 across the 60 by 300 row, all one width.
       const fragments = [...layer.children] as HTMLElement[];
-      expect(fragments).toHaveLength(3 * 15);
-      expect(new Set(fragments.map((f) => f.style.width))).toEqual(new Set([px(20)]));
-      expect(fragments[0]!.style.borderTopLeftRadius).toBe(px(19));
-      expect(fragments[14]!.style.borderTopRightRadius).toBe(px(19));
+      // The header keeps the first row away from the top corners. The last row reaches the 19 px inner radius.
+      const columns = edge === 'first' ? 50 : 15;
+      expect(fragments).toHaveLength(columns * (edge === 'first' ? 10 : 3));
+      expect(new Set(fragments.map((f) => f.style.width))).toEqual(new Set([px(300 / columns)]));
+      expect(fragments[0]!.style.borderTopLeftRadius).toMatch(/^0(?:px)?$/);
+      expect(fragments[columns - 1]!.style.borderTopRightRadius).toMatch(/^0(?:px)?$/);
+      const bottom = edge === 'first' ? 0 : 19;
+      expect(parseFloat(fragments.at(-columns)!.style.borderBottomLeftRadius)).toBe(bottom);
+      expect(parseFloat(fragments.at(-1)!.style.borderBottomRightRadius)).toBe(bottom);
       finish();
       await flushPromises();
       await flushPromises();

@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// The Memory page's chart, drawn by hand in SVG (MemoryPlot, no chart library), on the panel itself with no box around
-// it: the minutes across the day's recorded span along a baseline with ticks and time labels (`timeAxis`), memory up
-// with three faint gridlines labelled in GB, a stacked band per account (coloured by provider, greys for the groups,
+// The Memory page's chart, drawn by hand in SVG (MemoryPlot, no chart library): the minutes across the day's recorded
+// span along a baseline with ticks and time labels (`timeAxis`), with three faint horizontal gridlines labelled in GB.
+// It shows a stacked band per account (coloured by provider, greys for the groups,
 // the band of the hovered table row in chart-hover), each divided from the next by a thin line in the panel's colour,
-// and the minutes Warden was not running as an empty band, named on one line or two where that fits. A guide follows the pointer with a tooltip of the shown bands and their total at that minute; the chart
-// is a slider for the keyboard (the arrow keys move the guide a minute, Page Up and Page Down an hour, Home and End to
-// the first and last recording), its value the same words, so it works without a mouse; Escape hides the tooltip. The table under it is its accessible equivalent.
+// and the minutes Warden was not running as an empty band, named on one line or two where that fits. A guide follows
+// the pointer, with a tooltip for the shown bands and their total at that minute. The chart is a keyboard slider with
+// the same words as its value (arrows move a minute, Page Up and Page Down an hour, Home and End to the first and last
+// recording). Escape hides the tooltip. The table below is its accessible equivalent.
 import { useElementSize } from '@vueuse/core';
 import { computed, ref, useTemplateRef, watch } from 'vue';
 import { CHART, MISSING_TEXT, guideAt, guideText, timeAxis, size, type ChartModel } from '../memory';

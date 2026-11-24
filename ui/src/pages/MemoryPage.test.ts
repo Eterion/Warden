@@ -53,13 +53,13 @@ function day(date: string, minutes: MemoryMinute[], extra: Partial<MemoryDay> = 
   };
 }
 
-/** A figure's parts: its label, then each line under it (the meter's words for screen readers, then the meter, empty). */
+/** The figure's heading, number and detail. */
 function figure(
   page: { find: (s: string) => { exists: () => boolean; findAll: (s: string) => { text: () => string }[] } },
   key: string,
 ) {
   const f = page.find(`[data-figure="${key}"]`);
-  return f.exists() ? f.findAll('dt, dd').map((e) => e.text().trim()) : null;
+  return f.exists() ? f.findAll('header > [id], strong, strong + span, [data-share-note]').map((e) => e.text()) : null;
 }
 
 const busyDay = (date: string) =>
@@ -146,14 +146,27 @@ describe('MemoryPage', () => {
     expect(page.get('[data-day]').text()).toBe('Monday, 9 November');
     expect(figure(page, 'now')).toEqual(['AI sessions now', '1 GB', '3% of 32 GB']);
     expect(figure(page, 'peak')).toEqual(['Peak today', '3 GB', 'at 09:00']);
-    expect(figure(page, 'computer')).toEqual(['Computer', '30 GB', 'AI sessions 1 GB of it (3%)', '', '94% of 32 GB']);
+    expect(figure(page, 'computer')).toEqual(['Computer', '30 GB', '94% of 32 GB']);
     expect(figure(page, 'warden')).toEqual(['Warden itself', '9 MB', '<1% of 32 GB']);
     // Each with its icon, Warden's its own owl.
-    expect(page.findAll('[data-figures] dt svg')).toHaveLength(4);
+    const figures = page.get('[data-figures]');
+    expect(figures.findAll('section, h2')).toHaveLength(0);
+    for (const widget of figures.findAll('[role=group][data-figure]')) {
+      expect(widget.attributes('aria-labelledby')).toBe(widget.get('header > span').attributes('id'));
+      expect(widget.get('header + div').find('strong.text-24').exists()).toBe(true);
+    }
+    const icons = figures.findAll('header svg');
+    expect(icons).toHaveLength(4);
+    expect(icons.every((icon) => icon.classes().includes('size-4') && icon.classes().includes('text-icon'))).toBe(true);
     expect(page.find('[data-figure="warden"] [data-owl-icon]').exists()).toBe(true);
+    expect(page.get('[data-figure="peak"] header + div + .border-t').text()).toBe("9% of the computer's memory");
+    expect(page.get('[data-figure="warden"] header + div + .border-t').text()).toBe('Never counted in the chart');
+    expect(page.get('[data-share-note]').element.tagName).toBe('BUTTON');
+    expect(page.get('[data-memory-trend]').attributes('aria-hidden')).toBe('true');
+    expect(page.get('[data-memory-trend] .stroke-secondary').attributes('d')).toContain('M');
     // The computer above 90% in use: its number, share and meter amber.
-    expect(page.get('[data-computer] dd').classes()).toContain('text-attn');
-    expect(page.get('[data-computer] dd:last-child').classes()).toContain('text-attn');
+    expect(page.get('[data-computer] strong').classes()).toContain('text-attn');
+    expect(page.get('[data-computer] strong + span').classes()).toContain('text-attn');
     expect(page.get('[data-meter]').attributes('data-high')).toBe('true');
     expect(page.get('[data-meter-used]').classes()).toContain('bg-attn-icon');
     // The meter: Main's 1 GB of the 30 GB in use marked in the text colour, then the rest, as shares of 32 GB.
@@ -162,6 +175,13 @@ describe('MemoryPage', () => {
     expect(page.get('[data-meter-used]').attributes('style')).toContain('width: 90.63%');
     // Said in words for screen readers.
     expect(page.get('[data-meter-text]').text()).toBe('AI sessions 1 GB of it (3%)');
+    expect(
+      page
+        .get('[data-computer-legend]')
+        .findAll('span.inline-flex')
+        .map((item) => item.text()),
+    ).toEqual(['AI sessions', 'Everything else']);
+    expect(page.get('[data-computer-legend]').findAll('.size-2\\.5')).toHaveLength(2);
     const rows = page.findAll('[data-memory-table] [role=row]');
     expect(rows.map((r) => r.text())).toEqual([
       'Shown in the chartAccountNowPeakShare now',
@@ -185,14 +205,10 @@ describe('MemoryPage', () => {
     // A past day: no AI sessions now, its peak, the computer at its highest and when, Warden at its highest.
     expect(figure(page, 'now')).toBeNull();
     expect(figure(page, 'peak')).toEqual(['Peak', '3 GB', 'at 09:00']);
-    expect(figure(page, 'computer')).toEqual([
-      'Computer',
-      '30 GB',
-      'AI sessions 1 GB of it (3%)',
-      '',
-      '94% of 32 GB at 09:02',
-    ]);
-    expect(figure(page, 'warden')).toEqual(['Warden itself', '9 MB', 'at its highest']);
+    expect(figure(page, 'computer')).toEqual(['Computer', '30 GB', '94% of 32 GB at 09:02']);
+    expect(figure(page, 'warden')).toEqual(['Warden itself', '9 MB', '<1% of 32 GB at its highest']);
+    expect(page.find('[data-memory-trend]').exists()).toBe(false);
+    expect(page.find('[data-now-meter]').exists()).toBe(false);
     expect(page.get('button[aria-label="Previous day"]').attributes('aria-disabled')).toBe('true');
     await page.get('button[aria-label="Next day"]').trigger('click');
     await flushPromises();
@@ -205,10 +221,25 @@ describe('MemoryPage', () => {
     const page = mount(MemoryPage, { attachTo: document.body });
     await flushPromises();
     const box = page.get('[role=checkbox][aria-label="Show Work in the chart"]');
+    const legend = page.get('[aria-label="Chart legend"]');
+    const item = legend.get('[data-legend-band="account:a1"]');
+    const swatch = item.get('[aria-hidden]');
+    expect(legend.findAll('li').map((entry) => entry.text())).toEqual(['Main', 'Work']);
+    expect(legend.findAll('button, a, [tabindex]')).toHaveLength(0);
+    expect(legend.classes()).toEqual(expect.arrayContaining(['text-12', 'text-secondary']));
+    expect(swatch.classes()).toEqual(expect.arrayContaining(['size-2.5', 'bg-chart-claude-2']));
+    expect(item.classes()).not.toContain('text-tertiary');
+    const trend = () => page.get('[data-memory-trend] .stroke-secondary').attributes('d');
+    const initialTrend = trend();
     expect(box.attributes('aria-checked')).toBe('true');
     await box.trigger('click');
     expect(page.get('[role=checkbox][aria-label="Show Work in the chart"]').attributes('aria-checked')).toBe('false');
     expect(page.find('[data-band="account:a1"]').exists()).toBe(false);
+    expect(item.classes()).toContain('text-tertiary');
+    expect(swatch.classes()).toEqual(expect.arrayContaining(['border', 'border-control']));
+    expect(swatch.classes()).not.toContain('bg-chart-claude-2');
+    expect(item.text()).toBe('Work (hidden)');
+    expect(trend()).not.toBe(initialTrend);
     expect(figure(page, 'peak')?.[1]).toBe('2 GB');
     // The row stays, with its own figures.
     expect(page.get('[data-band-row="account:a1"]').text()).toContain('1 GB');
@@ -216,6 +247,38 @@ describe('MemoryPage', () => {
     expect(page.get('[data-band="account:main"]').classes()).toContain('fill-chart-hover');
     await page.get('[data-band-row="account:main"]').trigger('pointerleave');
     expect(page.get('[data-band="account:main"]').classes()).toContain('fill-chart-claude-1');
+    await box.trigger('click');
+    expect(item.classes()).not.toContain('text-tertiary');
+    expect(swatch.classes()).toContain('bg-chart-claude-2');
+    expect(trend()).toBe(initialTrend);
+    page.unmount();
+  });
+
+  it('scales each Now meter against the largest reading, including when a band is unchecked', async () => {
+    const data = busyDay(TODAY);
+    data.minutes.push(
+      minute(543, [
+        [1, 2 * GIB],
+        [2, GIB / 4],
+      ]),
+    );
+    server({ [TODAY]: data });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    const bars = page.findAll('[data-now-meter]');
+    expect(bars.map((bar) => bar.attributes('style'))).toEqual(['width: 100%;', 'width: 12.5%;']);
+    expect(bars[0]!.classes()).toContain('bg-chart-claude-1');
+    expect(bars[1]!.classes()).toContain('bg-chart-claude-2');
+    for (const track of page.findAll('[data-now-track]')) {
+      expect(track.classes()).toEqual(expect.arrayContaining(['w-8', 'shrink-0', 'bg-track']));
+      expect(track.element.nextElementSibling?.classList).toContain('w-14');
+      expect(track.element.nextElementSibling?.classList).toContain('text-right');
+      const bar = track.get('[data-now-meter]');
+      expect(bar.classes()).toEqual(expect.arrayContaining(['ring-1', 'ring-panel']));
+      expect(bar.element.parentElement?.classList).toContain('inset-px');
+    }
+    await page.get('[role=checkbox][aria-label="Show Main in the chart"]').trigger('click');
+    expect(bars[1]!.attributes('style')).toBe('width: 12.5%;');
     page.unmount();
   });
 
@@ -342,6 +405,9 @@ describe('MemoryPage', () => {
     const page = mount(MemoryPage, { attachTo: document.body });
     await flushPromises();
     const chart = page.get('[data-memory-chart]');
+    const trend = page.get('[data-memory-trend]');
+    expect(trend.get('.stroke-secondary').attributes('d')?.match(/M/g)).toHaveLength(2);
+    expect(trend.get('.fill-secondary').attributes('d')?.match(/Z/g)).toHaveLength(2);
     await chart.trigger('focus');
     await chart.trigger('keydown', { key: 'Home' });
     await chart.trigger('keydown', { key: 'ArrowRight' });
@@ -403,7 +469,7 @@ describe('MemoryPage', () => {
     await flushPromises();
     expect(again.get('[data-meter]').attributes('data-high')).toBeUndefined();
     expect(again.get('[data-meter-used]').classes()).toContain('bg-control');
-    expect(again.get('[data-computer] dd').classes()).not.toContain('text-attn');
+    expect(again.get('[data-computer] strong').classes()).not.toContain('text-attn');
     again.unmount();
   });
 
@@ -433,6 +499,8 @@ describe('MemoryPage', () => {
     expect(page.get('[data-memory-none-now]').text()).toBe('No AI sessions are running.');
     expect(page.find('[data-memory-chart]').exists()).toBe(true);
     expect(figure(page, 'now')?.[1]).toBe('0 MB');
+    expect(page.findAll('[data-now-track]')).toHaveLength(2);
+    expect(page.find('[data-now-meter]').exists()).toBe(false);
     page.unmount();
   });
 
@@ -460,7 +528,7 @@ describe('MemoryPage', () => {
     const page = mount(MemoryPage, { attachTo: document.body });
     await flushPromises();
     expect(page.get('[data-memory-none]').text()).toBe('No AI sessions are running.');
-    expect(figure(page, 'computer')).toEqual(['Computer', '12 GB', 'AI sessions 0 MB of it (0%)', '', '38% of 32 GB']);
+    expect(figure(page, 'computer')).toEqual(['Computer', '12 GB', '38% of 32 GB']);
     expect(page.find('[data-memory-chart]').exists()).toBe(false);
     page.unmount();
   });

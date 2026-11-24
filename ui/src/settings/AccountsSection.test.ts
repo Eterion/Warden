@@ -62,13 +62,28 @@ describe('AccountsSection', () => {
     expect(page.find('[title*=".claude"]').exists()).toBe(false);
   });
 
+  it('names the reserve group with the main account’s heading and shows both lines together', async () => {
+    const { page } = setup();
+    store.state!.main!.label = 'Studio';
+    await flushPromises();
+    const group = page.get('section[aria-labelledby="main-reserve-heading"]');
+    expect(group.get('h3#main-reserve-heading').text()).toBe("Studio's reserve");
+    const explanation = group.get('[data-reserve-explanation]');
+    expect(explanation.get('[data-hand-off]').text()).toBe(
+      'Studio takes delegated work only up to 75% now: it keeps 25% of its week for you.',
+    );
+    expect(explanation.get('[data-reserve-why]').text()).toBe(
+      "All of your 25% is kept until Warden reads when Studio's week ends.",
+    );
+    expect(explanation.find('[role=slider]').exists()).toBe(false);
+    expect(group.get('.w-64').element.parentElement?.nextElementSibling).toBe(explanation.element);
+  });
+
   it('saves the reserve once per drag', async () => {
     const { page, calls } = setup();
     const slider = page.getComponent(WSlider);
     expect(slider.props()).toMatchObject({ min: 0, max: 50, step: 5, labelledby: 'reserve-label' });
-    expect(page.text()).toContain(
-      "The share of Main's week kept for your own work. It shrinks as Main's weekly reset nears, during your work hours when they are set.",
-    );
+    expect(page.get('#reserve-label + span').text()).toBe("The share of Main's week kept for your own work.");
     expect(page.get('[data-hand-off]').text()).toBe(
       'Main takes delegated work only up to 75% now: it keeps 25% of its week for you.',
     );
@@ -267,6 +282,10 @@ describe('AccountsSection', () => {
     store.state!.settings.workHours = { days: [1, 2, 3, 4, 5], from: 540, to: 1080 };
     await flushPromises();
     expect(page.get('[data-work-hours]').text()).toBe('09:00–18:00');
+    const grid = page.get('.grid-cols-work-hours');
+    const workDays = grid.get('[role=group][aria-label="Work days"]');
+    expect(workDays.element.previousElementSibling?.textContent).toBe('Days');
+    expect(grid.get('[data-work-hours]').element.parentElement?.previousElementSibling?.textContent).toBe('Hours');
     await page.get('#work-hours').trigger('click');
     await flushPromises();
     expect(calls.at(-1)).toEqual({ method: 'PUT', path: '/api/settings', body: { workHours: null } });

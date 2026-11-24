@@ -33,6 +33,7 @@ import WTable from '../components/WTable.vue';
 import WTableRow from '../components/WTableRow.vue';
 import WList from '../components/WList.vue';
 import WListItem from '../components/WListItem.vue';
+import WWidget from '../components/WWidget.vue';
 import {
   IDLE_LOGIN,
   expectedSignIn,
@@ -175,11 +176,12 @@ const using = ref<ResetRow | null>(null);
 const confirming = ref(false);
 /** Said to assistive technology once a reset is used. */
 const announced = ref('');
-const resetList = ref<HTMLElement | null>(null);
+const resetList = useTemplateRef<{ $el: HTMLElement }>('resetList');
 /** The Overview's heading: where focus goes after a use when no Use button stays. */
 const heading = ref<HTMLElement | null>(null);
 /** The Limit resets heading: focus waits here while the last usable reset's row goes, so the list stays in view. */
-const resetsHeading = ref<HTMLElement | null>(null);
+const resetsWidget = useTemplateRef<InstanceType<typeof WWidget>>('resetsWidget');
+const resetsHeading = computed(() => resetsWidget.value?.heading ?? null);
 /** The reset just used, while its confirmation closes: focus then goes to a Use button that stays. */
 let usedKey: string | null = null;
 
@@ -191,7 +193,7 @@ function askToUse(r: ResetRow): void {
 /** A row of the list on screen, by its key. */
 function rowOf(key: string): HTMLElement | null {
   return (
-    [...(resetList.value?.querySelectorAll<HTMLElement>('[data-reset-key]') ?? [])].find(
+    [...(resetList.value?.$el.querySelectorAll<HTMLElement>('[data-reset-key]') ?? [])].find(
       (e) => e.dataset.resetKey === key,
     ) ?? null
   );
@@ -233,7 +235,7 @@ async function letGo(key: string): Promise<void> {
   held.value = null;
   await nextTick();
   // A row a newer use is already sending stays as it is.
-  for (const e of resetList.value?.querySelectorAll<HTMLElement>('[data-reset-key]') ?? []) {
+  for (const e of resetList.value?.$el.querySelectorAll<HTMLElement>('[data-reset-key]') ?? []) {
     if (!leaving.has(e.dataset.resetKey ?? '')) undoDust(e);
   }
 }
@@ -416,31 +418,25 @@ function sessionAccount(s: Session): Account | undefined {
       Warden's core is not running. Start it, and this page fills in by itself.
     </p>
 
-    <div v-else-if="store.state" class="flex flex-wrap items-start gap-x-6 gap-y-4.5">
-      <div class="flex min-w-0 grow-999 basis-192 flex-col gap-4.5">
-        <section aria-labelledby="accounts-heading" class="flex flex-col gap-3">
-          <div class="flex flex-col gap-0.5">
-            <div class="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-              <h2 id="accounts-heading" class="text-16 font-semibold">Accounts</h2>
-              <div
-                v-if="accounts.length"
-                aria-label="Activity line"
-                class="ml-auto flex flex-wrap items-center gap-x-3.5 gap-y-1 text-12 text-secondary"
-              >
-                <span class="inline-flex items-center gap-1.5">
-                  <span aria-hidden="true" class="h-0 w-3.5 border-t-2 border-act-working"></span>Sessions working
-                </span>
-                <span class="inline-flex items-center gap-1.5">
-                  <span aria-hidden="true" class="size-1.75 rounded-full bg-attn-icon"></span>Waited for you
-                </span>
-              </div>
+    <div v-else-if="store.state" class="flex flex-wrap items-start gap-4">
+      <div class="flex min-w-0 grow-999 basis-192 flex-col gap-4">
+        <WWidget title="Accounts" heading-id="accounts-heading">
+          <template #header>
+            <div
+              v-if="accounts.length"
+              aria-label="Activity line"
+              class="ml-auto flex flex-wrap items-center gap-x-3.5 gap-y-1 text-12 text-secondary"
+            >
+              <span class="inline-flex items-center gap-1.5">
+                <span aria-hidden="true" class="h-0 w-3.5 border-t-2 border-act-working"></span>Sessions working
+              </span>
+              <span class="inline-flex items-center gap-1.5">
+                <span aria-hidden="true" class="size-1.75 rounded-full bg-attn-icon"></span>Waited for you
+              </span>
             </div>
-          </div>
+          </template>
 
-          <div
-            v-if="accounts.length === 0"
-            class="flex flex-col items-start gap-3 rounded-lg border border-divider-strong p-4"
-          >
+          <div v-if="accounts.length === 0" class="flex flex-col items-start gap-3 px-4 pb-4">
             <p class="text-14 text-secondary">No accounts yet.</p>
             <WButton variant="primary" @click="go('settings/accounts/add')">Add account</WButton>
           </div>
@@ -448,6 +444,7 @@ function sessionAccount(s: Session): Account | undefined {
           <WTable
             v-else
             on="panel"
+            bare
             aria-labelledby="accounts-heading"
             :cols="`${showExtra ? 'grid-cols-overview' : 'grid-cols-overview-no-extra'} gap-x-4 gap-y-3`"
             :class="showExtra ? 'min-w-overview' : 'min-w-overview-no-extra'"
@@ -568,16 +565,17 @@ function sessionAccount(s: Session): Account | undefined {
               </p>
             </WTableRow>
           </WTable>
-        </section>
+        </WWidget>
 
-        <section v-if="accounts.length" aria-labelledby="sessions-heading" class="flex flex-col gap-3">
-          <div class="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-            <h2 id="sessions-heading" class="text-16 font-semibold">Sessions</h2>
-            <div class="flex flex-wrap items-baseline gap-1.5 text-13">
+        <WWidget v-if="accounts.length" title="Sessions" heading-id="sessions-heading" center-header>
+          <template #header>
+            <!-- Keep one line for filter controls, including when empty. Long selections scroll within it. -->
+            <div data-session-filters class="-my-1 flex h-9 min-w-32 flex-1 items-center gap-1.5 overflow-x-auto px-1">
               <RemovableChip
                 v-for="id in filter"
                 :key="id"
                 size="sm"
+                class="shrink-0"
                 :label="`Stop showing only the sessions of ${byId.get(id)?.label}`"
                 @click="toggle(id)"
               >
@@ -589,15 +587,18 @@ function sessionAccount(s: Session): Account | undefined {
               <div aria-label="Sessions shown by state" class="flex flex-wrap items-center gap-x-3.5 gap-y-1">
                 <span class="inline-flex items-center gap-1.5">
                   <StateIcon state="working" size="sm" />
-                  <strong class="font-semibold text-text tabular-nums">{{ shownTally.working }}</strong> working
+                  <strong class="font-semibold text-text tabular-nums">{{ shownTally.working }}</strong>
+                  working
                 </span>
                 <span class="inline-flex items-center gap-1.5">
                   <StateIcon state="waiting" size="sm" />
-                  <strong class="font-semibold text-text tabular-nums">{{ shownTally.waiting }}</strong> waiting for you
+                  <strong class="font-semibold text-text tabular-nums">{{ shownTally.waiting }}</strong>
+                  waiting for you
                 </span>
                 <span class="inline-flex items-center gap-1.5">
                   <StateIcon state="idle" size="sm" />
-                  <strong class="font-semibold text-text tabular-nums">{{ shownTally.idle }}</strong> idle
+                  <strong class="font-semibold text-text tabular-nums">{{ shownTally.idle }}</strong>
+                  idle
                 </span>
               </div>
               <!-- On shows ended and not-known sessions, always there (0 too); its label (with the count) names it,
@@ -615,9 +616,15 @@ function sessionAccount(s: Session): Account | undefined {
                 >
               </span>
             </div>
-          </div>
+          </template>
 
-          <WTable on="panel" aria-labelledby="sessions-heading" cols="grid-cols-sessions gap-3" class="min-w-sessions">
+          <WTable
+            bare
+            on="panel"
+            aria-labelledby="sessions-heading"
+            cols="grid-cols-sessions gap-3"
+            class="min-w-sessions"
+          >
             <template #head>
               <span role="columnheader"><span class="sr-only">State</span></span>
               <span role="columnheader">Session</span>
@@ -727,31 +734,26 @@ function sessionAccount(s: Session): Account | undefined {
               </span>
             </div>
           </WTable>
-        </section>
+        </WWidget>
       </div>
 
       <!-- The right column (under the rest in a narrow window): today's memory, then the limit resets while there are any. -->
-      <div class="flex min-w-0 grow basis-72 flex-col gap-4.5">
+      <div class="flex min-w-0 grow basis-84 flex-col gap-4">
         <MemoryCard />
-        <section
+        <WWidget
           v-if="resets.length || every.length"
-          ref="resetList"
-          aria-labelledby="resets-heading"
-          class="flex flex-col gap-3"
+          ref="resetsWidget"
+          title="Limit resets"
+          heading-id="resets-heading"
+          focusable-heading
         >
-          <div class="flex items-center justify-between gap-3">
-            <h2
-              id="resets-heading"
-              ref="resetsHeading"
-              tabindex="-1"
-              class="rounded-xs text-16 font-semibold outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator"
-            >
-              Limit resets
-              <span class="ml-1 font-normal text-tertiary tabular-nums" data-resets-shown>{{ count(shownCount) }}</span>
-            </h2>
+          <template #title-after>
+            <span class="ml-1 font-normal text-tertiary tabular-nums" data-resets-shown>{{ count(shownCount) }}</span>
+          </template>
+          <template #header>
             <!-- The filter: which accounts' resets show, and only each one's soonest; remembered. While it leaves some out,
                how many sits beside it. -->
-            <div class="flex items-center gap-2">
+            <div class="ml-auto flex items-center gap-2">
               <span v-if="hiddenCount" class="text-12 text-secondary tabular-nums" data-resets-hidden
                 >{{ count(hiddenCount) }} hidden</span
               >
@@ -792,8 +794,8 @@ function sessionAccount(s: Session): Account | undefined {
                 </DropdownMenuPortal>
               </DropdownMenuRoot>
             </div>
-          </div>
-          <WList>
+          </template>
+          <WList ref="resetList" bare>
             <WListItem v-if="!resets.length" class="text-14 text-tertiary" data-resets-all-hidden>
               The filter leaves out every reset.
             </WListItem>
@@ -821,7 +823,7 @@ function sessionAccount(s: Session): Account | undefined {
               >
             </WListItem>
           </WList>
-        </section>
+        </WWidget>
       </div>
       <p role="status" class="sr-only">{{ announced }}</p>
     </div>

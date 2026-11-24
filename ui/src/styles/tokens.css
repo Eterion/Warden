@@ -166,6 +166,7 @@
   --text-16: 16px;
   --text-18: 18px;
   --text-20: 20px;
+  --text-24: 24px;
   --leading-*: initial;
   --font-weight-*: initial;
   --font-weight-normal: 400;
@@ -322,12 +323,12 @@ body {
 
 @utility grid-cols-memory {
   /* The Memory table: checkbox, account (its grey, icon and name), now, peak, share. */
-  grid-template-columns: 20px minmax(180px, 1fr) minmax(80px, 120px) minmax(80px, 120px) minmax(88px, 120px);
+  grid-template-columns: 20px minmax(180px, 1fr) minmax(96px, 120px) minmax(80px, 120px) minmax(88px, 120px);
 }
 
 @utility grid-cols-figures {
   /* The Memory page's figures: equal columns across the width, as many as fit at a figure's least width. */
-  grid-template-columns: repeat(auto-fit, minmax(184px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 184px), 1fr));
 }
 
 @utility min-w-memory {
@@ -339,6 +340,7 @@ body {
      (dust-art-*, picked at random) drawn in a faint line, uncovered as the fragments blow away. Decoration only, not a
      colour anything is read against. */
   position: relative;
+  border-radius: var(--dust-radius);
   background-color: var(--color-win);
   &::before {
     content: '';
@@ -380,6 +382,10 @@ body {
 @utility grid-cols-account-list {
   /* Account, hooks (a word, and Repair when needed; one width for every row), delegated-work switch, menu. */
   grid-template-columns: minmax(0, 1fr) 184px 48px 32px;
+}
+
+@utility grid-cols-work-hours {
+  grid-template-columns: max-content minmax(0, 1fr);
 }
 
 @utility grid-cols-setup {

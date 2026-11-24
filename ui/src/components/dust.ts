@@ -41,18 +41,28 @@ function surfaceOf(row: HTMLElement): string {
 }
 
 /**
- * The rounding of the list box's corners inside its border, for the row's corner fragments when the row is the list's
- * first or last: they start as the row looks, clipped by the box.
+ * The nearest rounded frame's inner corners, where the row reaches the frame's top or bottom. A widget's header
+ * comes before its bare list, so only the last row of that list reaches a corner.
  */
 function cornerOf(row: HTMLElement): { top: string; bottom: string } {
-  const list = row.parentElement;
-  if (!list) return { top: '0', bottom: '0' };
-  const style = getComputedStyle(list);
-  const inner = (radius: string, border: string) => `${Math.max(0, parseFloat(radius) - parseFloat(border)) || 0}px`;
-  return {
-    top: row === list.firstElementChild ? inner(style.borderTopLeftRadius, style.borderTopWidth) : '0',
-    bottom: row === list.lastElementChild ? inner(style.borderBottomLeftRadius, style.borderBottomWidth) : '0',
-  };
+  let first = true;
+  let last = true;
+  for (let child = row, frame = row.parentElement; frame; child = frame, frame = frame.parentElement) {
+    first &&= child === frame.firstElementChild;
+    last &&= child === frame.lastElementChild;
+    if (!first && !last) break;
+    const style = getComputedStyle(frame);
+    const top = parseFloat(style.borderTopLeftRadius) || 0;
+    const bottom = parseFloat(style.borderBottomLeftRadius) || 0;
+    if (top || bottom) {
+      const inside = (radius: number, border: string) => `${Math.max(0, radius - (parseFloat(border) || 0))}px`;
+      return {
+        top: first ? inside(top, style.borderTopWidth) : '0',
+        bottom: last ? inside(bottom, style.borderBottomWidth) : '0',
+      };
+    }
+  }
+  return { top: '0', bottom: '0' };
 }
 
 /**
@@ -246,6 +256,7 @@ export async function turnToDust(row: HTMLElement, reduce: boolean): Promise<voi
     }
     parent.append(layer);
     // Behind the dust, the hole the row leaves: uncovered as the fragments blow away.
+    row.style.setProperty('--dust-radius', `${corner.top} ${corner.top} ${corner.bottom} ${corner.bottom}`);
     row.classList.add('dust-hole', ART_CLASS[art]);
     content.style.visibility = 'hidden';
     const drift = Promise.all(drifts.map(ended)).then(() => undefined);
@@ -280,6 +291,7 @@ export function undoDust(row: HTMLElement): void {
   row.classList.remove('dust-hole', ...Object.values(ART_CLASS));
   for (const a of row.getAnimations?.() ?? []) a.cancel();
   row.style.removeProperty('overflow');
+  row.style.removeProperty('--dust-radius');
   contentOf(row).style.removeProperty('visibility');
 }
 

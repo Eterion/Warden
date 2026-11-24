@@ -2286,7 +2286,7 @@ impl App {
         let label = clean_label(label)?;
         let Some(cli) = detect::cli_path(&self.env, provider) else {
             return Err(ApiError::bad(format!(
-                "The {} command line was not found on PATH. Install it, then choose Scan again in Settings, General.",
+                "The {} command line was not found on PATH. Install it, then choose Scan again in Settings, Accounts.",
                 provider.name().to_lowercase()
             )));
         };

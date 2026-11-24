@@ -120,6 +120,7 @@ type Theme = 'system' | 'light' | 'dark';
 interface Settings {
   reserve: number;
   usageIntervalMin: number;
+  /** The colour scheme selected in Settings › Appearance. */
   theme: Theme;
   /** Desktop app: closing the window leaves Warden in the tray. */
   keepInTray: boolean;
@@ -127,9 +128,9 @@ interface Settings {
   workHours: WorkHours | null;
   /** How many days before a limit reset expires the Overview shows it as a warning: whole days, 1 to 14, default 3. */
   resetWarningDays: number;
-  /** Whether the Overview's sessions table shows ended and not-known sessions; default `true`. Set only by the switch in the Sessions header, not in Settings › General. */
+  /** Whether the Overview's sessions table shows ended and not-known sessions. Defaults to `true` and is set by the switch in the Sessions header. */
   showQuietSessions: boolean;
-  /** Overview and Memory fade when switching pages. Defaults to `true`. */
+  /** Overview and Memory fade when switching pages. Set in Settings › Appearance. Defaults to `true`. */
   pageTransitions: boolean;
   /** The accounts (by id; main is `main`) whose limit resets the Overview's list leaves out; default none. Only accounts Warden knows now are listed. Set only by the list's filter. */
   hiddenResetAccounts: string[];

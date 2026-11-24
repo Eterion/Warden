@@ -613,8 +613,14 @@ export const PAGES: {
     ],
   },
   {
-    name: 'settings-general',
-    path: '/#/settings/general',
+    name: 'settings-app',
+    path: '/#/settings/app',
+    fixture: 'normal',
+    ready: 'text=Read usage every',
+  },
+  {
+    name: 'settings-appearance',
+    path: '/#/settings/appearance',
     fixture: 'normal',
     ready: '#page-transitions',
   },
@@ -699,6 +705,16 @@ export const PAGES: {
     steps: [{ press: 'aside button[aria-label="Add account"]' }],
   },
   {
+    name: 'sidebar-theme-hover',
+    path: '/',
+    fixture: 'normal',
+    ready: 'main [role=table]',
+    steps: [
+      { hover: 'aside button[aria-label^="Switch to "][aria-label$=" theme"]' },
+      { waitFor: 'text=/^Switch to (dark|light) theme$/' },
+    ],
+  },
+  {
     name: 'settings-add-existing-folder',
     path: '/#/settings/accounts/add',
     fixture: 'normal',
@@ -762,7 +778,7 @@ export const PAGES: {
   },
   {
     name: 'settings-search',
-    path: '/#/settings/general',
+    path: '/#/settings/app',
     fixture: 'normal',
     ready: 'text=Read usage every',
     steps: [
@@ -803,22 +819,27 @@ export const PAGES: {
         click: '[aria-label="Warden menu"]',
       },
       {
-        waitFor: '[role=menuitem]',
+        waitFor: '[role=menu] [role=group] >> text="Settings"',
       },
     ],
   },
   {
-    // The same menu opened from the keyboard: its first item, Settings, has focus and shows the focus outline.
+    // The same menu opened from the keyboard: its first item, App, has focus and shows the focus outline.
     name: 'desktop-app-menu-keyboard',
     path: '/?desktop',
     fixture: 'desktop',
     ready: 'main [role=table]',
-    steps: [{ focus: '[aria-label="Warden menu"]' }, { key: 'Enter' }, { waitFor: '[role=menuitem]:focus-visible' }],
+    steps: [
+      { focus: '[aria-label="Warden menu"]' },
+      { key: 'Enter' },
+      { waitFor: '[role=menu] [role=group] >> text="Settings"' },
+      { waitFor: '[role=menuitem]:focus-visible >> text="App"' },
+    ],
   },
   {
-    // Settings chosen from the menu with the keyboard: it opens in General once the menu has closed, focus inside it
+    // App chosen from the menu with the keyboard: Settings opens once the menu has closed, focus inside it
     // (with the menu's closing animation, which the unit tests do not have).
-    name: 'desktop-app-menu-settings',
+    name: 'desktop-app-menu-app',
     path: '/?desktop',
     fixture: 'desktop',
     ready: 'main [role=table]',
@@ -827,10 +848,25 @@ export const PAGES: {
       { key: 'Enter' },
       { waitFor: '[role=menuitem]:focus-visible' },
       { key: 'Enter' },
-      { waitFor: '[role=dialog] h2 >> text=General' },
+      { waitFor: '[role=dialog] h2 >> text="App"' },
       { focused: ':is([role=dialog], [role=dialog] *)' },
       // Still there once the menu has gone: nothing took focus back from Settings.
       { waitGone: '[role=menu]' },
+      { focused: ':is([role=dialog], [role=dialog] *)' },
+    ],
+  },
+  {
+    name: 'desktop-app-menu-appearance',
+    path: '/?desktop',
+    fixture: 'desktop',
+    ready: 'main [role=table]',
+    steps: [
+      { focus: '[aria-label="Warden menu"]' },
+      { key: 'Enter' },
+      { waitFor: '[role=menuitem]:focus-visible >> text="App"' },
+      { key: 'ArrowDown' },
+      { key: 'Enter' },
+      { waitFor: '[role=dialog] h2 >> text="Appearance"' },
       { focused: ':is([role=dialog], [role=dialog] *)' },
     ],
   },
@@ -844,6 +880,7 @@ export const PAGES: {
       { focus: '[aria-label="Warden menu"]' },
       { key: 'Enter' },
       { waitFor: '[role=menuitem]:focus-visible' },
+      { key: 'ArrowDown' },
       { key: 'ArrowDown' },
       { key: 'Enter' },
       { waitFor: '[role=dialog] h2 >> text=Accounts' },
@@ -878,10 +915,16 @@ export const PAGES: {
     ],
   },
   {
-    name: 'desktop-settings-general',
-    path: '/?desktop#/settings/general',
+    name: 'desktop-settings-app',
+    path: '/?desktop#/settings/app',
     fixture: 'desktop',
     ready: 'text=Warn before a reset expires',
+  },
+  {
+    name: 'desktop-settings-appearance',
+    path: '/?desktop#/settings/appearance',
+    fixture: 'desktop',
+    ready: '#page-transitions',
   },
   {
     name: 'desktop-update-downloading',

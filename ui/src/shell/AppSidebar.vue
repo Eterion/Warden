@@ -1,12 +1,19 @@
 <script setup lang="ts">
 // The full-height sidebar: Warden, Overview and Memory, the accounts in use with their weekly bars (and Add account beside their
-// heading), a newer Warden's download or "Install and restart", and Settings at the bottom. In
-// the desktop app, Warden's name opens the app menu (Settings, Accounts, Quit) and the row around it moves the window.
+// heading), a newer Warden's download or "Install and restart", and Settings and the theme button at the bottom.
+// In the desktop app, Warden's name opens the app menu and the row around it moves the window.
 // In a window too short for all of it, the sidebar scrolls on its own (`relative`, so nothing positioned inside reaches
 // past it).
-import { ChevronDown, CircleUserRound, LayoutDashboard, MemoryStick, Plus, Power, Settings } from '@lucide/vue';
-import { DropdownMenuPortal, DropdownMenuRoot, DropdownMenuSeparator, DropdownMenuTrigger } from 'reka-ui';
-import { computed, useTemplateRef } from 'vue';
+import { ChevronDown, LayoutDashboard, MemoryStick, Moon, Plus, Power, Settings, Sun } from '@lucide/vue';
+import {
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuPortal,
+  DropdownMenuRoot,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from 'reka-ui';
+import { computed, ref, useTemplateRef, watch } from 'vue';
 import NavItem from '../components/NavItem.vue';
 import ProviderMark from '../components/ProviderMark.vue';
 import StateIcon from '../components/StateIcon.vue';
@@ -14,10 +21,13 @@ import UsageBar from '../components/UsageBar.vue';
 import WIconButton from '../components/WIconButton.vue';
 import WMenuContent from '../components/WMenuContent.vue';
 import WMenuItem from '../components/WMenuItem.vue';
+import WTooltip from '../components/WTooltip.vue';
 import { desktop, quit } from '../desktop';
 import { limitView, loginIdle } from '../format';
-import { openAddAccount, openSettings, route, type Section } from '../route';
+import { openAddAccount, openSettings, route, SECTIONS, type Section } from '../route';
+import { sections } from '../settings/sections';
 import { store, usedAccounts } from '../store';
+import { useThemeSwitch } from '../theme';
 import UpdateItem from './UpdateItem.vue';
 // Warden's own mark, the owl: the app icon's own source, so the two never differ.
 import mark from '../../../crates/warden-desktop/icons/warden.svg';
@@ -31,6 +41,26 @@ const accounts = computed(() =>
     return { account: a, week, busy, aria: week ? `Week ${week.percent}% used` : 'Weekly limit not read yet' };
   }),
 );
+
+const { activeTheme, switchTheme } = useThemeSwitch();
+const themeButtons = {
+  light: { icon: Sun, label: 'Switch to dark theme' },
+  dark: { icon: Moon, label: 'Switch to light theme' },
+};
+const themeButton = computed(() => themeButtons[activeTheme.value]);
+const themeError = ref<string | null>(null);
+let savingTheme = false;
+
+watch([() => store.state?.settings.theme, () => store.connected], ([theme, connected], [previousTheme]) => {
+  if (theme !== previousTheme || connected) themeError.value = null;
+});
+
+async function toggleTheme(): Promise<void> {
+  if (savingTheme) return;
+  savingTheme = true;
+  themeError.value = await switchTheme();
+  savingTheme = false;
+}
 
 const menuButton = useTemplateRef<{ $el: HTMLElement }>('menuButton');
 /** The Settings section a menu item asked for, opened once the menu has closed. */
@@ -92,8 +122,12 @@ function onMenuClosed(): void {
         <!-- Kept inside the sidebar, so the open menu stays within its landmark. -->
         <DropdownMenuPortal disabled>
           <WMenuContent align="start" @close-auto-focus="onMenuClosed">
-            <WMenuItem :icon="Settings" @select="openFromMenu('general')">Settings</WMenuItem>
-            <WMenuItem :icon="CircleUserRound" @select="openFromMenu('accounts')">Accounts</WMenuItem>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel class="px-2.5 py-1 text-12 font-medium text-tertiary">Settings</DropdownMenuLabel>
+              <WMenuItem v-for="id in SECTIONS" :key="id" :icon="sections[id].icon" @select="openFromMenu(id)">
+                {{ sections[id].label }}
+              </WMenuItem>
+            </DropdownMenuGroup>
             <DropdownMenuSeparator class="-mx-1 my-1 h-px bg-divider-strong" />
             <WMenuItem :icon="Power" @select="quit">Quit Warden</WMenuItem>
           </WMenuContent>
@@ -143,7 +177,13 @@ function onMenuClosed(): void {
 
     <div class="mt-auto flex flex-col gap-0.5">
       <UpdateItem />
-      <NavItem :icon="Settings" @click="openSettings()">Settings</NavItem>
+      <p v-if="themeError" role="alert" class="mb-2 px-2 text-13 font-medium text-attn">{{ themeError }}</p>
+      <div class="flex items-center gap-0.5">
+        <NavItem :icon="Settings" @click="openSettings()">Settings</NavItem>
+        <WTooltip :text="themeButton.label" as-child>
+          <WIconButton :label="themeButton.label" :icon="themeButton.icon" size="nav" @click="toggleTheme" />
+        </WTooltip>
+      </div>
     </div>
   </aside>
 </template>

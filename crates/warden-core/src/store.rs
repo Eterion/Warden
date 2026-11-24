@@ -97,6 +97,7 @@ pub struct Settings {
     pub version: u32,
     pub setup_done: bool,
     pub usage_interval_min: u32,
+    /// The colour scheme selected in Settings › Appearance.
     pub theme: Theme,
     /// Desktop app: closing the window leaves Warden running in the tray instead of quitting.
     pub keep_in_tray: bool,
@@ -116,11 +117,11 @@ pub struct Settings {
     #[serde(deserialize_with = "lenient_reset_warning_days")]
     pub reset_warning_days: u8,
     /// Whether the Overview's sessions table shows ended and not-known sessions. Its only control is the switch in the
-    /// Sessions header; it is not in Settings › General. A value of the wrong type loads as `true`, never failing the
-    /// file.
+    /// Sessions header. A value of the wrong type loads as `true`, never failing the file.
     #[serde(deserialize_with = "lenient_true")]
     pub show_quiet_sessions: bool,
-    /// Whether Overview and Memory animate when switching pages. A missing or invalid value defaults to `true`.
+    /// Whether Overview and Memory animate when switching pages, set in Settings › Appearance. A missing or invalid
+    /// value defaults to `true`.
     #[serde(deserialize_with = "lenient_true")]
     pub page_transitions: bool,
     /// The accounts whose limit resets the Overview's list leaves out (its filter, the only control). An id no account

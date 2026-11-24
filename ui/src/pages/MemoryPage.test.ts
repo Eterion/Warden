@@ -123,7 +123,7 @@ describe('the address', () => {
     expect(route.day.value).toBeNull();
     go(`memory/${PAST}`);
     expect(route.day.value).toBe(PAST);
-    go('settings/general');
+    go('settings/app');
     expect(route.page.value).toBe('memory');
     expect(route.day.value).toBe(PAST);
     go('memory/not-a-day');

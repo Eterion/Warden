@@ -28,7 +28,7 @@ describe('review by production risk', () => {
       assert.ok(reviewKinds([path]).includes('code'), path);
   });
   it('requests UX only for production UI', () => {
-    assert.deepEqual(reviewKinds(['ui/src/settings/GeneralSection.vue', 'checks/api-doc.ts']), ['ux']);
+    assert.deepEqual(reviewKinds(['ui/src/settings/AppSection.vue', 'checks/api-doc.ts']), ['ux']);
     assert.deepEqual(reviewKinds(['ui/public/icon.svg']), ['ux']);
   });
 

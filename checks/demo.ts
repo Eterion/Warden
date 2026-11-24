@@ -4,8 +4,8 @@
 // usage endpoint), makes a throwaway home folder with four made-up accounts (two Claude, two Codex, one of them
 // switched off) and a throwaway data folder, and feeds the server believable activity: usage readings, Codex session
 // logs and status-hook events for sessions that work, wait for you, go idle, run subagents and finish. Made-up apps
-// and tools sit in the throwaway home (placeholder versions and folders, CLIs that are empty stand-ins), so Settings,
-// General finds them all. Each account in use keeps a couple of limit resets: Use on the Overview's Limit resets list
+// and tools sit in the throwaway home (placeholder versions and folders, CLIs that are empty stand-ins), so Warden's
+// app and CLI detection can find them. Each account in use keeps a couple of limit resets: Use on the Overview's list
 // is answered by the demo server's stand-ins after a second, and a used one stays gone until the demo starts again.
 // Ctrl+C stops it and removes the throwaway folders. Nothing real is read, nothing is started and nothing leaves this
 // computer.

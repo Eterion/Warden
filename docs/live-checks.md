@@ -64,7 +64,7 @@ cargo run -p warden-desktop -- --data-dir $env:TEMP\warden-live --no-hooks
 
 ## 9. Idle memory
 
-- **Do:** with every real account added, switch on Keep running in the tray (Settings, General) and close the window. Leave Warden idle for a minute, then look at `warden-desktop.exe` in Task Manager (Details, Memory (private working set)).
+- **Do:** with every real account added, switch on Keep running in the tray (Settings › App) and close the window. Leave Warden idle for a minute, then look at `warden-desktop.exe` in Task Manager (Details, Memory (private working set)).
 - **Expect:** within the tray memory budget (`desktopTrayMemoryMB` in `checks/budgets.json`).
 - **Restore:** nothing.
 

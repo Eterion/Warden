@@ -8,8 +8,8 @@ import { ROOT } from './repo.ts';
 describe('render only affected states, with conservative shared fallbacks', () => {
   it('derives common dependencies from new App and modal-frame imports', () => {
     for (const [entry, dependency] of [
-      ['ui/src/App.vue', './settings/GeneralSection.vue'],
-      ['ui/src/settings/SettingsModal.vue', './GeneralSection.vue'],
+      ['ui/src/App.vue', './settings/AppSection.vue'],
+      ['ui/src/settings/SettingsModal.vue', './AppSection.vue'],
     ] as const) {
       const readSource = (path: string) => {
         const text = readFileSync(`${ROOT}/${path}`, 'utf8');
@@ -17,21 +17,25 @@ describe('render only affected states, with conservative shared fallbacks', () =
           ? text.replace('</script>', `import NewFramePart from '${dependency}';\n</script>`)
           : text;
       };
-      // This dependency is already known to General's page; adding a shell import must widen it to every state.
-      assert.deepEqual(affectedPages(PAGES, ['ui/src/settings/GeneralSection.vue'], readSource), PAGES, entry);
+      // This dependency is already known to App's settings page. A shell import widens it to every state.
+      assert.deepEqual(affectedPages(PAGES, ['ui/src/settings/AppSection.vue'], readSource), PAGES, entry);
     }
   });
-  it('keeps every state of General, in the browser and desktop', () => {
+  it('keeps every state of each settings section, in the browser and desktop', () => {
     assert.deepEqual(
-      affectedPages(PAGES, ['ui/src/settings/GeneralSection.vue']).map((p) => p.name),
-      ['settings-general', 'settings-search', 'desktop-settings-general'],
+      affectedPages(PAGES, ['ui/src/settings/AppSection.vue']).map((p) => p.name),
+      ['settings-app', 'settings-search', 'desktop-settings-app'],
+    );
+    assert.deepEqual(
+      affectedPages(PAGES, ['ui/src/settings/AppearanceSection.vue']).map((p) => p.name),
+      ['settings-appearance', 'desktop-settings-appearance'],
     );
   });
 
   it('does not expand a screen change just because docs or tests changed with it', () => {
     assert.deepEqual(
-      affectedPages(PAGES, ['AGENTS.md', 'ui/src/api.test.ts', 'ui/src/settings/GeneralSection.vue']),
-      affectedPages(PAGES, ['ui/src/settings/GeneralSection.vue']),
+      affectedPages(PAGES, ['AGENTS.md', 'ui/src/api.test.ts', 'ui/src/settings/AppSection.vue']),
+      affectedPages(PAGES, ['ui/src/settings/AppSection.vue']),
     );
   });
 
@@ -45,7 +49,7 @@ describe('render only affected states, with conservative shared fallbacks', () =
     const selected = affectedPages(PAGES, ['ui/src/settings/AccountsSection.vue']);
     assert.ok(selected.some((p) => p.name === 'desktop-add-existing-folder'));
     assert.ok(selected.some((p) => p.name === 'settings-rename-account'));
-    assert.ok(!selected.some((p) => p.name === 'settings-general'));
+    assert.ok(!selected.some((p) => ['settings-app', 'settings-appearance'].includes(p.name)));
   });
 
   it('visits everything for shared, deleted, unknown or tool inputs', () => {
@@ -65,13 +69,13 @@ describe('render only affected states, with conservative shared fallbacks', () =
     assert.deepEqual(
       affectedPages(
         [...PAGES, { name: 'new', path: '/#/unknown', fixture: 'normal' }],
-        ['ui/src/settings/GeneralSection.vue'],
+        ['ui/src/settings/AppSection.vue'],
       ).length,
       PAGES.length + 1,
     );
   });
 
   it('needs no rendered states for UI test-only changes', () => {
-    assert.deepEqual(affectedPages(PAGES, ['ui/src/settings/GeneralSection.test.ts', 'ui/src/test/state.ts']), []);
+    assert.deepEqual(affectedPages(PAGES, ['ui/src/settings/AppSection.test.ts', 'ui/src/test/state.ts']), []);
   });
 });

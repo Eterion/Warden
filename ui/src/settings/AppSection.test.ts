@@ -6,7 +6,7 @@ import type { State } from '../api';
 import { fakeServer } from '../test/api';
 import { state } from '../test/state';
 import WSlider from '../components/WSlider.vue';
-import GeneralSection from './GeneralSection.vue';
+import AppSection from './AppSection.vue';
 
 enableAutoUnmount(afterEach);
 
@@ -19,18 +19,17 @@ afterEach(() => {
 function setup(over: Partial<State> = {}, answer?: () => State | { status: number; error: string }) {
   store.state = { ...state([]), ...over };
   const calls = fakeServer(answer ?? (() => store.state!));
-  return { page: mount(GeneralSection, { attachTo: document.body }), calls };
+  return { page: mount(AppSection, { attachTo: document.body }), calls };
 }
 
-describe('GeneralSection', () => {
-  it('saves the usage interval and the theme as numbers and names', async () => {
+describe('AppSection', () => {
+  it('saves the usage interval as a number', async () => {
     const { page, calls } = setup();
     const interval = page.get('[role=radiogroup][aria-label="Read usage every"]');
     expect(interval.find('[aria-checked=true]').text()).toBe('5 min');
     await interval.findAll('[role=radio]')[3]!.trigger('click');
-    await page.get('[role=radiogroup][aria-label=Theme]').findAll('[role=radio]')[2]!.trigger('click');
     await flushPromises();
-    expect(calls.map((c) => c.body)).toEqual([{ usageIntervalMin: 30 }, { theme: 'dark' }]);
+    expect(calls.map((c) => c.body)).toEqual([{ usageIntervalMin: 30 }]);
   });
 
   it('shows the tray and Start with Windows switches only in the desktop app, and saves them', async () => {
@@ -42,16 +41,6 @@ describe('GeneralSection', () => {
     await page.get('#start-with-windows').trigger('click');
     await flushPromises();
     expect(calls.map((c) => c.body)).toEqual([{ keepInTray: true }, { startWithWindows: true }]);
-  });
-
-  it('shows Page transitions in the browser and saves it', async () => {
-    const { page, calls } = setup();
-    const toggle = page.get('button#page-transitions');
-    expect(page.get('label[for=page-transitions]').text()).toBe('Page transitions');
-    expect(toggle.attributes('aria-checked')).toBe('true');
-    await toggle.trigger('click');
-    await flushPromises();
-    expect(calls).toEqual([{ method: 'PUT', path: '/api/settings', body: { pageTransitions: false } }]);
   });
 
   it('shows the log folder, and opens it only in the desktop app', async () => {
@@ -68,7 +57,7 @@ describe('GeneralSection', () => {
   });
 
   it('runs setup again and closes Settings, or stays and says why when the server refuses', async () => {
-    go('settings/general');
+    go('settings/app');
     const ok = setup();
     await ok.page
       .findAll('button')
@@ -78,7 +67,7 @@ describe('GeneralSection', () => {
     expect(ok.calls).toEqual([{ method: 'POST', path: '/api/setup/restart', body: undefined }]);
     expect(route.settingsOpen.value).toBe(false);
 
-    go('settings/general');
+    go('settings/app');
     await flushPromises();
     const refused = setup({}, () => ({ status: 409, error: 'Setup is already running.' }));
     await refused.page

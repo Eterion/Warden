@@ -1,10 +1,12 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { watch } from 'vue';
+import type { Theme } from '../api';
 import { desktop } from '../desktop';
 import { closeModal, go, openSettings, route } from '../route';
+import AppearanceSection from '../settings/AppearanceSection.vue';
 import SettingsModal from '../settings/SettingsModal.vue';
-import { store } from '../store';
+import { apply, store } from '../store';
 import { fakeServer } from '../test/api';
 import { account, state } from '../test/state';
 import AppSidebar from './AppSidebar.vue';
@@ -18,10 +20,36 @@ vi.mock('../route', async (real) => {
 afterEach(() => {
   desktop.inApp = false;
   store.state = null;
+  store.connected = true;
   closeModal();
+  delete document.documentElement.dataset.theme;
   vi.mocked(openSettings).mockClear();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+
+function systemTheme(initial: 'light' | 'dark') {
+  const query = '(prefers-color-scheme: dark)';
+  const matchMedia = window.matchMedia.bind(window);
+  const media = matchMedia(query);
+  let dark = initial === 'dark';
+  Object.defineProperty(media, 'matches', { get: () => dark });
+  vi.spyOn(window, 'matchMedia').mockImplementation((q) => (q === query ? media : matchMedia(q)));
+  return (theme: 'light' | 'dark') => {
+    dark = theme === 'dark';
+    media.dispatchEvent(new MediaQueryListEvent('change', { media: query, matches: dark }));
+  };
+}
+
+function themeServer(theme: Theme) {
+  const initial = state([]);
+  apply({ ...initial, settings: { ...initial.settings, theme } });
+  const calls = fakeServer(() => ({
+    ...initial,
+    settings: { ...initial.settings, ...(calls.at(-1)?.body as { theme: Theme }) },
+  }));
+  return calls;
+}
 
 describe('AppSidebar', () => {
   async function openMenu(bar = mount(AppSidebar, { attachTo: document.body })) {
@@ -54,16 +82,22 @@ describe('AppSidebar', () => {
     await new Promise((r) => setTimeout(r, 0));
   };
 
-  it("lists Settings and Accounts in Warden's menu, then Quit after a divider", async () => {
+  it("groups App, Appearance and Accounts under Settings in Warden's menu, then Quit after a divider", async () => {
     const bar = await openMenu();
-    expect(bar.findAll('[role=menuitem]').map((i) => i.text())).toEqual(['Settings', 'Accounts', 'Quit Warden']);
-    expect(bar.find('[role=separator]').exists()).toBe(true);
+    const group = bar.get('[role=menu] [role=group]');
+    expect(group.element.firstElementChild?.textContent).toBe('Settings');
+    expect(group.element.firstElementChild?.id).toBe(group.attributes('aria-labelledby'));
+    expect(group.findAll('[role=menuitem]').map((i) => i.text())).toEqual(['App', 'Appearance', 'Accounts']);
+    const divider = bar.get('[role=separator]');
+    expect(group.element.nextElementSibling).toBe(divider.element);
+    expect(divider.element.nextElementSibling).toBe(item(bar, 'Quit Warden').element);
     bar.unmount();
   });
 
-  it('opens Settings in General or Accounts once the menu has closed, focus on its button by then', async () => {
+  it('opens each Settings section once the menu has closed, focus on its button by then', async () => {
     for (const [label, section] of [
-      ['Settings', 'general'],
+      ['App', 'app'],
+      ['Appearance', 'appearance'],
       ['Accounts', 'accounts'],
     ] as const) {
       const bar = await openMenu();
@@ -101,13 +135,13 @@ describe('AppSidebar', () => {
       for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
       await flushPromises();
     };
-    // Accounts chosen; before it opens, the sidebar's Settings opens General. General stays.
+    // Accounts chosen; before it opens, the sidebar's Settings opens App. App stays.
     let bar = await openMenu();
     await item(bar, 'Accounts').trigger('click');
     await flushPromises();
-    openSettings('general');
+    openSettings();
     await turns();
-    expect(route.section.value).toBe('general');
+    expect(route.section.value).toBe('app');
     bar.unmount();
     closeModal();
 
@@ -140,14 +174,11 @@ describe('AppSidebar', () => {
     desktop.inApp = true;
     const bar = mount(AppSidebar, { attachTo: document.body });
     const button = bar.get('[aria-label="Warden menu"]').element;
-    for (const [label, heading] of [
-      ['Settings', 'General'],
-      ['Accounts', 'Accounts'],
-    ] as const) {
+    for (const label of ['App', 'Appearance', 'Accounts']) {
       await openMenu(bar);
       await choose(bar, label);
       const dialog = document.querySelector('[role=dialog]');
-      expect([...(dialog?.querySelectorAll('h2') ?? [])].map((h) => h.textContent)).toContain(heading);
+      expect([...(dialog?.querySelectorAll('h2') ?? [])].map((h) => h.textContent)).toContain(label);
       expect(dialog?.contains(document.activeElement)).toBe(true);
 
       await escape();
@@ -157,7 +188,7 @@ describe('AppSidebar', () => {
 
     // The menu again, closed with Escape: focus is on its button again, not lost.
     await openMenu(bar);
-    expect(bar.findAll('[role=menuitem]')).toHaveLength(3);
+    expect(bar.findAll('[role=menuitem]')).toHaveLength(4);
     await escape();
     expect(bar.findAll('[role=menuitem]')).toHaveLength(0);
     expect(document.activeElement).toBe(button);
@@ -239,6 +270,123 @@ describe('AppSidebar', () => {
     bar.unmount();
   });
 
+  it.each([
+    { system: 'light', setting: 'system', active: 'light', next: 'dark' },
+    { system: 'dark', setting: 'system', active: 'dark', next: 'light' },
+    { system: 'light', setting: 'light', active: 'light', next: 'dark' },
+    { system: 'dark', setting: 'dark', active: 'dark', next: 'light' },
+    { system: 'light', setting: 'dark', active: 'dark', next: 'system' },
+    { system: 'dark', setting: 'light', active: 'light', next: 'system' },
+  ] as const)(
+    'switches $setting on a $system system to $next and saves it',
+    async ({ system, setting, active, next }) => {
+      systemTheme(system);
+      const calls = themeServer(setting);
+      const bar = mount(AppSidebar);
+      const target = active === 'light' ? 'dark' : 'light';
+      const button = bar.get(`button[aria-label="Switch to ${target} theme"]`);
+      expect(button.get('svg').classes()).toContain(active === 'light' ? 'lucide-sun' : 'lucide-moon');
+
+      await button.trigger('click');
+      await flushPromises();
+      expect(calls).toEqual([{ method: 'PUT', path: '/api/settings', body: { theme: next } }]);
+      expect(store.state?.settings.theme).toBe(next);
+      expect(document.documentElement.dataset.theme).toBe(next === 'system' ? undefined : next);
+      expect(button.attributes('aria-label')).toBe(`Switch to ${active} theme`);
+      expect(button.get('svg').classes()).toContain(target === 'light' ? 'lucide-sun' : 'lucide-moon');
+      bar.unmount();
+    },
+  );
+
+  it('follows system changes while open and stays in sync with Appearance in the desktop app', async () => {
+    const changeSystem = systemTheme('light');
+    desktop.inApp = true;
+    const calls = themeServer('system');
+    const bar = mount(AppSidebar);
+    const appearance = mount(AppearanceSection);
+    const button = bar.get('button[aria-label="Switch to dark theme"]');
+    const radios = appearance.get('[role=radiogroup][aria-label=Theme]');
+
+    changeSystem('dark');
+    await flushPromises();
+    expect(button.attributes('aria-label')).toBe('Switch to light theme');
+    expect(button.get('svg').classes()).toContain('lucide-moon');
+    expect(calls).toEqual([]);
+
+    await button.trigger('click');
+    await flushPromises();
+    expect(radios.get('[aria-checked=true]').text()).toBe('Light');
+    changeSystem('light');
+    await flushPromises();
+    expect(button.attributes('aria-label')).toBe('Switch to dark theme');
+
+    await radios.findAll('[role=radio]')[2]!.trigger('click');
+    await flushPromises();
+    expect(button.attributes('aria-label')).toBe('Switch to light theme');
+    expect(button.get('svg').classes()).toContain('lucide-moon');
+    expect(calls.map((call) => call.body)).toEqual([{ theme: 'light' }, { theme: 'dark' }]);
+    appearance.unmount();
+    bar.unmount();
+  });
+
+  it.each([
+    ['light', 'Switch to dark theme'],
+    ['dark', 'Switch to light theme'],
+  ] as const)('shows the tooltip on keyboard focus on a %s system', async (system, label) => {
+    systemTheme(system);
+    const bar = mount(AppSidebar, { attachTo: document.body });
+    const button = bar.get<HTMLButtonElement>(`button[aria-label="${label}"]`);
+    button.element.focus();
+    await flushPromises();
+    const tooltip = bar.get('[role=tooltip]');
+    expect(tooltip.text()).toBe(label);
+    expect(button.attributes('aria-describedby')).toBe(tooltip.attributes('id'));
+    bar.unmount();
+  });
+
+  it('clears the theme error when Appearance saves a different theme', async () => {
+    systemTheme('light');
+    const initial = state([]);
+    apply(initial);
+    let refused = true;
+    fakeServer(() =>
+      refused
+        ? { status: 409, error: 'Could not save the theme.' }
+        : { ...initial, settings: { ...initial.settings, theme: 'dark' } },
+    );
+    const bar = mount(AppSidebar);
+    await bar.get('[aria-label="Switch to dark theme"]').trigger('click');
+    await flushPromises();
+    expect(bar.get('[role=alert]').text()).toBe('Could not save the theme.');
+
+    refused = false;
+    const appearance = mount(AppearanceSection);
+    await appearance.get('[aria-label=Theme]').findAll('[role=radio]')[2]!.trigger('click');
+    await flushPromises();
+    expect(store.state?.settings.theme).toBe('dark');
+    expect(bar.find('[role=alert]').exists()).toBe(false);
+    appearance.unmount();
+    bar.unmount();
+  });
+
+  it('clears the theme error when Warden reconnects with the same theme', async () => {
+    systemTheme('light');
+    const initial = state([]);
+    apply(initial);
+    vi.stubGlobal('fetch', () => Promise.reject(new TypeError('Failed to fetch')));
+    const bar = mount(AppSidebar);
+    await bar.get('[aria-label="Switch to dark theme"]').trigger('click');
+    await flushPromises();
+    expect(store.connected).toBe(false);
+    expect(bar.get('[role=alert]').text()).toBe('Warden could not be reached.');
+
+    apply(initial);
+    await flushPromises();
+    expect(store.connected).toBe(true);
+    expect(bar.find('[role=alert]').exists()).toBe(false);
+    bar.unmount();
+  });
+
   it('links Overview and Memory, marking the page shown, which stays marked under Settings', async () => {
     const bar = mount(AppSidebar);
     const current = () => bar.findAll('nav a[aria-current=page]').map((a) => a.text());
@@ -249,8 +397,12 @@ describe('AppSidebar', () => {
     go('memory');
     await flushPromises();
     expect(current()).toEqual(['Memory']);
-    openSettings();
+    await bar
+      .findAll('button')
+      .find((button) => button.text() === 'Settings')!
+      .trigger('click');
     await flushPromises();
+    expect(location.hash).toBe('#/settings/app');
     expect(current()).toEqual(['Memory']);
     closeModal();
     expect(location.hash).toBe('#/memory');

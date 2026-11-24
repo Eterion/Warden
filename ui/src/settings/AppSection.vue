@@ -1,9 +1,9 @@
 <script setup lang="ts">
-// Settings, General: the usage interval, theme, page transitions, reset warning, data and logs. The desktop app adds
+// Settings, App: the usage interval, reset warning, data and logs. The desktop app adds
 // Keep running in the tray, Start with Windows and Open log folder. The browser demo shows the log folder's path.
-import { FolderOpen, Monitor, Moon, Sun } from '@lucide/vue';
+import { FolderOpen } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
-import { api, type Theme } from '../api';
+import { api } from '../api';
 import SegmentedControl from '../components/SegmentedControl.vue';
 import WButton from '../components/WButton.vue';
 import WSlider from '../components/WSlider.vue';
@@ -17,15 +17,6 @@ const interval = computed<string>({
   get: () => String(store.state?.settings.usageIntervalMin ?? 5),
   set: (v) => void run(() => api.settings({ usageIntervalMin: Number(v) })),
 });
-const theme = computed<Theme>({
-  get: () => store.state?.settings.theme ?? 'system',
-  set: (v) => void run(() => api.settings({ theme: v })),
-});
-const pageTransitions = computed<boolean>({
-  get: () => store.state?.settings.pageTransitions ?? true,
-  set: (v) => void run(() => api.settings({ pageTransitions: v })),
-});
-
 const keepInTray = computed<boolean>({
   get: () => store.state?.settings.keepInTray ?? false,
   set: (v) => void run(() => api.settings({ keepInTray: v })),
@@ -65,30 +56,6 @@ async function runSetupAgain(): Promise<void> {
     <p v-if="error" role="alert" class="text-13 font-medium text-attn">{{ error }}</p>
 
     <section class="flex flex-col">
-      <div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b border-divider py-4">
-        <div class="flex flex-auto basis-65 flex-col gap-0.5">
-          <span class="text-14 font-medium">Theme</span>
-          <span class="text-13 text-tertiary">System follows the Windows setting.</span>
-        </div>
-        <SegmentedControl
-          v-model="theme"
-          label="Theme"
-          :options="[
-            { value: 'system', label: 'System', icon: Monitor },
-            { value: 'light', label: 'Light', icon: Sun },
-            { value: 'dark', label: 'Dark', icon: Moon },
-          ]"
-        />
-      </div>
-      <div class="flex items-center justify-between gap-6 border-b border-divider py-4">
-        <div class="flex min-w-0 flex-auto flex-col gap-0.5">
-          <label for="page-transitions" class="cursor-pointer text-14 font-medium">Page transitions</label>
-          <span class="text-13 text-tertiary"
-            >Fade when switching between Overview and Memory. Turn off to switch instantly.</span
-          >
-        </div>
-        <WSwitch id="page-transitions" v-model="pageTransitions" label="Page transitions" />
-      </div>
       <div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b border-divider py-4">
         <div class="flex flex-auto basis-65 flex-col gap-0.5">
           <span id="interval-label" class="text-14 font-medium">Read usage every</span>

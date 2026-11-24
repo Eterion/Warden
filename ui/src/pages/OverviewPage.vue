@@ -5,7 +5,7 @@
 // ended and not-known sessions (remembered), an ancestor of a shown one staying faded. Beside them (under them in a
 // narrow window), today's memory (MemoryCard, a link to the Memory page), then the limit resets the accounts can use,
 // while there are any; one expiring within the warning days set
-// in Settings › General in amber. Its filter (remembered) leaves out accounts' resets, or all but each account's
+// in Settings › App in amber. Its filter (remembered) leaves out accounts' resets, or all but each account's
 // soonest, saying how many it hides. Each has Use: confirmed in a modal, it is sent, and once used its row turns to
 // dust and the list closes the gap (only a quick fade with reduced motion).
 import { usePreferredReducedMotion } from '@vueuse/core';
@@ -68,7 +68,7 @@ import MemoryCard from './MemoryCard.vue';
 
 const accounts = computed(() => usedAccounts(store.state));
 
-// How many days before a reset expires its row warns: Settings › General.
+// How many days before a reset expires its row warns: Settings › App.
 const warnDays = computed(() => store.state?.settings.resetWarningDays ?? 3);
 /** Every reset the state lists now, before the list's filter. */
 const every = computed(() => resetRows(accounts.value, store.now, warnDays.value));

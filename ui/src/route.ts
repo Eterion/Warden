@@ -1,15 +1,14 @@
 // Which page shows and which modal is open, kept in the address (# for the Overview, #/memory for today's memory,
-// #/memory/2026-11-20 for a past day's; #/settings/accounts, #/settings/accounts/add, #/settings/general, or
+// #/memory/2026-11-20 for a past day's; #/settings/app, #/settings/appearance, #/settings/accounts, #/settings/accounts/add, or
 // #/add-account for Add account on its own, from the sidebar), so each state has its own link and the back button goes
 // back to it. A modal opens over the page it was opened on, which stays underneath.
 
 import { useEventListener } from '@vueuse/core';
 import { computed, ref, watch } from 'vue';
 
-export type Section = 'general' | 'accounts';
+export const SECTIONS = ['app', 'appearance', 'accounts'] as const;
+export type Section = (typeof SECTIONS)[number];
 export type Page = 'overview' | 'memory';
-
-const SECTIONS: Section[] = ['general', 'accounts'];
 
 const hash = ref(typeof location === 'undefined' ? '' : location.hash);
 if (typeof window !== 'undefined') useEventListener(window, 'hashchange', () => (hash.value = location.hash));
@@ -47,7 +46,8 @@ export const route = {
   settingsOpen: computed(() => parts.value[0] === 'settings'),
   section: computed<Section>(() => {
     const s = parts.value[1] as Section | undefined;
-    return s && SECTIONS.includes(s) ? s : 'general';
+    // Settings with no section and old /settings/general links both open App.
+    return s && SECTIONS.includes(s) ? s : 'app';
   }),
   /** Add account, over Settings or on its own. */
   addOpen: computed(
@@ -76,7 +76,7 @@ export function openAddAccount(): void {
 let settingsReturn: (() => HTMLElement | null) | null = null;
 
 /** Opens Settings in a section; `returnTo` names where focus goes as it closes, in place of what had focus. */
-export function openSettings(section: Section = 'general', returnTo?: () => HTMLElement | null): void {
+export function openSettings(section: Section = 'app', returnTo?: () => HTMLElement | null): void {
   settingsReturn = returnTo ?? null;
   go(`settings/${section}`);
 }

@@ -55,12 +55,12 @@ describe('run only what changed', () => {
 
   it('skips budgets for test-only changes, including UI tests and Rust test modules', () => {
     for (const path of [
-      'ui/src/settings/GeneralSection.test.ts',
+      'ui/src/settings/AppSection.test.ts',
       'crates/warden-core/tests/routing.rs',
       'crates/warden-core/src/tests/routing.rs',
     ])
       assert.ok(!names('changed', 'full', [path]).includes('rust: budgets'), path);
-    assert.ok(!names('changed', 'full', ['ui/src/settings/GeneralSection.test.ts']).includes('ui: a11y + screenshots'));
+    assert.ok(!names('changed', 'full', ['ui/src/settings/AppSection.test.ts']).includes('ui: a11y + screenshots'));
   });
 
   it('keeps budgets for every production build input', () => {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// The Settings modal: its own sidebar with the sections (General and Accounts) and a search box.
-import { ChevronRight, CircleUserRound, Plus, Settings, X } from '@lucide/vue';
+// The Settings modal: its own sidebar with the sections and a search box.
+import { ChevronRight, Plus, X } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
 import AppModal from '../components/AppModal.vue';
 import NavItem from '../components/NavItem.vue';
@@ -9,12 +9,14 @@ import WList from '../components/WList.vue';
 import WListItem from '../components/WListItem.vue';
 import WIconButton from '../components/WIconButton.vue';
 import WTextField from '../components/WTextField.vue';
-import { closeModal, go, route, takeSettingsReturn, type Section } from '../route';
+import { closeModal, go, route, SECTIONS, takeSettingsReturn, type Section } from '../route';
 import { keptWhileClosing } from '../components/kept';
 import { store } from '../store';
 import AccountsSection from './AccountsSection.vue';
 import AddAccountModal from './AddAccountModal.vue';
-import GeneralSection from './GeneralSection.vue';
+import AppearanceSection from './AppearanceSection.vue';
+import AppSection from './AppSection.vue';
+import { sections } from './sections';
 
 const open = computed({
   get: () => route.settingsOpen.value,
@@ -42,29 +44,12 @@ const query = ref('');
 watch(open, (o) => {
   if (o) query.value = '';
 });
-/** The section drawn: closing clears the address, which would otherwise show General while the modal closes. */
+/** The section drawn: closing clears the address, which would otherwise show App while the modal closes. */
 const section = keptWhileClosing(
   () => open.value,
   () => route.section.value,
 );
 const searching = computed(() => query.value.trim().length > 0);
-
-const sections: { id: Section; label: string; icon: typeof Settings; title: string; subtitle: string }[] = [
-  {
-    id: 'general',
-    label: 'General',
-    icon: Settings,
-    title: 'General',
-    subtitle: 'Usage reading, the theme, page transitions and the reset warning.',
-  },
-  {
-    id: 'accounts',
-    label: 'Accounts',
-    icon: CircleUserRound,
-    title: 'Accounts',
-    subtitle: 'Main and the accounts that take delegated work.',
-  },
-];
 
 const INDEX: {
   s: Section;
@@ -106,55 +91,54 @@ const INDEX: {
     keys: 'enable disable off personal exclude delegated work hooks',
   },
   {
-    s: 'general',
+    s: 'appearance',
     label: 'Theme',
     help: 'System, light or dark.',
     keys: 'dark light appearance',
   },
   {
-    s: 'general',
+    s: 'appearance',
     label: 'Page transitions',
     help: 'Fade when switching between Overview and Memory.',
     keys: 'animation motion fade',
   },
   {
-    s: 'general',
+    s: 'app',
     label: 'Read usage every',
     help: 'How often account limits are read.',
     keys: 'usage refresh interval limit',
   },
   {
-    s: 'general',
+    s: 'app',
     label: 'Warn before a reset expires',
     help: 'How many days before a limit reset expires it shows in amber.',
     keys: 'limit resets expiry expire warning days amber banked',
   },
   {
-    s: 'general',
+    s: 'app',
     label: 'Keep running in the tray',
     help: 'Closing the window quits Warden unless this is on.',
     keys: 'close quit background tray notification area',
     desktop: true,
   },
   {
-    s: 'general',
+    s: 'app',
     label: 'Start with Windows',
     help: 'Open in the background when you sign in.',
     keys: 'startup autostart login',
     desktop: true,
   },
   {
-    s: 'general',
-    label: 'Run setup again',
-    help: 'First-run setup, with the account folders Warden finds.',
-    keys: 'setup first run data folder',
+    s: 'app',
+    label: "Warden's data",
+    help: 'Where Warden keeps its data; run setup again.',
+    keys: 'first run setup account folders',
   },
   {
-    s: 'general',
-    label: 'Open log folder',
-    help: "Warden's own log files, in Explorer.",
-    keys: 'logs log files explorer',
-    desktop: true,
+    s: 'app',
+    label: 'Log files',
+    help: 'Where Warden keeps its logs.',
+    keys: 'logs open log folder explorer',
   },
 ];
 
@@ -164,8 +148,8 @@ const results = computed(() => {
   return INDEX.filter((i) => (inApp || !i.desktop) && `${i.label} ${i.help} ${i.keys}`.toLowerCase().includes(q));
 });
 
-const current = computed(() => sections.find((s) => s.id === section.value) ?? sections[0]!);
-const title = computed(() => (searching.value ? 'Search' : current.value.title));
+const current = computed(() => sections[section.value]);
+const title = computed(() => (searching.value ? 'Search' : current.value.label));
 const subtitle = computed(() => {
   if (!searching.value) return current.value.subtitle;
   const n = results.value.length;
@@ -195,13 +179,13 @@ function goTo(r: (typeof INDEX)[number]): void {
           class="mb-3.5"
         />
         <NavItem
-          v-for="s in sections"
-          :key="s.id"
-          :icon="s.icon"
-          :current="!searching && s.id === section"
-          @click="pick(s.id)"
+          v-for="id in SECTIONS"
+          :key="id"
+          :icon="sections[id].icon"
+          :current="!searching && id === section"
+          @click="pick(id)"
         >
-          {{ s.label }}
+          {{ sections[id].label }}
         </NavItem>
         <span v-if="store.state?.hooksOff" class="mt-auto px-2 text-12 text-secondary">Hooks are off for this run</span>
         <span :class="['px-2 text-12 text-secondary', !store.state?.hooksOff && 'mt-auto']"
@@ -234,14 +218,15 @@ function goTo(r: (typeof INDEX)[number]): void {
                 <span
                   class="rounded-md bg-chip-off px-2 py-0.5 text-12 font-medium whitespace-nowrap text-chip-off-text"
                 >
-                  {{ sections.find((s) => s.id === r.s)?.label }}
+                  {{ sections[r.s].label }}
                 </span>
                 <ChevronRight class="size-4 shrink-0 text-icon" aria-hidden="true" />
               </WListItem>
             </WList>
             <span v-else class="text-14 text-tertiary">Nothing matches that search.</span>
           </div>
-          <GeneralSection v-else-if="section === 'general'" />
+          <AppSection v-else-if="section === 'app'" />
+          <AppearanceSection v-else-if="section === 'appearance'" />
           <AccountsSection v-else-if="section === 'accounts'" />
         </div>
       </div>

@@ -152,8 +152,8 @@ pub fn start_core(config: Config) -> io::Result<Core> {
         let app = Arc::clone(&app);
         let source = config.memory;
         threads.push(std::thread::spawn(move || {
-            // Memory on its interval, while Warden runs: the computer's always, the sessions' processes only while
-            // one runs. A failing day file is logged once, until it works again.
+            // Sample the computer's memory on its interval. The app takes a process snapshot when a session has a
+            // known CLI or a remembered process was running at the last snapshot. Log a day file failure once.
             let mut left = warden_core::memory::LeftRunning::default();
             let mut failing = false;
             loop {

@@ -1464,9 +1464,9 @@ impl App {
             .collect()
     }
 
-    /// One memory sample: the computer's memory always; while a session with a known CLI runs or a process one left
-    /// is remembered, one snapshot of the processes and the private memory of those in their trees and Warden's own.
-    /// Errors are the day file's.
+    /// One memory sample always reads the computer's memory. A hooked session with a known CLI or a remembered
+    /// process still running at the last snapshot warrants a new snapshot. Only linked processes and Warden's own
+    /// count. Errors are the day file's.
     pub fn sample_memory(
         &self,
         source: &dyn crate::procs::MemorySource,
@@ -1475,20 +1475,23 @@ impl App {
         let live = self.live_sessions(source);
         let (total, available) = source.computer().unwrap_or((0, 0));
         let mut values = Vec::new();
-        if !live.is_empty() || !left.is_empty() {
+        if !live.is_empty() || left.any_running() {
             let own = std::process::id();
             let roots: Vec<u32> = live.iter().map(|l| l.cli).collect();
             let mut plan = None;
             let procs = source.processes(&roots, own, &mut |list| {
-                let p = memory::plan(list, &live, own, left);
+                let sampled_at_ms = u64::try_from(now_ms()).unwrap_or_default();
+                let p = memory::plan(list, &live, own, left, sampled_at_ms);
                 let pids = p.pids();
                 plan = Some(p);
                 pids
             });
             if let Some(plan) = plan {
                 values = plan.values(&procs);
-                left.update(&plan, &procs);
+                left.update(&plan);
             }
+        } else {
+            *left = memory::LeftRunning::default();
         }
         let recorded = self.memory_lock().record(&memory::Reading {
             at_ms: now_ms(),

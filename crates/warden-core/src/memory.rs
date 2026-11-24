@@ -1,12 +1,12 @@
 //! Memory over time: how much the AI sessions' processes hold, recorded while Warden runs.
 //!
-//! Every [`SAMPLE_EVERY_MS`] the server reads the computer's total and available memory and, only while something
-//! runs (a hooked session with a known CLI process, or a process one left running), one list of processes with their
-//! parents, start times and private memory, of which only the processes in the sessions' trees and Warden's own count
-//! ([`plan`]). Each process counts for the session whose CLI started it: a delegated run's CLI starts a tree of its
-//! own, which counts for that run and never twice. A process seen in a session's tree is remembered by its id and
-//! start time ([`LeftRunning`]): once it falls out of the tree (its session ended, its parent exited) it counts as
-//! "left running" for that session until it exits.
+//! Every [`SAMPLE_EVERY_MS`] the server reads the computer's total and available memory. It takes a process
+//! snapshot only if a hooked session has a known CLI process or a remembered process was running at the last
+//! snapshot. The snapshot gives the parents, start times and private memory of processes. Only those linked to a
+//! session and Warden's own count ([`plan`]). A delegated run's CLI starts its own tree, which counts once for
+//! that run. A process linked to a session keeps its owner by id and start time ([`LeftRunning`]), even after a
+//! parent exits. A child can also inherit the session of a recently seen parent. All linked processes count for
+//! their session while it lives, then as "Left running" until they exit.
 //!
 //! The [`Recorder`] keeps each minute's highest value per series and appends it to the day's file in the data
 //! folder, `memory/memory-<YYYY-MM-DD>.jsonl` (local days): one series line when a series first appears that day (or
@@ -39,7 +39,7 @@ pub const MAX_DAY_BYTES: u64 = 6 * 1024 * 1024;
 pub const MAX_SERIES: usize = 200;
 /// Minutes a day holds at most.
 pub const MAX_MINUTES: usize = 1440;
-/// Processes remembered as possibly left running, at most.
+/// Owned processes remembered, running and recently exited combined, at most.
 pub const MAX_LEFT: usize = 2000;
 /// A session's or project's name is kept to this many characters.
 pub const MAX_NAME: usize = 64;
@@ -51,7 +51,7 @@ const KIB: u64 = 1024;
 const MINUTE_MS: i64 = 60_000;
 const DAY_MS: i64 = 86_400_000;
 
-/// A process in one snapshot: its id, its parent's, when it started (seconds since the epoch, as Windows tells it)
+/// A process in one snapshot: its id, its parent's, when it started (whole seconds since the epoch)
 /// and, when it was read, its private memory in bytes. Nothing else of another process is ever read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Proc {
@@ -83,9 +83,9 @@ pub struct Live {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Kind {
-    /// A session's CLI and everything it started.
+    /// A live session's CLI and the processes linked to it.
     Session,
-    /// Processes a session started that outlived it (or fell out of its tree), while they run.
+    /// Processes that are still running after their session ended.
     Left,
     /// A session in a folder signed in as someone else.
     OtherSignIn,
@@ -277,11 +277,34 @@ pub struct Plan {
     started: HashMap<u32, u64>,
     sessions: Vec<Live>,
     left: Vec<Arc<SeriesInfo>>,
+    sampled_at_ms: u64,
 }
 
-/// Processes seen in a session's tree, by id and start time, with the session they count for once they leave it.
+#[derive(Debug)]
+struct RememberedProcess {
+    started: u64,
+    /// The first snapshot that found this process missing. None if it was still running.
+    first_missing_at_ms: Option<u64>,
+    session: Arc<SeriesInfo>,
+}
+
+impl RememberedProcess {
+    fn can_parent(&self, started: u64, sampled_at_ms: u64) -> bool {
+        // A child present at the first missing snapshot already existed at its cutoff. For one first seen
+        // later, require its whole reported start second to fit before that cutoff. This bounds the risk to
+        // reuse followed by another exit between two snapshots, which the snapshots cannot rule out.
+        self.started != 0
+            && self.started <= started
+            && started <= sampled_at_ms / 1000
+            && self
+                .first_missing_at_ms
+                .is_none_or(|missing_at| started < missing_at / 1000)
+    }
+}
+
+/// Processes attributed to a session, with their identities and whether they were running at the last snapshot.
 #[derive(Debug, Default)]
-pub struct LeftRunning(HashMap<(u32, u64), Arc<SeriesInfo>>);
+pub struct LeftRunning(HashMap<u32, RememberedProcess>);
 
 impl LeftRunning {
     pub fn is_empty(&self) -> bool {
@@ -292,52 +315,92 @@ impl LeftRunning {
         self.0.len()
     }
 
-    /// After a snapshot: processes that exited are forgotten, and every process in a live session's tree is
-    /// remembered for that session (its newest), and one started under a left-running one for that one's session.
-    /// At most [`MAX_LEFT`]; a new one past it is not remembered.
-    pub fn update(&mut self, plan: &Plan, procs: &[Proc]) {
-        let now: HashSet<(u32, u64)> = procs.iter().map(|p| (p.pid, p.started)).collect();
-        self.0.retain(|k, _| now.contains(k));
+    /// Whether an owned process was seen running at the last snapshot.
+    pub fn any_running(&self) -> bool {
+        self.0.values().any(|p| p.first_missing_at_ms.is_none())
+    }
+
+    /// After a snapshot: refresh running owners first, then keep newly missing parents for one more snapshot in
+    /// the remaining space. A PID that now belongs to a replacement is safe to forget after this snapshot.
+    pub fn update(&mut self, plan: &Plan) {
+        let mut missing: Vec<_> = self
+            .0
+            .extract_if(|pid, p| plan.started.get(pid) != Some(&p.started))
+            .filter_map(|(pid, mut p)| {
+                if plan.started.contains_key(&pid) || p.first_missing_at_ms.is_some() {
+                    return None;
+                }
+                p.first_missing_at_ms = Some(plan.sampled_at_ms);
+                Some((pid, p))
+            })
+            .collect();
+        let sessions: Vec<_> = plan
+            .sessions
+            .iter()
+            .map(|s| Arc::new(SeriesInfo::of(s, Kind::Left)))
+            .collect();
         let mut owned: Vec<(&u32, &Owner)> = plan.owners.iter().collect();
         owned.sort_unstable_by_key(|(pid, _)| **pid);
         for (pid, owner) in owned {
-            let Some(&started) = plan.started.get(pid) else {
-                continue;
-            };
-            let info = match owner {
-                Owner::Session(i) => Arc::new(SeriesInfo::of(&plan.sessions[*i], Kind::Left)),
-                Owner::Left(j) => Arc::clone(&plan.left[*j]),
+            let session = match *owner {
+                Owner::Session(index) => &sessions[index],
+                Owner::Left(index) => &plan.left[index],
                 Owner::Warden => continue,
             };
-            let key = (*pid, started);
-            if self.0.contains_key(&key) {
-                if matches!(owner, Owner::Session(_)) {
-                    self.0.insert(key, info);
-                }
-            } else if self.0.len() < MAX_LEFT {
-                self.0.insert(key, info);
+            if self.0.len() < MAX_LEFT || self.0.contains_key(pid) {
+                self.0.insert(
+                    *pid,
+                    RememberedProcess {
+                        started: plan.started[pid],
+                        first_missing_at_ms: None,
+                        session: Arc::clone(session),
+                    },
+                );
             }
+        }
+        let room = MAX_LEFT - self.0.len();
+        if room > 0 {
+            missing.sort_unstable_by_key(|(pid, _)| *pid);
+            self.0.extend(missing.into_iter().take(room));
         }
     }
 }
 
 /// Works out whose each process is: every live session's CLI and the processes under it (each step down started no
-/// earlier than its parent, so a reused id is never followed; never into another session's CLI), then the remembered
-/// left-running processes still running and what they started, then Warden's own process and what it started.
-pub fn plan(procs: &[Proc], live: &[Live], own: u32, left: &LeftRunning) -> Plan {
-    let by_pid: HashMap<u32, &Proc> = procs.iter().map(|p| (p.pid, p)).collect();
+/// earlier than its parent; never into another session's CLI), then remembered processes and children of recently
+/// seen missing parents, then Warden's own process and what it started. `sampled_at_ms` is the time the process
+/// snapshot was read, in milliseconds since the epoch.
+pub fn plan(
+    procs: &[Proc],
+    live: &[Live],
+    own: u32,
+    left: &LeftRunning,
+    sampled_at_ms: u64,
+) -> Plan {
+    let started: HashMap<u32, u64> = procs.iter().map(|p| (p.pid, p.started)).collect();
     let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    let mut orphans = Vec::new();
     for p in procs {
-        if let Some(parent) = p.parent
-            && parent != p.pid
-            && by_pid.get(&parent).is_some_and(|q| q.started <= p.started)
-        {
-            children.entry(parent).or_default().push(p.pid);
+        let Some(parent) = p.parent.filter(|&pid| pid != p.pid) else {
+            continue;
+        };
+        match started.get(&parent) {
+            Some(&start) if start <= p.started => children.entry(parent).or_default().push(p.pid),
+            // The original parent is missing if no process holds the PID or the holder started after the child.
+            _ => {
+                if let Some(q) = left
+                    .0
+                    .get(&parent)
+                    .filter(|q| q.can_parent(p.started, sampled_at_ms))
+                {
+                    orphans.push((p.pid, q));
+                }
+            }
         }
     }
     // One session per CLI: a CLI that started a new session (Claude's /clear) counts for its newest.
     let mut sessions: Vec<Live> = Vec::new();
-    for s in live.iter().filter(|s| by_pid.contains_key(&s.cli)) {
+    for s in live.iter().filter(|s| started.contains_key(&s.cli)) {
         match sessions.iter_mut().find(|t| t.cli == s.cli) {
             Some(t) if t.last_event_at < s.last_event_at => *t = s.clone(),
             Some(_) => {}
@@ -364,28 +427,45 @@ pub fn plan(procs: &[Proc], live: &[Live], own: u32, left: &LeftRunning) -> Plan
     for (i, s) in sessions.iter().enumerate() {
         walk(s.cli, Owner::Session(i), &mut owners);
     }
-    let mut remembered: Vec<(&(u32, u64), &Arc<SeriesInfo>)> = left.0.iter().collect();
-    remembered.sort_unstable_by_key(|(k, _)| **k);
+    let by_session: HashMap<_, _> = sessions
+        .iter()
+        .enumerate()
+        .map(|(i, s)| ((s.provider, s.session_id.as_str()), i))
+        .collect();
     let mut left_infos = Vec::new();
-    for ((pid, started), info) in remembered {
-        let running = by_pid.get(pid).is_some_and(|p| p.started == *started);
-        if running && !owners.contains_key(pid) && !clis.contains(pid) {
+    let mut recall = |pid, info: &Arc<SeriesInfo>, owners: &mut HashMap<u32, Owner>| {
+        if owners.contains_key(&pid) {
+            return;
+        }
+        let session = info.provider.zip(info.session_id.as_deref());
+        let owner = if let Some(&index) = session.and_then(|key| by_session.get(&key)) {
+            Owner::Session(index)
+        } else {
+            let index = left_infos.len();
             left_infos.push(Arc::clone(info));
-            walk(*pid, Owner::Left(left_infos.len() - 1), &mut owners);
+            Owner::Left(index)
+        };
+        walk(pid, owner, owners);
+    };
+    let mut remembered: Vec<_> = left.0.iter().collect();
+    remembered.sort_unstable_by_key(|(pid, _)| **pid);
+    for (&pid, p) in remembered {
+        if started.get(&pid) == Some(&p.started) {
+            recall(pid, &p.session, &mut owners);
         }
     }
-    if by_pid.contains_key(&own) && !owners.contains_key(&own) && !clis.contains(&own) {
+    for (pid, parent) in orphans {
+        recall(pid, &parent.session, &mut owners);
+    }
+    if started.contains_key(&own) && !owners.contains_key(&own) && !clis.contains(&own) {
         walk(own, Owner::Warden, &mut owners);
     }
-    let started = owners
-        .keys()
-        .filter_map(|pid| by_pid.get(pid).map(|p| (*pid, p.started)))
-        .collect();
     Plan {
         owners,
         started,
         sessions,
         left: left_infos,
+        sampled_at_ms,
     }
 }
 
@@ -408,9 +488,9 @@ impl Plan {
             if self.started.get(&p.pid) != Some(&p.started) {
                 continue;
             }
-            let info = match owner {
-                Owner::Session(i) => {
-                    let s = &self.sessions[*i];
+            let info = match *owner {
+                Owner::Session(index) => {
+                    let s = &self.sessions[index];
                     let kind = if s.other_sign_in {
                         Kind::OtherSignIn
                     } else {
@@ -418,7 +498,7 @@ impl Plan {
                     };
                     SeriesInfo::of(s, kind)
                 }
-                Owner::Left(j) => (*self.left[*j]).clone(),
+                Owner::Left(index) => (*self.left[index]).clone(),
                 Owner::Warden => SeriesInfo::warden(),
             };
             match index.get(&info.key()) {
@@ -1066,9 +1146,19 @@ mod tests {
         own: u32,
         left: &mut LeftRunning,
     ) -> Vec<(SeriesInfo, u64)> {
-        let p = plan(procs, live, own, left);
+        sample_at(procs, live, own, left, 1_000_000)
+    }
+
+    fn sample_at(
+        procs: &[Proc],
+        live: &[Live],
+        own: u32,
+        left: &mut LeftRunning,
+        sampled_at_ms: u64,
+    ) -> Vec<(SeriesInfo, u64)> {
+        let p = plan(procs, live, own, left, sampled_at_ms);
         let values = p.values(procs);
-        left.update(&p, procs);
+        left.update(&p);
         values
     }
 
@@ -1088,7 +1178,7 @@ mod tests {
         ];
         let sessions = [live("main-s", "main", 10), live("run", "a1", 20)];
         let mut left = LeftRunning::default();
-        let p = plan(&procs, &sessions, 99, &left);
+        let p = plan(&procs, &sessions, 99, &left, 1_000_000);
         assert_eq!(p.pids(), vec![10, 11, 12, 20, 21, 98, 99, 300]);
         let values = sample(&procs, &sessions, 99, &mut left);
         assert_eq!(value(&values, Kind::Session, Some("main-s")), Some(405));
@@ -1186,13 +1276,33 @@ mod tests {
         assert_eq!(value(&values, Kind::Left, Some("s")), Some(25));
         assert_eq!(left.len(), 1);
         procs.clear();
-        let p = plan(&procs, &[], 1, &left);
-        left.update(&p, &procs);
+        sample(&procs, &[], 1, &mut left);
+        assert!(!left.any_running());
+        assert_eq!(left.len(), 1);
+        sample(&procs, &[], 1, &mut left);
         assert!(left.is_empty());
     }
 
     #[test]
-    fn a_left_process_back_under_a_live_session_counts_for_it() {
+    fn an_already_linked_child_counts_for_its_session_after_its_parent_exits() {
+        let mut left = LeftRunning::default();
+        let s = [live("s", "main", 10)];
+        let cli = proc(10, None, 70, 300);
+        let parent = proc(11, Some(10), 90, 5);
+        let child = proc(12, Some(11), 95, 40);
+        sample_at(&[cli, parent, child], &s, 1, &mut left, 100_000);
+
+        let values = sample_at(&[cli, child], &s, 1, &mut left, 110_000);
+        assert_eq!(value(&values, Kind::Session, Some("s")), Some(340));
+        assert_eq!(value(&values, Kind::Left, Some("s")), None);
+
+        let values = sample_at(&[child], &[], 1, &mut left, 120_000);
+        assert_eq!(value(&values, Kind::Session, Some("s")), None);
+        assert_eq!(value(&values, Kind::Left, Some("s")), Some(40));
+    }
+
+    #[test]
+    fn processes_in_the_tree_count_for_the_clis_newest_session() {
         let procs = [proc(10, None, 1, 300), proc(11, Some(10), 2, 100)];
         let mut left = LeftRunning::default();
         sample(&procs, &[live("s", "main", 10)], 1, &mut left);
@@ -1213,6 +1323,129 @@ mod tests {
         let mut left = LeftRunning::default();
         sample(&procs, &[live("s", "main", 10)], 1, &mut left);
         assert_eq!(left.len(), MAX_LEFT);
+
+        // A running child gets the space before the parents that have exited.
+        let child = proc(11 + MAX_LEFT as u32 + 50, Some(11), 1001, 2);
+        let values = sample_at(&[child], &[], 1, &mut left, 1_010_000);
+        assert_eq!(value(&values, Kind::Left, Some("s")), Some(2));
+        assert_eq!(left.len(), MAX_LEFT);
+        assert!(left.any_running());
+        let values = sample_at(&[child], &[], 1, &mut left, 1_020_000);
+        assert_eq!(value(&values, Kind::Left, Some("s")), Some(2));
+        assert_eq!(left.len(), 1);
+    }
+
+    #[test]
+    fn a_new_child_inherits_its_missing_parents_session() {
+        let mut left = LeftRunning::default();
+        let s = [live("s", "main", 10)];
+        let cli = proc(10, None, 70, 300);
+        let parent = proc(11, Some(10), 90, 5);
+        sample_at(&[cli, parent], &s, 1, &mut left, 100_000);
+
+        // The interval was longer than usual. The parent's grandchild follows the newly linked child.
+        let child = proc(12, Some(11), 115, 40);
+        let grandchild = proc(13, Some(12), 116, 30);
+        let values = sample_at(&[cli, child, grandchild], &s, 1, &mut left, 123_250);
+        assert_eq!(value(&values, Kind::Session, Some("s")), Some(370));
+        assert_eq!(value(&values, Kind::Left, Some("s")), None);
+
+        // The link outlives the parent's record. When the CLI exits, both become Left running.
+        let values = sample_at(&[cli, child, grandchild], &s, 1, &mut left, 150_000);
+        assert_eq!(value(&values, Kind::Session, Some("s")), Some(370));
+        let values = sample_at(&[child, grandchild], &[], 1, &mut left, 160_000);
+        assert_eq!(value(&values, Kind::Session, Some("s")), None);
+        assert_eq!(value(&values, Kind::Left, Some("s")), Some(70));
+        let values = sample_at(&[grandchild], &[], 1, &mut left, 170_000);
+        assert_eq!(value(&values, Kind::Left, Some("s")), Some(30));
+    }
+
+    #[test]
+    fn a_missing_parent_is_only_followed_up_to_the_first_snapshot_without_it() {
+        let mut left = LeftRunning::default();
+        let s = [live("s", "main", 10)];
+        let cli = proc(10, None, 70, 300);
+        let parent = proc(11, Some(10), 90, 5);
+        sample_at(&[cli, parent], &s, 1, &mut left, 100_500);
+
+        let too_early = proc(12, Some(11), 89, 100);
+        let present_at_cutoff = proc(13, Some(11), 102, 40);
+        let unknown_parent = proc(15, Some(14), 101, 100);
+        let values = sample_at(
+            &[cli, too_early, present_at_cutoff, unknown_parent],
+            &s,
+            1,
+            &mut left,
+            102_125,
+        );
+        assert_eq!(values.len(), 1);
+        assert_eq!(value(&values, Kind::Session, Some("s")), Some(340));
+        assert_eq!(left.0[&11].first_missing_at_ms, Some(102_125));
+
+        // The first missing sample fixes the cutoff, even though the next sample is only a few seconds away.
+        let in_window = proc(16, Some(11), 101, 20);
+        let straddles_cutoff = proc(17, Some(11), 102, 100);
+        let too_late = proc(18, Some(11), 103, 100);
+        let values = sample_at(
+            &[
+                cli,
+                present_at_cutoff,
+                in_window,
+                straddles_cutoff,
+                too_late,
+            ],
+            &s,
+            1,
+            &mut left,
+            104_200,
+        );
+        assert_eq!(values.len(), 1);
+        assert_eq!(value(&values, Kind::Session, Some("s")), Some(360));
+        assert!(!left.0.contains_key(&11));
+
+        let old_enough = proc(19, Some(11), 101, 100);
+        let values = sample_at(&[cli, old_enough], &s, 1, &mut left, 104_500);
+        assert_eq!(value(&values, Kind::Session, Some("s")), Some(300));
+    }
+
+    #[test]
+    fn a_child_can_inherit_from_a_remembered_parent_if_the_pid_holder_is_newer() {
+        let mut left = LeftRunning::default();
+        let s = [live("s", "main", 10)];
+        let cli = proc(10, None, 70, 300);
+        let parent = proc(11, Some(10), 90, 5);
+        sample_at(&[cli, parent], &s, 1, &mut left, 100_000);
+
+        let child = proc(12, Some(11), 105, 40);
+        let replacement = proc(11, None, 108, 100);
+        let replacements_child = proc(13, Some(11), 109, 100);
+        let values = sample_at(
+            &[cli, child, replacement, replacements_child],
+            &s,
+            1,
+            &mut left,
+            110_000,
+        );
+        assert_eq!(values.len(), 1);
+        assert_eq!(value(&values, Kind::Session, Some("s")), Some(340));
+    }
+
+    #[test]
+    fn an_observed_pid_reuse_invalidates_the_missing_parent_record() {
+        let mut left = LeftRunning::default();
+        let s = [live("s", "main", 10)];
+        let cli = proc(10, None, 70, 300);
+        let parent = proc(11, Some(10), 90, 5);
+        sample_at(&[cli, parent], &s, 1, &mut left, 100_000);
+
+        let replacement = proc(11, None, 103, 100);
+        let its_child = proc(12, Some(11), 105, 100);
+        let values = sample_at(&[cli, replacement, its_child], &s, 1, &mut left, 110_000);
+        assert_eq!(values.len(), 1);
+        assert_eq!(value(&values, Kind::Session, Some("s")), Some(300));
+        let values = sample_at(&[cli, its_child], &s, 1, &mut left, 120_000);
+        assert_eq!(values.len(), 1);
+        assert_eq!(value(&values, Kind::Session, Some("s")), Some(300));
     }
 
     fn reading(at_ms: i64, values: Vec<(SeriesInfo, u64)>) -> Reading {

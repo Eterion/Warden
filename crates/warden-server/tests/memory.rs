@@ -6,6 +6,10 @@ mod common;
 use common::{
     Fixture, MEMORY_EVERY, StandIn, StandInSpec, call, eventually, memory_now, memory_today,
 };
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use warden_core::{memory, model::Provider};
+use warden_server::{app::App, procs::MemorySource};
 
 /// The part the copies of this binary play in a stand-in tree.
 #[test]
@@ -76,7 +80,7 @@ fn a_sessions_tree_is_measured_and_what_it_leaves_running_too() {
         let day = memory_today(addr);
         memory_now(&day, "left", "s1").is_some_and(|kib| kib >= HELD_MIB * 1024)
     });
-    // (Once it exits it is forgotten; a minute keeps its highest value, so this minute still shows it.)
+    // When the helper exits it stops counting. A minute keeps its highest value, so this minute still shows it.
     tree.end_helper();
     server.stop();
     // The day file has the series and its minutes.
@@ -89,6 +93,71 @@ fn a_sessions_tree_is_measured_and_what_it_leaves_running_too() {
             .any(|s| s.info.session_id.as_deref() == Some("s1"))
     );
     assert!(!saved.minutes.is_empty());
+}
+
+#[test]
+fn exited_records_alone_do_not_keep_process_snapshots_running() {
+    #[derive(Default)]
+    struct EmptySnapshot(AtomicUsize);
+
+    impl MemorySource for EmptySnapshot {
+        fn computer(&self) -> Option<(u64, u64)> {
+            Some((1024, 512))
+        }
+
+        fn processes(
+            &self,
+            _roots: &[u32],
+            _own: u32,
+            pick: &mut dyn FnMut(&[memory::Proc]) -> Vec<u32>,
+        ) -> Vec<memory::Proc> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            pick(&[]);
+            Vec::new()
+        }
+    }
+
+    let f = Fixture::new();
+    let app = App::new(
+        f.data.path().to_owned(),
+        f.env(),
+        (f.endpoint, f.sign_in_server, f.resets),
+        Arc::new(|_, _, _, _| Ok(())),
+        Arc::new(|_| {}),
+        None,
+        None,
+    )
+    .expect("app");
+    let mut left = memory::LeftRunning::default();
+    let session = memory::Live {
+        provider: Provider::Claude,
+        session_id: "s1".into(),
+        parent_session_id: None,
+        account_id: "main".into(),
+        account_label: None,
+        other_sign_in: false,
+        name: None,
+        project: None,
+        cli: 10,
+        last_event_at: 0,
+    };
+    let cli = memory::Proc {
+        pid: 10,
+        parent: None,
+        started: 1,
+        private: None,
+    };
+    left.update(&memory::plan(&[cli], &[session], 1, &left, 2_000));
+    let source = EmptySnapshot::default();
+
+    // The process was running, so take the snapshot that finds it gone.
+    app.sample_memory(&source, &mut left).expect("first sample");
+    assert_eq!(source.0.load(Ordering::Relaxed), 1);
+    assert!(!left.any_running());
+
+    // There is only a missing-parent record. The next sample reads the computer without a snapshot.
+    app.sample_memory(&source, &mut left).expect("idle sample");
+    assert_eq!(source.0.load(Ordering::Relaxed), 1);
 }
 
 #[test]

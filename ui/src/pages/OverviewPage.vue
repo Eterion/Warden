@@ -16,6 +16,7 @@ import { ApiError, api, type Account, type Session, type State } from '../api';
 import AccountIcon from '../components/AccountIcon.vue';
 import ActivitySparkline from '../components/ActivitySparkline.vue';
 import NowChip from '../components/NowChip.vue';
+import PageHeader from '../components/PageHeader.vue';
 import ProviderMark from '../components/ProviderMark.vue';
 import RemovableChip from '../components/RemovableChip.vue';
 import StateIcon from '../components/StateIcon.vue';
@@ -403,8 +404,8 @@ function sessionAccount(s: Session): Account | undefined {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4.5">
-    <header class="flex items-center gap-3">
+  <div class="flex flex-col">
+    <PageHeader>
       <h1
         ref="heading"
         tabindex="-1"
@@ -412,7 +413,7 @@ function sessionAccount(s: Session): Account | undefined {
       >
         Overview
       </h1>
-    </header>
+    </PageHeader>
 
     <p v-if="!store.state && !store.connected" class="text-14 text-secondary">
       Warden's core is not running. Start it, and this page fills in by itself.

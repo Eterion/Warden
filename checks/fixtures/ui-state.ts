@@ -93,6 +93,7 @@ export function normalState(now: number): State {
       workHours: null,
       resetWarningDays: 3,
       showQuietSessions: true,
+      pageTransitions: true,
       hiddenResetAccounts: [],
       soonestResetOnly: false,
     },

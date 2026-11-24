@@ -114,6 +114,8 @@ export interface Settings {
   resetWarningDays: number;
   /** Whether the Overview's sessions table shows ended and not-known sessions. Set only by its switch there. */
   showQuietSessions: boolean;
+  /** Whether switching between Overview and Memory animates. Defaults to true. */
+  pageTransitions: boolean;
   /** Accounts whose limit resets the Overview leaves out (its filter). */
   hiddenResetAccounts: string[];
   /** The Overview shows only each account's soonest limit reset (its filter). */

@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { nextTick } from 'vue';
 import App from './App.vue';
 import type { MemoryDay } from './api';
 import { isoDay } from './memory';
@@ -42,6 +43,7 @@ function server() {
 afterEach(() => {
   vi.unstubAllGlobals();
   store.state = null;
+  store.away = false;
   go('');
 });
 
@@ -62,19 +64,60 @@ describe('App', () => {
     ]);
     server();
     go('');
-    const app = mount(App, { attachTo: document.body });
+    const app = mount(App, { attachTo: document.body, global: { stubs: { transition: false } } });
     await flushPromises();
     const main = app.get('main').element;
     // The idle login's tooltip is drawn into <main>, after the page.
     expect(main.childNodes.length).toBeGreaterThan(1);
 
+    const expectSettledPage = (title: string) =>
+      vi.waitFor(() => {
+        const box = app.get('main > .page-content');
+        expect(box.find('.page-enter-active, .page-leave-active').exists()).toBe(false);
+        expect(box.element.children).toHaveLength(1);
+        expect(app.findAll('main h1').map((heading) => heading.text())).toEqual([title]);
+      });
+
     go('memory');
-    await flushPromises();
-    expect(app.get('main h1').text()).toBe('Memory');
+    await expectSettledPage('Memory');
 
     go('');
-    await flushPromises();
-    expect(app.get('main h1').text()).toBe('Overview');
+    await expectSettledPage('Overview');
+    app.unmount();
+  });
+
+  it('enables the page transition by default and swaps immediately when switched off', async () => {
+    store.state = state([]);
+    store.now = NOW;
+    server();
+    const app = mount(App, { attachTo: document.body, global: { stubs: { transition: false } } });
+    go('memory');
+    await nextTick();
+    expect(app.get('main .page-enter-active h1').text()).toBe('Memory');
+    expect(app.get('main .page-leave-active[inert] h1').text()).toBe('Overview');
+
+    store.state.settings.pageTransitions = false;
+    go('');
+    await nextTick();
+    expect(app.findAll('main h1').map((heading) => heading.text())).toEqual(['Overview']);
+    expect(app.find('main .page-enter-active').exists()).toBe(false);
+    expect(app.find('main [inert]').exists()).toBe(false);
+    app.unmount();
+  });
+
+  it('uses the fade-only page transition when reduced motion is requested', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    server();
+    const app = mount(App, { attachTo: document.body, global: { stubs: { transition: false } } });
+    go('memory');
+    await nextTick();
+    expect(app.get('main .page-fade-enter-active h1').text()).toBe('Memory');
+    expect(app.get('main .page-fade-leave-active h1').text()).toBe('Overview');
+    expect(app.find('main .page-enter-active').exists()).toBe(false);
     app.unmount();
   });
 });

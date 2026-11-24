@@ -93,6 +93,9 @@ pub struct SettingsPatch {
     /// value that is not a boolean.
     #[serde(default, deserialize_with = "strict_bool")]
     pub show_quiet_sessions: Option<bool>,
+    /// Whether Overview and Memory animate when switching pages.
+    #[serde(default, deserialize_with = "strict_bool")]
+    pub page_transitions: Option<bool>,
     /// The accounts whose limit resets the Overview's list leaves out: ids of accounts Warden knows (main is `main`).
     /// `null` is refused, as anything but a list of strings.
     #[serde(default, deserialize_with = "strict_ids")]
@@ -300,6 +303,7 @@ pub struct SettingsView {
     work_hours: Option<WorkHours>,
     reset_warning_days: u8,
     show_quiet_sessions: bool,
+    page_transitions: bool,
     /// Only ids of accounts Warden knows now: one removed since is left out.
     hidden_reset_accounts: Vec<String>,
     soonest_reset_only: bool,
@@ -623,6 +627,7 @@ impl App {
                 work_hours: s.work_hours.clone(),
                 reset_warning_days: s.reset_warning_days,
                 show_quiet_sessions: s.show_quiet_sessions,
+                page_transitions: s.page_transitions,
                 hidden_reset_accounts: s
                     .hidden_reset_accounts
                     .iter()
@@ -2062,6 +2067,9 @@ impl App {
         }
         if let Some(q) = patch.show_quiet_sessions {
             inner.settings.show_quiet_sessions = q;
+        }
+        if let Some(on) = patch.page_transitions {
+            inner.settings.page_transitions = on;
         }
         if let Some(ids) = patch.hidden_reset_accounts {
             // Checked above; an account removed since then is dropped here, under the same lock as the save, so no id

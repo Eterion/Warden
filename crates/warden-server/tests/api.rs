@@ -1858,6 +1858,56 @@ fn showing_quiet_sessions_is_checked_and_saved() {
     server.stop();
 }
 
+#[test]
+fn page_transitions_default_on_and_only_accept_booleans() {
+    let f = Fixture::new();
+    let server = f.start();
+    assert_eq!(state(server.addr)["settings"]["pageTransitions"], true);
+    server.stop();
+
+    std::fs::write(
+        f.data.path().join("settings.json"),
+        r#"{"version":2,"reserve":30}"#,
+    )
+    .expect("write settings from before page transitions");
+    let server = f.start();
+    let addr = server.addr;
+    assert_eq!(state(addr)["settings"]["pageTransitions"], true);
+    assert_eq!(state(addr)["settings"]["reserve"], 30);
+    for bad in [json!("false"), json!(0), json!({}), json!([]), Value::Null] {
+        let reply = call(
+            addr,
+            "PUT",
+            "/api/settings",
+            Some(&json!({"pageTransitions": bad, "theme": "dark"}).to_string()),
+        );
+        assert_eq!(reply.status, 400, "{bad}");
+        assert_eq!(state(addr)["settings"]["pageTransitions"], true);
+        assert_eq!(state(addr)["settings"]["theme"], "system");
+    }
+    let off = call(
+        addr,
+        "PUT",
+        "/api/settings",
+        Some(r#"{"pageTransitions":false}"#),
+    );
+    assert_eq!(off.status, 200, "{}", off.body);
+    assert_eq!(off.json()["settings"]["pageTransitions"], false);
+    server.stop();
+
+    let server = f.start();
+    assert_eq!(state(server.addr)["settings"]["pageTransitions"], false);
+    let on = call(
+        server.addr,
+        "PUT",
+        "/api/settings",
+        Some(r#"{"pageTransitions":true}"#),
+    );
+    assert_eq!(on.status, 200, "{}", on.body);
+    assert_eq!(on.json()["settings"]["pageTransitions"], true);
+    server.stop();
+}
+
 /// What the stand-in endpoints were asked since `from`: per Claude token whether the request asked for the limit
 /// resets, and how many Codex resets requests were sent.
 fn asked_since(f: &Fixture, from: (usize, usize)) -> (Vec<(String, bool)>, usize) {

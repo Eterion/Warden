@@ -405,6 +405,46 @@ body {
   animation-play-state: paused;
 }
 
+/* The entering page determines the panel's scrollable height. The page box is at least as tall as the viewport
+   inside the panel, so the leaving page still covers the visible area while the new one loads. */
+.page-content:has(> .page-enter-active) {
+  overflow-y: clip;
+}
+
+.page-leave-active,
+.page-fade-leave-active {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+}
+
+.page-enter-active {
+  transition:
+    opacity 150ms ease-out,
+    translate 150ms ease-out;
+  transition-delay: 40ms;
+}
+
+.page-leave-active {
+  transition: opacity 100ms ease-out;
+}
+
+.page-fade-enter-active,
+.page-fade-leave-active {
+  transition: opacity 80ms ease-out;
+}
+
+.page-enter-from {
+  translate: 0 var(--spacing);
+}
+
+.page-enter-from,
+.page-leave-to,
+.page-fade-enter-from,
+.page-fade-leave-to {
+  opacity: 0;
+}
+
 /* The working spinner turns only when motion is welcome; modals and menus then only fade, quickly. */
 @media (prefers-reduced-motion: reduce) {
   .animate-spin-slow {

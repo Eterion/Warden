@@ -75,8 +75,10 @@ type Fixture =
 /** `hover` rests the pointer on an element; `press` also holds the button down on it, until the page is checked. */
 type Step =
   | { click: string }
-  /** Checks that a click leaves the target's vertical position in the layout alone. */
-  | { clickKeepingTop: string; target: string }
+  /** Checks that a click leaves the target at the same position, optionally on a different page. */
+  | { clickKeepingPosition: string; target: string; nextTarget?: string }
+  /** Checks that the destination header has the same height and fits across the page. */
+  | { navigateKeepingHeight: string; target: string; nextTarget: string }
   | { focus: string }
   | { hover: string }
   | { press: string }
@@ -177,12 +179,48 @@ export const PAGES: {
     ready: '[data-memory-chart]',
   },
   {
+    // The first widget starts at the same place after navigating from Overview at the smallest desktop width.
+    name: 'memory-from-overview',
+    path: '/',
+    fixture: 'memory',
+    ready: 'section[aria-labelledby=accounts-heading]',
+    steps: [
+      {
+        clickKeepingPosition: 'nav[aria-label=Main] a[href="#/memory"]',
+        target: 'section[aria-labelledby=accounts-heading]',
+        nextTarget: '[data-figure=now]',
+      },
+      { waitFor: '[data-memory-chart]' },
+    ],
+    viewport: { width: 800, height: 800 },
+  },
+  {
+    // A long date with its year still fits on the same title line at the desktop window's minimum width.
+    name: 'memory-past-year-narrow',
+    path: '/',
+    fixture: 'memory',
+    ready: 'main h1:has-text("Overview")',
+    steps: [
+      {
+        navigateKeepingHeight: '#/memory/2025-09-24',
+        target: 'main .page-content > div > header',
+        nextTarget: 'main header:has([data-day]:text-is("Wednesday, 24 September 2025"))',
+      },
+      { waitFor: '[data-memory-empty]' },
+    ],
+    viewport: { width: 800, height: 560 },
+  },
+  {
     name: 'memory-past-day',
     path: '/#/memory',
     fixture: 'memory',
     ready: '[data-memory-chart]',
     steps: [
-      { click: 'button[aria-label="Previous day"]' },
+      {
+        clickKeepingPosition: 'button[aria-label="Previous day"]',
+        target: 'button[aria-label="Previous day"]',
+        nextTarget: 'header:has(button[aria-label="Next day"]:not([aria-disabled])) button[aria-label="Previous day"]',
+      },
       { waitFor: 'text=Share at peak' },
       { waitFor: '[data-memory-chart]' },
     ],
@@ -544,11 +582,11 @@ export const PAGES: {
     ready: 'main [role=table]',
     steps: [
       {
-        clickKeepingTop: 'button[role=checkbox][aria-label$="of Second"]',
+        clickKeepingPosition: 'button[role=checkbox][aria-label$="of Second"]',
         target: '[role=table][aria-labelledby=sessions-heading]',
       },
       { waitFor: 'text=Show all' },
-      { clickKeepingTop: 'text=Show all', target: '[role=table][aria-labelledby=sessions-heading]' },
+      { clickKeepingPosition: 'text=Show all', target: '[role=table][aria-labelledby=sessions-heading]' },
       { waitGone: 'text=Show all' },
       { click: 'button[role=checkbox][aria-label$="of Second"]' },
       { waitFor: 'text=Show all' },
@@ -578,7 +616,7 @@ export const PAGES: {
     name: 'settings-general',
     path: '/#/settings/general',
     fixture: 'normal',
-    ready: 'text=Warn before a reset expires',
+    ready: '#page-transitions',
   },
   {
     name: 'settings-accounts-signed-in-as-expected',
@@ -1217,13 +1255,27 @@ async function main(): Promise<void> {
         await page.locator(p.ready).first().waitFor({ timeout: 10_000 });
         for (const step of p.steps ?? []) {
           if ('click' in step) await page.locator(step.click).click({ timeout: 10_000 });
-          else if ('clickKeepingTop' in step) {
-            const target = page.locator(step.target);
-            const top = () => target.evaluate((el) => (el as HTMLElement).offsetTop);
-            const before = await top();
-            await page.locator(step.clickKeepingTop).click({ timeout: 10_000 });
-            const after = await top();
-            if (after !== before) throw new Error(`${p.name}: ${step.target} moved from ${before} to ${after}`);
+          else if ('clickKeepingPosition' in step) {
+            // Offset coordinates ignore the transition's visual movement and the panel's scroll position.
+            const position = (target: string) =>
+              page
+                .locator(target)
+                .evaluate((el) => ({ left: (el as HTMLElement).offsetLeft, top: (el as HTMLElement).offsetTop }));
+            const before = await position(step.target);
+            await page.locator(step.clickKeepingPosition).click({ timeout: 10_000 });
+            const after = await position(step.nextTarget ?? step.target);
+            if (before.left !== after.left || before.top !== after.top)
+              throw new Error(
+                `${p.name}: layout moved from ${before.left}, ${before.top} to ${after.left}, ${after.top}`,
+              );
+          } else if ('navigateKeepingHeight' in step) {
+            const before = await page.locator(step.target).evaluate((el) => (el as HTMLElement).offsetHeight);
+            await page.evaluate((hash) => (location.hash = hash), step.navigateKeepingHeight);
+            const after = await page
+              .locator(step.nextTarget)
+              .evaluate((el) => ({ height: (el as HTMLElement).offsetHeight, fits: el.scrollWidth <= el.clientWidth }));
+            if (after.height !== before || !after.fits)
+              throw new Error(`${p.name}: header changed height (${before} to ${after.height}) or overflowed`);
           } else if ('focus' in step) {
             // Scrolled into view first, and the scroll let settle: a tooltip closes when the page scrolls under it.
             const target = page.locator(step.focus);
@@ -1307,7 +1359,7 @@ async function main(): Promise<void> {
         }
         await page.evaluate(() => document.fonts.ready);
         await page.waitForTimeout(300);
-        // Modals and menus animate open; check them once they have settled (spinners turn for ever, so not those, nor an
+        // Check pages, modals and menus once their transitions settle (spinners turn for ever, so not those, nor an
         // animation a `freeze` step paused for a still). One that does not settle fails the state rather than hanging.
         // Any other paused animation never finishes, so it fails the state.
         const settled = await page.evaluate(() => {

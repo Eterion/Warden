@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// A button that is only an icon, named by its label: md beside a heading, sm (a step smaller) on a row, xs a bare
-// small icon beside a small heading (the sidebar's Accounts), lit by its colour alone, with no background. It also
+// A button that is only an icon, named by its label. Use md beside a heading, sm on a row or in compact page
+// controls, and xs for a bare icon beside a small heading (the sidebar's Accounts), lit by colour alone. It also
 // serves as a Reka trigger (as-child), which marks it open with data-state.
 //
 // One that cannot be used now says why (`disabledReason`): it stays focusable with `aria-disabled`, shows the reason in

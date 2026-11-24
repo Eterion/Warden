@@ -76,7 +76,7 @@ const CELL =
     <PopoverTrigger ref="trigger" as-child>
       <button
         type="button"
-        class="inline-flex h-9 min-w-60 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-lg px-3 text-14 font-semibold text-text hov:bg-chip-off press:bg-press focus-visible:outline-2 focus-visible:outline-indicator data-[state=open]:bg-chip-off data-[state=open]:press:bg-press"
+        class="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-2 text-center text-14 font-semibold whitespace-nowrap text-text hov:bg-chip-off press:bg-press focus-visible:outline-2 focus-visible:outline-indicator data-[state=open]:bg-chip-off data-[state=open]:press:bg-press"
         data-day-picker
       >
         <CalendarDays class="size-4 text-icon" aria-hidden="true" />

@@ -10,6 +10,7 @@
 import { Check, ChevronLeft, ChevronRight } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import ProviderMark from '../components/ProviderMark.vue';
+import PageHeader from '../components/PageHeader.vue';
 import WButton from '../components/WButton.vue';
 import WIconButton from '../components/WIconButton.vue';
 import WTable from '../components/WTable.vue';
@@ -83,28 +84,36 @@ function toggle(key: string): void {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4.5">
-    <header class="flex flex-wrap items-center gap-x-3 gap-y-2">
+  <div class="flex flex-col">
+    <PageHeader>
       <h1 class="text-20 font-semibold">Memory</h1>
-      <div class="ml-auto flex flex-wrap items-center gap-x-2 gap-y-2">
+      <div class="ml-auto flex items-center gap-1">
+        <h2><MemoryDayPicker :day="day" :today="today" :recorded="days" @pick="show" /></h2>
         <WIconButton
           label="Previous day"
           :icon="ChevronLeft"
+          size="sm"
           :disabled-reason="steps.prev ? null : 'No earlier day was recorded.'"
           @click="steps.prev && show(steps.prev)"
         />
-        <h2><MemoryDayPicker :day="day" :today="today" :recorded="days" @pick="show" /></h2>
         <WIconButton
           label="Next day"
           :icon="ChevronRight"
+          size="sm"
           :disabled-reason="steps.next ? null : 'This is today: there is no later day.'"
           @click="steps.next && show(steps.next)"
         />
-        <WButton variant="quiet" :disabled-reason="isToday ? 'This is today.' : null" @click="show(today)"
+        <WButton
+          variant="quiet"
+          size="sm"
+          on="panel"
+          class="ml-1"
+          :disabled-reason="isToday ? 'This is today.' : null"
+          @click="show(today)"
           >Today</WButton
         >
       </div>
-    </header>
+    </PageHeader>
 
     <p v-if="error && !data" class="text-14 text-secondary">
       {{ store.connected ? error : "Warden's core is not running. Start it, and this page fills in by itself." }}

@@ -40,6 +40,7 @@ describe('apply', () => {
         workHours: null,
         resetWarningDays: 3,
         showQuietSessions: true,
+        pageTransitions: true,
         hiddenResetAccounts: [],
         soonestResetOnly: false,
       },

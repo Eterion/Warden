@@ -144,6 +144,15 @@ describe('MemoryPage', () => {
     const page = mount(MemoryPage, { attachTo: document.body });
     await flushPromises();
     expect(page.get('[data-day]').text()).toBe('Monday, 9 November');
+    expect(
+      page
+        .get('header')
+        .findAll('button')
+        .map((button) => button.attributes('aria-label') ?? button.text()),
+    ).toEqual(['Monday, 9 November', 'Previous day', 'Next day', 'Today']);
+    expect(page.get('button[aria-label="Previous day"]').classes()).toContain('size-8');
+    expect(page.get('button[aria-label="Next day"]').classes()).toContain('size-8');
+    expect(page.get('[data-day-picker]').classes()).toEqual(expect.arrayContaining(['h-8', 'text-14', 'text-center']));
     expect(figure(page, 'now')).toEqual(['AI sessions now', '1 GB', '3% of 32 GB']);
     expect(figure(page, 'peak')).toEqual(['Peak today', '3 GB', 'at 09:00']);
     expect(figure(page, 'computer')).toEqual(['Computer', '30 GB', '94% of 32 GB']);
@@ -190,7 +199,9 @@ describe('MemoryPage', () => {
     ]);
     expect(page.find('[data-band="account:main"]').exists()).toBe(true);
     expect(page.get('button[aria-label="Next day"]').attributes('aria-disabled')).toBe('true');
-    expect(page.get('button[aria-disabled]:not([aria-label])').text()).toBe('Today');
+    const today = page.get('button[aria-disabled]:not([aria-label])');
+    expect(today.text()).toBe('Today');
+    expect(today.classes()).toEqual(expect.arrayContaining(['h-7', 'ml-1']));
     page.unmount();
   });
 

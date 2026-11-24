@@ -32,6 +32,7 @@ export function state(accounts: Account[]): State {
       workHours: null,
       resetWarningDays: 3,
       showQuietSessions: true,
+      pageTransitions: true,
       hiddenResetAccounts: [],
       soonestResetOnly: false,
     },

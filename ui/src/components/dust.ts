@@ -1,7 +1,7 @@
 // A row leaving as dust, once its limit reset is used: the whole row, its background too, breaks into many small
 // fragments that drift up and to the side, fading and shrinking, swept away from its left edge to its right at slightly
 // different times (about 2.5 s in all), uncovering one of the characters where the row was, picked at random (three dust bunnies, one waving goodbye, or
-// Cthulhu rising from below); then the gap closes up. The one animation besides the modals, menus and spinners. CSS and the Web
+// Cthulhu rising from below); then the gap closes up. CSS and the Web
 // Animations API only, styles set from script (which the Content-Security-Policy allows); the sizes come from the row
 // itself. With reduced motion the row only fades out, quickly. Nothing keeps running after it: every animation is finite
 // and the fragments are removed when they finish.

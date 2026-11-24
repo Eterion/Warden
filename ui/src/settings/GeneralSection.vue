@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// Settings, General: how often usage is read, the theme, how soon before a limit reset expires the Overview warns,
-// Warden's data and its log files. The desktop app adds Keep running in the tray, Start with Windows and Open log folder; the demo in the
-// browser shows the log folder's path only.
+// Settings, General: the usage interval, theme, page transitions, reset warning, data and logs. The desktop app adds
+// Keep running in the tray, Start with Windows and Open log folder. The browser demo shows the log folder's path.
 import { FolderOpen, Monitor, Moon, Sun } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
 import { api, type Theme } from '../api';
@@ -21,6 +20,10 @@ const interval = computed<string>({
 const theme = computed<Theme>({
   get: () => store.state?.settings.theme ?? 'system',
   set: (v) => void run(() => api.settings({ theme: v })),
+});
+const pageTransitions = computed<boolean>({
+  get: () => store.state?.settings.pageTransitions ?? true,
+  set: (v) => void run(() => api.settings({ pageTransitions: v })),
 });
 
 const keepInTray = computed<boolean>({
@@ -76,6 +79,15 @@ async function runSetupAgain(): Promise<void> {
             { value: 'dark', label: 'Dark', icon: Moon },
           ]"
         />
+      </div>
+      <div class="flex items-center justify-between gap-6 border-b border-divider py-4">
+        <div class="flex min-w-0 flex-auto flex-col gap-0.5">
+          <label for="page-transitions" class="cursor-pointer text-14 font-medium">Page transitions</label>
+          <span class="text-13 text-tertiary"
+            >Fade when switching between Overview and Memory. Turn off to switch instantly.</span
+          >
+        </div>
+        <WSwitch id="page-transitions" v-model="pageTransitions" label="Page transitions" />
       </div>
       <div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b border-divider py-4">
         <div class="flex flex-auto basis-65 flex-col gap-0.5">

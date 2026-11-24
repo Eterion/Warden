@@ -44,6 +44,16 @@ describe('GeneralSection', () => {
     expect(calls.map((c) => c.body)).toEqual([{ keepInTray: true }, { startWithWindows: true }]);
   });
 
+  it('shows Page transitions in the browser and saves it', async () => {
+    const { page, calls } = setup();
+    const toggle = page.get('button#page-transitions');
+    expect(page.get('label[for=page-transitions]').text()).toBe('Page transitions');
+    expect(toggle.attributes('aria-checked')).toBe('true');
+    await toggle.trigger('click');
+    await flushPromises();
+    expect(calls).toEqual([{ method: 'PUT', path: '/api/settings', body: { pageTransitions: false } }]);
+  });
+
   it('shows the log folder, and opens it only in the desktop app', async () => {
     const open = (p: ReturnType<typeof setup>['page']) =>
       p.findAll('button').find((b) => b.text() === 'Open log folder');

@@ -55,7 +55,7 @@ const sections: { id: Section; label: string; icon: typeof Settings; title: stri
     label: 'General',
     icon: Settings,
     title: 'General',
-    subtitle: 'Usage reading, the theme and the reset warning.',
+    subtitle: 'Usage reading, the theme, page transitions and the reset warning.',
   },
   {
     id: 'accounts',
@@ -110,6 +110,12 @@ const INDEX: {
     label: 'Theme',
     help: 'System, light or dark.',
     keys: 'dark light appearance',
+  },
+  {
+    s: 'general',
+    label: 'Page transitions',
+    help: 'Fade when switching between Overview and Memory.',
+    keys: 'animation motion fade',
   },
   {
     s: 'general',

@@ -118,8 +118,11 @@ pub struct Settings {
     /// Whether the Overview's sessions table shows ended and not-known sessions. Its only control is the switch in the
     /// Sessions header; it is not in Settings › General. A value of the wrong type loads as `true`, never failing the
     /// file.
-    #[serde(deserialize_with = "lenient_show_quiet_sessions")]
+    #[serde(deserialize_with = "lenient_true")]
     pub show_quiet_sessions: bool,
+    /// Whether Overview and Memory animate when switching pages. A missing or invalid value defaults to `true`.
+    #[serde(deserialize_with = "lenient_true")]
+    pub page_transitions: bool,
     /// The accounts whose limit resets the Overview's list leaves out (its filter, the only control). An id no account
     /// has any more is harmless (ids are never reused) and is left out of the state. A value of the wrong shape loads
     /// as none left out, never failing the file.
@@ -143,7 +146,7 @@ fn lenient_false<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Erro
     Ok(value.and_then(|v| v.as_bool()).unwrap_or(false))
 }
 
-fn lenient_show_quiet_sessions<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+fn lenient_true<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
     let value = Option::<serde_json::Value>::deserialize(d)?;
     Ok(value.and_then(|v| v.as_bool()).unwrap_or(true))
 }
@@ -232,6 +235,7 @@ impl Default for Settings {
             work_hours: None,
             reset_warning_days: DEFAULT_RESET_WARNING_DAYS,
             show_quiet_sessions: true,
+            page_transitions: true,
             hidden_reset_accounts: Vec::new(),
             soonest_reset_only: false,
         }
@@ -984,6 +988,20 @@ mod tests {
         let s: Settings =
             serde_json::from_str(r#"{"version":2,"showQuietSessions":false}"#).expect("loads");
         assert!(!s.show_quiet_sessions);
+    }
+
+    #[test]
+    fn page_transitions_load_as_enabled_for_missing_or_invalid_values() {
+        for raw in [
+            r#"{"version":2,"reserve":30}"#,
+            r#"{"version":2,"reserve":30,"pageTransitions":null}"#,
+            r#"{"version":2,"reserve":30,"pageTransitions":"false"}"#,
+            r#"{"version":2,"reserve":30,"pageTransitions":0}"#,
+            r#"{"version":2,"reserve":30,"pageTransitions":{}}"#,
+        ] {
+            let s: Settings = serde_json::from_str(raw).expect(raw);
+            assert_eq!((s.page_transitions, s.reserve), (true, 30), "{raw}");
+        }
     }
 
     #[test]

@@ -5,8 +5,9 @@
 // The shell is exactly the window's height and never wraps, and the sidebar and the panel each scroll what does not
 // fit, so the page itself never scrolls. The panel is `relative`: what is positioned inside it (screen-reader-only
 // text in a long table) is then clipped by its scrolling, instead of reaching below the window and making the page
-// taller. The page sits in a box of its own: the page's tooltips and menus are drawn into <main> beside it, and Vue
-// puts the next page before whatever follows the old one, which would be one of those, gone with the old page.
+// taller. The page sits in a box of its own because its tooltips and menus are drawn beside that box into <main>.
+// Vue replaces the page within the box, clear of those portals, and the old page fades over the new one's layout.
+import { usePreferredReducedMotion } from '@vueuse/core';
 import MemoryPage from './pages/MemoryPage.vue';
 import OverviewPage from './pages/OverviewPage.vue';
 import { route } from './route';
@@ -14,6 +15,14 @@ import SettingsModal from './settings/SettingsModal.vue';
 import SetupModal from './settings/SetupModal.vue';
 import AppSidebar from './shell/AppSidebar.vue';
 import TopStrip from './shell/TopStrip.vue';
+import { store } from './store';
+
+const motion = usePreferredReducedMotion();
+
+function leavePage(page: Element): void {
+  // Keep the departing page out of the tab order and accessibility tree during the cross-fade.
+  page.setAttribute('inert', '');
+}
 </script>
 
 <template>
@@ -24,9 +33,15 @@ import TopStrip from './shell/TopStrip.vue';
       <main
         class="relative min-h-0 flex-auto overflow-y-auto rounded-tl-lg border-t border-l border-ring bg-panel px-9 py-6"
       >
-        <div>
-          <MemoryPage v-if="route.page.value === 'memory'" />
-          <OverviewPage v-else />
+        <div class="page-content relative min-h-full">
+          <Transition
+            :name="motion === 'reduce' ? 'page-fade' : 'page'"
+            :css="!store.away && (store.state?.settings.pageTransitions ?? true)"
+            @before-leave="leavePage"
+          >
+            <MemoryPage v-if="route.page.value === 'memory'" />
+            <OverviewPage v-else />
+          </Transition>
         </div>
       </main>
     </div>

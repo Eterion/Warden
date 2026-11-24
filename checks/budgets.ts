@@ -2,10 +2,11 @@
 // compares each number with checks/budgets.json. Budgets still null are placeholders: reported, never failed.
 // Results are also written to artifacts/budgets.json for the step's approval summary.
 
-import { type ChildProcess, execFileSync, spawn, spawnSync } from 'node:child_process';
+import { type ChildProcess, execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pipeReady, pipeSend } from './lib/pipe.ts';
 import { ROOT, run } from './lib/repo.ts';
@@ -37,15 +38,13 @@ const ROUTE_RUNS = 41;
  * burst of a few seconds holds a few runs, and the median is Warden's own time.
  */
 const ROUTE_PAUSE_MS = 250;
-/**
- * A busier computer (another check's build) can slow every program start for minutes, longer than the rounds last. A
- * route run is mostly a program start: hostname.exe, which does next to nothing, takes about as long. So when the route
- * times are over budget while hostname.exe's median in the same rounds is over half the budget, the computer was
- * slowing every program, and the rounds are measured again after ROUTE_SETTLE_SECONDS, up to ROUTE_ATTEMPTS times
- * (about 5 minutes). Over budget while hostname.exe is quick fails at once, and so does a computer that never settles.
- */
 const ROUTE_ATTEMPTS = 8;
-const ROUTE_SETTLE_SECONDS = 30;
+const ROUTE_SETTLE_MS = 30_000;
+const ROUTE_RETRY_MARGIN_MS = 3_000;
+const ROUTE_LAUNCH_TIMEOUT_MS = 3_000;
+const ROUTE_DEADLINE_MS = 300_000;
+// Leave time for rm's five retries, whose Windows sharing-violation backoff can total 7.5 s.
+const ROUTE_CLEANUP_MS = 10_000;
 const HOOK_RUNS = 21;
 /** The core's session cap (warden_core::sessions::MAX_SESSIONS). */
 const SESSIONS = 200;
@@ -124,11 +123,6 @@ function scratchEnv(scratch: string): NodeJS.ProcessEnv {
   delete env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS;
   delete env.WEBVIEW2_USER_DATA_FOLDER;
   return env;
-}
-
-/** A scratch folder, so the budgets never read or write the user's Warden data (%APPDATA%/Warden) or accounts. */
-function tempDataDir(tag: string): string {
-  return mkdtempSync(join(tmpdir(), `warden-budget-${tag}-`));
 }
 
 /** The status hook's arguments (warden_core::hooks::status_handler): `warden.exe event` for the account. */
@@ -668,86 +662,102 @@ interface RouteFixture {
   env: NodeJS.ProcessEnv;
 }
 
+interface RouteMeasurement {
+  deadline: number;
+  fixtures: Set<string>;
+  attemptError?: unknown;
+}
+
 /**
  * A throwaway data and home folder for `warden route`: three fixture accounts (no logins, so nothing is ever
  * requested) and fresh readings.
  */
-function routeFixture(): RouteFixture {
-  const data = tempDataDir('route');
-  try {
-    const now = Date.now();
-    const account = (id: string, provider: string, n: number) => ({
-      id,
-      label: `Account ${n}`,
-      provider,
-      folder: join(data, id),
-      enabled: true,
-      identity: { email: id + '@example.com', organization: null, organizationId: null },
-    });
-    const accounts = [account('a1', 'claude', 1), account('a2', 'claude', 2), account('a3', 'codex', 3)];
-    for (const a of accounts) mkdirSync(a.folder);
-    writeFileSync(
-      join(data, 'settings.json'),
-      JSON.stringify({
-        version: 2,
-        setupDone: true,
-        main: { label: 'Main', identity: { email: 'main@example.com', organization: null, organizationId: null } },
-        accounts,
-        nextId: 4,
-      }),
-    );
-    const reading = (five: number | null, week: number) => ({
-      usage: {
-        readAt: now,
-        fiveHour: five === null ? null : { usedPercent: five, resetsAt: now + 3_600_000 },
-        weekly: { usedPercent: week, resetsAt: now + 100 * 3_600_000 },
-        perModelWeekly: [],
-        extra: null,
-      },
-    });
-    writeFileSync(
-      join(data, 'readings.json'),
-      JSON.stringify({
-        mainLogin: { signIn: { state: 'signedIn', email: 'main@example.com' } },
-        accounts: { main: reading(61, 11), a1: reading(61, 11), a2: reading(83, 38), a3: reading(null, 31) },
-        checkedAt: now,
-      }),
-    );
-    const home = join(data, 'home');
-    mkdirSync(join(home, '.claude'), { recursive: true });
-    const env: NodeJS.ProcessEnv = { ...process.env, USERPROFILE: home, HOME: home };
-    delete env.CLAUDE_CONFIG_DIR;
-    delete env.CODEX_HOME;
-    return { data, env };
-  } catch (e) {
-    rmSync(data, { recursive: true, force: true });
-    throw e;
-  }
+async function routeFixture(measurement: RouteMeasurement): Promise<RouteFixture> {
+  routeTimeLeft(measurement.deadline);
+  const data = await mkdtemp(join(tmpdir(), 'warden-budget-route-'));
+  measurement.fixtures.add(data);
+  routeTimeLeft(measurement.deadline);
+  const now = Date.now();
+  const account = (id: string, provider: string, n: number) => ({
+    id,
+    label: `Account ${n}`,
+    provider,
+    folder: join(data, id),
+    enabled: true,
+    identity: { email: id + '@example.com', organization: null, organizationId: null },
+  });
+  const accounts = [account('a1', 'claude', 1), account('a2', 'claude', 2), account('a3', 'codex', 3)];
+  for (const a of accounts) await mkdir(a.folder);
+  await writeFile(
+    join(data, 'settings.json'),
+    JSON.stringify({
+      version: 2,
+      setupDone: true,
+      main: { label: 'Main', identity: { email: 'main@example.com', organization: null, organizationId: null } },
+      accounts,
+      nextId: 4,
+    }),
+  );
+  const reading = (five: number | null, week: number) => ({
+    usage: {
+      readAt: now,
+      fiveHour: five === null ? null : { usedPercent: five, resetsAt: now + 3_600_000 },
+      weekly: { usedPercent: week, resetsAt: now + 100 * 3_600_000 },
+      perModelWeekly: [],
+      extra: null,
+    },
+  });
+  await writeFile(
+    join(data, 'readings.json'),
+    JSON.stringify({
+      mainLogin: { signIn: { state: 'signedIn', email: 'main@example.com' } },
+      accounts: { main: reading(61, 11), a1: reading(61, 11), a2: reading(83, 38), a3: reading(null, 31) },
+      checkedAt: now,
+    }),
+  );
+  const home = join(data, 'home');
+  await mkdir(join(home, '.claude'), { recursive: true });
+  const env: NodeJS.ProcessEnv = { ...process.env, USERPROFILE: home, HOME: home };
+  delete env.CLAUDE_CONFIG_DIR;
+  delete env.CODEX_HOME;
+  return { data, env };
 }
 
-/** One `warden route` run as the hook runs it, the hook's JSON on stdin: how long it took and whether it printed. */
-function runRoute(fixture: RouteFixture, session: string): { took: number; printed: boolean } {
-  const input = JSON.stringify({ session_id: session, hook_event_name: 'UserPromptSubmit', prompt: 'hi' });
-  const args = ['route', '--account', 'main', '--data-dir', fixture.data];
-  const start = performance.now();
-  const r = spawnSync(join(RELEASE, 'warden.exe'), args, { input, encoding: 'utf8', env: fixture.env });
-  const took = performance.now() - start;
-  if (r.error) throw r.error;
-  if (r.status !== 0) throw new Error(`warden route exited with ${r.status}`);
-  return { took, printed: r.stdout.length > 0 };
+function routeMeasuringTimeLeft(deadline: number): number {
+  return Math.floor(deadline - ROUTE_CLEANUP_MS - performance.now());
 }
 
-/** How long Windows takes to start one of its own programs right now: hostname.exe, which only prints a name. */
-function controlRun(): number {
-  const systemRoot = process.env.SystemRoot;
-  if (!systemRoot) throw new Error('SystemRoot is not set, so hostname.exe cannot be found');
-  const start = performance.now();
-  const r = spawnSync(join(systemRoot, 'System32', 'hostname.exe'), [], { stdio: 'ignore' });
-  const took = performance.now() - start;
-  if (r.error) throw r.error;
-  if (r.status !== 0) throw new Error(`hostname.exe exited with ${r.status}`);
-  return took;
+function routeTimeLeft(deadline: number): number {
+  const remaining = routeMeasuringTimeLeft(deadline);
+  if (remaining < 1) throw new Error('no route measuring time is left before the time reserved for fixture cleanup');
+  return remaining;
 }
+
+/** Time each launch with the same piped stdin, stdout and stderr. */
+function timedRouteLaunch(
+  exe: string,
+  args: string[],
+  input: string,
+  env: NodeJS.ProcessEnv,
+  deadline: number,
+): Promise<{ took: number; printed: boolean }> {
+  const timeout = Math.min(ROUTE_LAUNCH_TIMEOUT_MS, routeTimeLeft(deadline));
+  const start = performance.now();
+  return new Promise((resolve, reject) => {
+    const child = execFile(exe, args, { encoding: 'utf8', env, timeout, killSignal: 'SIGKILL' }, (error, stdout) => {
+      const took = performance.now() - start;
+      if (error?.killed || (!error && took >= timeout))
+        reject(new Error(`${basename(exe)} timed out after ${timeout} ms`));
+      else if (error) reject(error);
+      else resolve({ took, printed: stdout.length > 0 });
+    });
+    child.stdin?.on('error', reject);
+    child.stdin?.end(input);
+  });
+}
+
+type RouteMode = 'silent' | 'print';
+const ROUTE_MODES: readonly RouteMode[] = ['silent', 'print'];
 
 interface RouteTimes {
   silent: number;
@@ -757,70 +767,208 @@ interface RouteTimes {
   attempts: number;
 }
 
+export interface RouteRound {
+  silent: number;
+  print: number;
+  controls: [number, number, number];
+}
+
+export interface RouteAttempt {
+  rounds: RouteRound[];
+  times: RouteTimes;
+}
+
+interface ExcusedRouteAttempt {
+  times: RouteTimes;
+  baselineMs: number;
+  sharedRounds: Partial<Record<RouteMode, number>>;
+}
+
+interface RouteDecision {
+  times: RouteTimes;
+  excusedAttempts: ExcusedRouteAttempt[];
+}
+
 /**
  * One attempt: median times of `warden route` in ROUTE_RUNS rounds spread over time (ROUTE_PAUSE_MS), each round one
  * run of each kind: `silent` the same session each time, so after its first run it prints nothing (every message while
  * nothing changes); `print` a new session each time, so it prints the guidance (a session's first message, or a
  * change). Each kind has its own fixture, new for each attempt, so a later attempt times the same work as the first
  * (the printing runs leave a session file each, which every printing run lists to prune). `control` is hostname.exe
- * started in the same rounds, with no budget of its own: it shows whether the computer was slowing every program start.
+ * started immediately before and after each measured launch, sharing the middle control to keep the rounds short.
  */
-async function routeRounds(attempts: number): Promise<RouteTimes> {
-  const fixtures: RouteFixture[] = [];
+async function routeRounds(attempts: number, measurement: RouteMeasurement): Promise<RouteAttempt> {
+  const { deadline, fixtures } = measurement;
+  const systemRoot = process.env.SystemRoot;
+  if (!systemRoot) throw new Error('SystemRoot is not set, so hostname.exe cannot be found');
+  const controlExe = join(systemRoot, 'System32', 'hostname.exe');
+  const runRoute = (fixture: RouteFixture, session: string) =>
+    timedRouteLaunch(
+      join(RELEASE, 'warden.exe'),
+      ['route', '--account', 'main', '--data-dir', fixture.data],
+      JSON.stringify({ session_id: session, hook_event_name: 'UserPromptSubmit', prompt: 'hi' }),
+      fixture.env,
+      deadline,
+    );
   try {
-    const silentFixture = routeFixture();
-    fixtures.push(silentFixture);
-    const printFixture = routeFixture();
-    fixtures.push(printFixture);
+    const silentFixture = await routeFixture(measurement);
+    const printFixture = await routeFixture(measurement);
+    const controlRun = async () => (await timedRouteLaunch(controlExe, [], '', silentFixture.env, deadline)).took;
     // The first run of each warms the file cache and tells the session; it is not timed.
-    if (!runRoute(silentFixture, 'budget').printed || !runRoute(printFixture, 'budget-0').printed)
+    if (!(await runRoute(silentFixture, 'budget')).printed || !(await runRoute(printFixture, 'budget-0')).printed)
       throw new Error('warden route printed nothing for a new session');
-    const silent: number[] = [];
-    const print: number[] = [];
-    const control: number[] = [];
+    const rounds: RouteRound[] = [];
     const start = performance.now();
     for (let i = 1; i <= ROUTE_RUNS; i++) {
-      const quiet = runRoute(silentFixture, 'budget');
+      const before = await controlRun();
+      const quiet = await runRoute(silentFixture, 'budget');
       if (quiet.printed) throw new Error('warden route printed while nothing changed');
-      silent.push(quiet.took);
-      const guided = runRoute(printFixture, `budget-${i}`);
+      const middle = await controlRun();
+      const guided = await runRoute(printFixture, `budget-${i}`);
       if (!guided.printed) throw new Error('warden route printed nothing for a new session');
-      print.push(guided.took);
-      control.push(controlRun());
-      await sleep(ROUTE_PAUSE_MS);
+      const after = await controlRun();
+      rounds.push({ silent: quiet.took, print: guided.took, controls: [before, middle, after] });
+      if (i < ROUTE_RUNS) await sleep(Math.min(ROUTE_PAUSE_MS, routeTimeLeft(deadline)));
     }
-    const seconds = (performance.now() - start) / 1000;
-    return { silent: median(silent), print: median(print), control: median(control), seconds, attempts };
+    routeTimeLeft(deadline);
+    return {
+      rounds,
+      times: {
+        silent: median(rounds.map((round) => round.silent)),
+        print: median(rounds.map((round) => round.print)),
+        control: median(rounds.flatMap((round) => round.controls)),
+        seconds: (performance.now() - start) / 1000,
+        attempts,
+      },
+    };
+  } catch (error) {
+    measurement.attemptError = error;
+    throw error;
   } finally {
-    // Each folder on its own, retried while Windows still holds a file in it (Defender may be scanning one); one that
-    // stays is reported, not thrown, so it cannot hide the attempt's own error.
-    for (const fixture of fixtures) {
-      try {
-        rmSync(fixture.data, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
-      } catch (e) {
-        console.warn(`could not remove ${fixture.data}: ${(e as Error).message}`);
-      }
+    // Start every deletion before awaiting any of them so each gets the same time to retry Windows file locks.
+    const removals = await Promise.allSettled(
+      [...fixtures].map(async (data) => {
+        try {
+          await rm(data, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+          fixtures.delete(data);
+        } catch (error) {
+          throw new Error(`could not remove route fixture ${data}`, { cause: error });
+        }
+      }),
+    );
+    const failures = removals.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []));
+    if (failures.length) {
+      if (measurement.attemptError !== undefined) failures.unshift(measurement.attemptError);
+      throw new AggregateError(failures, 'route fixture cleanup failed');
     }
   }
 }
 
 /**
- * Median times of `warden route` (routeRounds), measured again while the computer slows every program start
- * (ROUTE_ATTEMPTS). `budget` holds each kind's budget.
+ * Each failing mode needs a majority of rounds where the route exceeded its budget and both neighboring controls
+ * slowed enough to explain the excess. Use the passing attempt's upper quartile as the normal control time, and
+ * require a rise of at least half that time so ordinary control variation cannot excuse a breach. The remaining
+ * rounds must also pass their own median when any remain, so they cannot show a separate, sustained route slowdown.
  */
-async function measureRoute(budget: { silent: number; print: number }): Promise<RouteTimes> {
-  for (let attempt = 1; ; attempt++) {
-    const times = await routeRounds(attempt);
-    const over = times.silent > budget.silent || times.print > budget.print;
-    const busy = times.control > Math.min(budget.silent, budget.print) / 2;
-    const said = `route: ${times.silent.toFixed(2)} and ${times.print.toFixed(2)} ms while hostname.exe took ${times.control.toFixed(2)} ms`;
-    if (!over || !busy) return times;
-    if (attempt === ROUTE_ATTEMPTS) {
-      console.log(`${said}: the computer still slows every program start after ${ROUTE_ATTEMPTS} attempts`);
-      return times;
+function sharedRouteSlowdown(
+  rounds: RouteRound[],
+  mode: RouteMode,
+  budget: number,
+  baseline: number,
+): { shared: number; remainingMedian: number | undefined } {
+  const remaining = rounds.filter((round) => {
+    const [before, middle, after] = round.controls;
+    const control = Math.min(middle, mode === 'silent' ? before : after);
+    const delay = control - baseline;
+    const shared = round[mode] > budget && delay >= baseline / 2 && delay >= round[mode] - budget;
+    return !shared;
+  });
+  return {
+    shared: rounds.length - remaining.length,
+    remainingMedian: remaining.length ? median(remaining.map((round) => round[mode])) : undefined,
+  };
+}
+
+function routeWithinBudget(times: RouteTimes, budget: Record<RouteMode, number>): boolean {
+  return ROUTE_MODES.every((mode) => times[mode] <= budget[mode]);
+}
+
+/** A passing attempt replaces earlier breaches only if each failing mode has evidence of shared slowdown. */
+export function selectRouteAttempt(
+  breachedAttempts: readonly RouteAttempt[],
+  latest: RouteAttempt,
+  budget: Record<RouteMode, number>,
+): RouteDecision {
+  if (!breachedAttempts.length || !routeWithinBudget(latest.times, budget))
+    return { times: latest.times, excusedAttempts: [] };
+
+  // A later attempt can establish the baseline even when the first one was slow from start to finish.
+  const controls = latest.rounds.flatMap((round) => round.controls).sort((a, b) => a - b);
+  const baselineMs = controls[Math.floor(0.75 * controls.length)] ?? NaN;
+  const excusedAttempts: ExcusedRouteAttempt[] = [];
+  for (const earlier of breachedAttempts) {
+    const sharedRounds: ExcusedRouteAttempt['sharedRounds'] = {};
+    for (const mode of ROUTE_MODES) {
+      if (earlier.times[mode] <= budget[mode]) continue;
+      const { shared, remainingMedian } = sharedRouteSlowdown(earlier.rounds, mode, budget[mode], baselineMs);
+      if (shared <= earlier.rounds.length / 2 || (remainingMedian ?? 0) > budget[mode])
+        return { times: earlier.times, excusedAttempts: [] };
+      sharedRounds[mode] = shared;
     }
-    console.log(`${said}: the computer slows every program start; measuring again in ${ROUTE_SETTLE_SECONDS} s`);
-    await sleep(ROUTE_SETTLE_SECONDS * 1000);
+    excusedAttempts.push({ times: earlier.times, baselineMs, sharedRounds });
+  }
+  return { times: latest.times, excusedAttempts };
+}
+
+async function routeAttempts(budget: Record<RouteMode, number>, measurement: RouteMeasurement): Promise<RouteDecision> {
+  const failed: RouteAttempt[] = [];
+  for (let attempt = 1; ; attempt++) {
+    const started = performance.now();
+    const result = await routeRounds(attempt, measurement);
+    // routeRounds finishes after fixture cleanup, so this includes setup, launches, pauses and removal.
+    const retryMs = performance.now() - started + ROUTE_RETRY_MARGIN_MS;
+    const { times } = result;
+    if (routeWithinBudget(times, budget)) {
+      const decision = selectRouteAttempt(failed, result, budget);
+      if (decision.times !== times)
+        console.log(
+          `route: attempt ${attempt} passed. Attempt ${decision.times.attempts} still has an unexplained breach.`,
+        );
+      return decision;
+    }
+
+    const said = `route: ${times.silent.toFixed(2)} and ${times.print.toFixed(2)} ms while hostname.exe took ${times.control.toFixed(2)} ms (median)`;
+    if (attempt < ROUTE_ATTEMPTS && routeMeasuringTimeLeft(measurement.deadline) >= ROUTE_SETTLE_MS + retryMs) {
+      console.log(`${said}. Keeping the breach and measuring again in ${ROUTE_SETTLE_MS / 1000} s.`);
+      await sleep(ROUTE_SETTLE_MS);
+      if (routeMeasuringTimeLeft(measurement.deadline) >= retryMs) {
+        failed.push(result);
+        continue;
+      }
+    }
+    console.log(`${said}. No time or attempts left for another measurement.`);
+    return selectRouteAttempt(failed, result, budget);
+  }
+}
+
+async function measureRoute(budget: Record<RouteMode, number>): Promise<RouteDecision> {
+  const measurement: RouteMeasurement = { deadline: performance.now() + ROUTE_DEADLINE_MS, fixtures: new Set() };
+  const expired = Promise.withResolvers<never>();
+  const timeoutError = () => {
+    const message = `route measurement exceeded ${ROUTE_DEADLINE_MS / 1000} s including retries and cleanup`;
+    const errors: unknown[] = [...measurement.fixtures].map(
+      (data) => new Error(`route fixture cleanup did not finish for ${data}`),
+    );
+    if (measurement.attemptError !== undefined) errors.unshift(measurement.attemptError);
+    return errors.length ? new AggregateError(errors, message) : new Error(message);
+  };
+  const timer = setTimeout(() => expired.reject(timeoutError()), ROUTE_DEADLINE_MS);
+  try {
+    const result = await Promise.race([routeAttempts(budget, measurement), expired.promise]);
+    if (performance.now() >= measurement.deadline) throw timeoutError();
+    return result;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -866,10 +1014,17 @@ async function main(): Promise<void> {
   const sampling = await measureSampling(10_000);
   const desktop = await measureDesktop();
   // A placeholder budget (null) never fails, so it never needs measuring again.
-  const route = await measureRoute({
+  const { times: route, excusedAttempts: routeExcusedAttempts } = await measureRoute({
     silent: budgets.routeHookMs?.budget ?? Infinity,
     print: budgets.routeHookPrintMs?.budget ?? Infinity,
   });
+  for (const { times, baselineMs, sharedRounds } of routeExcusedAttempts) {
+    for (const [mode, shared] of Object.entries(sharedRounds)) {
+      console.log(
+        `route: excused attempt ${times.attempts} ${mode} with shared slowdown in ${shared}/${ROUTE_RUNS} rounds (hostname.exe baseline ${baselineMs.toFixed(2)} ms)`,
+      );
+    }
+  }
   console.log(
     `route: ${ROUTE_RUNS} runs of each over ${route.seconds.toFixed(0)} s (attempt ${route.attempts}); Windows' hostname.exe started in ${route.control.toFixed(2)} ms (median) in the same rounds`,
   );
@@ -908,9 +1063,12 @@ async function main(): Promise<void> {
     console.log(`${verdict.padEnd(11)} ${key.padEnd(22)} ${value.padEnd(24)} ${limit}  (${b.what})`);
   }
   mkdirSync(join(ROOT, 'artifacts'), { recursive: true });
-  writeFileSync(join(ROOT, 'artifacts', 'budgets.json'), JSON.stringify({ measured, budgets }, null, 2));
+  writeFileSync(
+    join(ROOT, 'artifacts', 'budgets.json'),
+    JSON.stringify({ measured, budgets, routeExcusedAttempts }, null, 2),
+  );
   console.log(`budgets: ${over} over budget; placeholders are reported only`);
   if (over) process.exitCode = 1;
 }
 
-await main();
+if (import.meta.main) await main();

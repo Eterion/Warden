@@ -90,14 +90,14 @@ function iconClass(): string {
     :class="[BASE, look()]"
     @click="emit('click', $event)"
   >
-    <component
-      :is="props.icon"
+    <span
       v-if="props.icon"
       v-sync-spin
-      :class="[iconClass(), props.busy && 'animate-spin-slow']"
-      :stroke-width="props.variant === 'primary' ? 2.2 : undefined"
+      :class="['inline-flex', iconClass(), props.busy && 'animate-spin-slow']"
       aria-hidden="true"
-    />
+    >
+      <component :is="props.icon" class="size-full" :stroke-width="props.variant === 'primary' ? 2.2 : undefined" />
+    </span>
     <slot />
   </button>
 </template>

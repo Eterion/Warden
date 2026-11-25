@@ -18,6 +18,12 @@
     "what": "desktop app with the window open on the Overview (its Memory card) and then the Memory page, each showing a full day (1,440 minutes, 20 series): the app and its WebView2 processes, private memory after each page loaded and sat idle, the higher of the two",
     "measured": "step 4.4: measured 172 to 181 MB (the app and its WebView2 processes, Overview with no accounts); room for accounts and the sessions table"
   },
+  "windowIdleCpuPercent": {
+    "budget": null,
+    "unit": "% of one core",
+    "what": "the desktop app and its WebView2 processes over 20 s idle on Overview with a made-up day and a working session, without UI Automation",
+    "measured": "reported only because spinner CPU depends on the display refresh rate"
+  },
   "desktopTrayMemoryMB": {
     "budget": 15,
     "unit": "MB",

@@ -121,8 +121,8 @@ From the plan (Self-contained and portable, Performance, Platform, Review). Each
 
 - The core is small and always on; the window exists only while open. Fixed-size, capped history in memory; compact storage on disk.
 - Hooks add no noticeable delay: the status hook runs in the background and `warden event` gives up within a second; `warden route` answers from saved readings and starts in milliseconds.
-- No heavy chart or UI libraries; UI updates pause while the window is hidden; nothing animates in the background.
-- Budgets (memory and CPU at idle, hook times, binary sizes) are tests in `checks/budgets.ts` with numbers in `checks/budgets.json`. A new budget is `null` (measured, never failing) until the step that first measures it proposes a number for the user to approve.
+- No heavy chart or UI libraries; UI updates pause while the window is hidden; nothing animates in the background. WebView2 rasterizes on the CPU to avoid large GPU raster caches, keeping GPU compositing. Spinners rotate an HTML wrapper around the icon so the compositor can turn it without repainting the SVG every frame.
+- Budgets (memory and CPU at idle, hook times, binary sizes) are tests in `checks/budgets.ts` with numbers in `checks/budgets.json`. Window CPU is measured over 20 s on Overview with a made-up working session, counting Warden and its WebView2 processes. A new budget is `null` (measured, never failing) until the step that first measures it proposes a number for the user to approve.
 
 ## Rule test harness
 

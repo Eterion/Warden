@@ -59,10 +59,13 @@ describe('StateIcon', () => {
     expect(track!.attributes('data-ring-track')).toBeDefined();
     expect(track!.classes()).toEqual(expect.arrayContaining(['lucide-circle', 'scale-90', 'text-track-win']));
     expect(track!.classes()).not.toContain('animate-spin-slow');
-    expect(arc!.classes()).toEqual(expect.arrayContaining(['lucide-loader-circle', 'animate-spin-slow', 'text-icon']));
+    expect(arc!.classes()).toEqual(expect.arrayContaining(['lucide-loader-circle', 'text-icon']));
+    expect(arc!.classes()).not.toContain('animate-spin-slow');
+    const spinner = wrapper.get('span.animate-spin-slow');
+    expect(arc!.element.parentElement).toBe(spinner.element);
     // The track's line stays thinner than the arc's, even before its 90% scale.
     expect(Number(track!.attributes('stroke-width'))).toBeLessThan(Number(arc!.attributes('stroke-width')));
 
-    expect(synced).toEqual([arc!.element]);
+    expect(synced).toEqual([spinner.element]);
   });
 });

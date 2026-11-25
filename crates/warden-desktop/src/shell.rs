@@ -304,6 +304,14 @@ pub fn open_window(handle: &AppHandle) {
         .visible(saved.is_none())
         .decorations(false)
         .data_directory(core.webview_dir.clone())
+        // This replaces the defaults from wry 0.55.1 (including autoplay). Recheck them when upgrading wry.
+        // WebView2 appends WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS but it cannot undo a switch already supplied.
+        // A GPU raster comparison needs a build without --disable-gpu-rasterization here.
+        // Raster on the CPU to avoid large GPU raster caches while keeping GPU compositing.
+        .additional_browser_args(concat!(
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection ",
+            "--autoplay-policy=no-user-gesture-required --disable-gpu-rasterization"
+        ))
         // The window shows only Warden's own page; links elsewhere and new windows are refused.
         .on_navigation(move |url| url.origin() == own.origin())
         .on_new_window(|_, _| NewWindowResponse::Deny)

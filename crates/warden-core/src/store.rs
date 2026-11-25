@@ -363,11 +363,10 @@ pub enum IdentityUpdate {
 pub enum UsageUpdate {
     /// Older than the reading kept: ignored.
     Ignored,
-    Read,
+    /// A reading was taken. `changed` excludes its timestamp and includes clearing an error or changing the resets.
+    Read { changed: bool },
     /// No reading; `new`: a different error from the last one (worth a log line).
-    Failed {
-        new: bool,
-    },
+    Failed { new: bool },
 }
 
 impl Readings {
@@ -452,13 +451,21 @@ impl Readings {
                 {
                     return UsageUpdate::Ignored;
                 }
+                let changed = reading.error.is_some()
+                    || resets.as_ref().is_some_and(|new| *new != reading.resets)
+                    || reading.usage.as_ref().is_none_or(|old| {
+                        *old != Usage {
+                            read_at: old.read_at,
+                            ..u.clone()
+                        }
+                    });
                 reading.usage = Some(u);
                 reading.error = None;
                 // A Claude answer without a readable list of limit resets keeps the last one.
                 if let Some(resets) = resets {
                     reading.resets = resets;
                 }
-                UsageUpdate::Read
+                UsageUpdate::Read { changed }
             }
             Err(e) => {
                 let new = reading.error.as_ref() != Some(&e);
@@ -1043,6 +1050,41 @@ mod tests {
     }
 
     #[test]
+    fn usage_changes_when_figures_change_or_an_error_clears() {
+        let mut readings = Readings::default();
+        let usage = |read_at, used_percent| Usage {
+            read_at,
+            five_hour: None,
+            weekly: Some(crate::model::Limit {
+                used_percent,
+                resets_at: Some(60_000),
+            }),
+            per_model_weekly: Vec::new(),
+            extra: None,
+            resets: None,
+        };
+        let id = "a1";
+        assert_eq!(
+            readings.apply_usage(id, Ok(usage(1, 25.0))),
+            UsageUpdate::Read { changed: true }
+        );
+        assert_eq!(
+            readings.apply_usage(id, Ok(usage(2, 25.0))),
+            UsageUpdate::Read { changed: false }
+        );
+        assert_eq!(
+            readings.apply_usage(id, Ok(usage(3, 26.0))),
+            UsageUpdate::Read { changed: true }
+        );
+        readings.apply_usage(id, Err(UsageError::NoLogs));
+        assert_eq!(
+            readings.apply_usage(id, Ok(usage(4, 26.0))),
+            UsageUpdate::Read { changed: true }
+        );
+        assert_eq!(readings.accounts[id].error, None);
+    }
+
+    #[test]
     fn a_usage_reading_brings_its_limit_resets_and_one_without_keeps_the_last() {
         use crate::codex_resets::Reset;
         let usage = |read_at: i64, resets: Option<Vec<Reset>>| Usage {
@@ -1061,7 +1103,7 @@ mod tests {
         let mut r = Readings::default();
         assert_eq!(
             r.apply_usage("a", Ok(usage(1, Some(one.clone())))),
-            UsageUpdate::Read
+            UsageUpdate::Read { changed: true }
         );
         assert_eq!(r.accounts["a"].resets, one);
         // The reading kept carries none of them.

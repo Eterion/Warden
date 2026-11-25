@@ -18,7 +18,9 @@ const props = withDefaults(defineProps<{ state: Shown; size?: 'sm' | 'md' }>(), 
     aria-hidden="true"
   >
     <Circle data-ring-track class="absolute inset-0 size-full scale-90 text-track-win" :stroke-width="1.6" />
-    <LoaderCircle v-sync-spin class="relative size-full animate-spin-slow text-icon" :stroke-width="2.6" />
+    <span v-sync-spin class="relative size-full animate-spin-slow">
+      <LoaderCircle class="size-full text-icon" :stroke-width="2.6" />
+    </span>
   </span>
   <Hand
     v-else-if="props.state === 'waiting'"

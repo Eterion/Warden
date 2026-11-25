@@ -562,12 +562,12 @@ function alive(pid: number): boolean {
  * Each window must load its page through the app's own scheme: the page, its styles and its first API answer, which
  * a Content-Security-Policy that blocked the scripts, styles or API would stop.
  */
-async function measureDesktop(): Promise<{ window: number; tray: number; trayCpu: number }> {
+async function measureDesktop(): Promise<{ window: number; windowCpu: number; tray: number; trayCpu: number }> {
   const exe = join(RELEASE, 'warden-desktop.exe');
   async function launch(
     settings: object,
     args: string[],
-    measure: (pid: number, log: () => string) => Promise<void>,
+    measure: (pid: number, log: () => string, data: string) => Promise<void>,
     prepare?: (data: string) => void,
   ): Promise<void> {
     const scratch = mkdtempSync(join(tmpdir(), 'warden-budget-desktop-'));
@@ -583,7 +583,7 @@ async function measureDesktop(): Promise<{ window: number; tray: number; trayCpu
     let log = '';
     child.stderr?.on('data', (chunk: Buffer) => (log += chunk.toString()));
     try {
-      await measure(child.pid, () => log);
+      await measure(child.pid, () => log, data);
     } finally {
       spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
       await sleep(1000);
@@ -591,6 +591,7 @@ async function measureDesktop(): Promise<{ window: number; tray: number; trayCpu
     }
   }
   let window = NaN;
+  let windowCpu = NaN;
   let tray = NaN;
   let trayCpu = NaN;
   // The window opens (a WebView2 process) within this, even on a machine busy with a build.
@@ -618,6 +619,27 @@ async function measureDesktop(): Promise<{ window: number; tray: number; trayCpu
       closeWindow(pid);
       await sleep(CLOSE_SECONDS * 1000);
       if (alive(pid)) throw new Error('with Keep running in the tray off, closing the window should quit Warden');
+    },
+    fullMemoryDay,
+  );
+  // Use the same made-up day in a fresh desktop window and keep a demo session working throughout the CPU sample.
+  await launch(
+    { setupDone: true },
+    [],
+    async (pid, log, data) => {
+      await opened(pid, log);
+      await pipeReady(data);
+      const session_id = 'budget-window';
+      await pipeSend(data, 'main', { session_id, hook_event_name: 'SessionStart', cwd: data });
+      await pipeSend(data, 'main', { session_id, hook_event_name: 'PreToolUse', tool_name: 'Bash' });
+      // Give Overview time to render the acknowledged events. UI Automation would turn on accessibility in Chromium.
+      await sleep(WINDOW_LOAD_SECONDS * 1000);
+      const first = sample(pid, true);
+      await sleep(IDLE_CPU_SECONDS * 1000);
+      const last = sample(pid, true);
+      if (first.processes < 2 || last.processes < 2 || last.cpuMs < first.cpuMs)
+        throw new Error('the desktop window or its WebView2 processes exited during the CPU sample');
+      windowCpu = cpuPercent(first, last);
     },
     fullMemoryDay,
   );
@@ -649,7 +671,7 @@ async function measureDesktop(): Promise<{ window: number; tray: number; trayCpu
     if (n !== 1)
       throw new Error(`started at sign-in with the tray on, the app should open no window, found ${n} processes`);
   });
-  return { window, tray, trayCpu };
+  return { window, windowCpu, tray, trayCpu };
 }
 
 /** The middle value (the upper one of an even count). */
@@ -1032,6 +1054,7 @@ async function main(): Promise<void> {
     coreIdleMemoryMB: core.memory,
     coreIdleCpuPercent: core.cpu,
     windowMemoryMB: desktop.window,
+    windowIdleCpuPercent: desktop.windowCpu,
     desktopTrayMemoryMB: desktop.tray,
     desktopTrayCpuPercent: desktop.trayCpu,
     routeHookMs: route.silent,

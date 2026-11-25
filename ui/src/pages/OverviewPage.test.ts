@@ -1148,7 +1148,7 @@ describe('OverviewPage', () => {
       await flushPromises();
       expect(calls).toEqual([{ path: '/api/accounts/main/resets/use', body: { resetId: 'grant-s' } }]);
       expect(submit.getAttribute('aria-busy')).toBe('true');
-      expect(submit.querySelector('svg')!.classList).toContain('animate-spin-slow');
+      expect(submit.querySelector('span.animate-spin-slow > svg')).not.toBeNull();
       // Neither Escape nor Cancel closes it while it sends.
       dialog()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
       await flushPromises();

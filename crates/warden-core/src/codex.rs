@@ -282,10 +282,11 @@ pub fn parse_log_line(line: &[u8]) -> Option<Usage> {
         let Some(used) = w.used_percent else { continue };
         let limit = Limit {
             used_percent: used.clamp(0.0, 100.0),
+            // Older logs report a whole-second countdown. Drop fractional event time so it cannot move the reset.
             resets_at: w
                 .resets_at
-                .map(|s| s * 1000)
-                .or(w.resets_in_seconds.map(|s| at + s * 1000)),
+                .or_else(|| at.div_euclid(1000).checked_add(w.resets_in_seconds?))
+                .and_then(|s| s.checked_mul(1000)),
         };
         match w.window_minutes {
             Some(m) if m <= ONE_DAY_MIN => five_hour = five_hour.or(Some(limit)),
@@ -711,6 +712,23 @@ pub(crate) mod tests {
                 resets_at: Some(at + 3_600_000)
             })
         );
+    }
+
+    #[test]
+    fn legacy_countdowns_drop_fractional_event_time_from_the_reset() {
+        let reading = |timestamp, seconds| {
+            let primary = format!(r#"{{"used_percent":12.5,"resets_in_seconds":{seconds}}}"#);
+            parse_log_line(token_count(timestamp, &primary, "null").as_bytes()).expect("usage")
+        };
+        let first = reading("2026-11-07T10:00:00.123Z", 60);
+        let next = reading("2026-11-07T10:00:01.865Z", 59);
+        let reset = parse_rfc3339_ms("2026-11-07T10:01:00Z").expect("reset time");
+        assert_ne!(first.read_at, next.read_at);
+        assert_eq!(
+            first.five_hour.as_ref().and_then(|limit| limit.resets_at),
+            Some(reset)
+        );
+        assert_eq!(first.five_hour, next.five_hour);
     }
 
     #[test]

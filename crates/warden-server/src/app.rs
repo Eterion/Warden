@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use warden_core::claude::{self, UsageEndpoint};
 use warden_core::codex::{self, LogTail};
 use warden_core::codex_resets::{self, Reset, ResetsEndpoint};
@@ -144,6 +144,8 @@ struct Inner {
     tools: Vec<Tool>,
     main_signed_in: bool,
     last_read: Option<i64>,
+    /// Last Codex log reading that woke the UI, on a monotonic clock.
+    codex_usage_notified_at: Option<Instant>,
     /// Bumped on every change the UI shows, so a waiting UI request can answer.
     revision: u64,
     /// Bumped whenever the set of Codex folders changes, so the watcher starts again.
@@ -510,6 +512,7 @@ impl App {
                 tools,
                 main_signed_in,
                 last_read: None,
+                codex_usage_notified_at: None,
                 codex_generation: 0,
                 folders_generation: 0,
                 hook_setups: HashMap::new(),
@@ -612,6 +615,10 @@ impl App {
 
     fn save_readings(&self, inner: &mut Inner) {
         self.touch(inner);
+        self.persist_readings(inner);
+    }
+
+    fn persist_readings(&self, inner: &Inner) {
         if let Err(e) = store::save(&self.data_dir, READINGS_FILE, &inner.readings) {
             (self.log)(&format!("could not save readings: {e}"));
         }
@@ -1317,55 +1324,84 @@ impl App {
     /// Records a usage attempt: a reading replaces the last one; an error is kept beside the last good reading.
     pub fn apply_usage(&self, id: &str, result: Result<Usage, UsageError>) {
         let mut inner = self.lock();
-        let Some(label) = inner
-            .settings
-            .account_in(&self.env, id)
-            .map(|a| a.label.clone())
-        else {
+        let Some(account) = inner.settings.account_in(&self.env, id) else {
             return;
         };
+        self.apply_account_usage(&mut inner, &account, result);
+    }
+
+    fn apply_account_usage(
+        &self,
+        inner: &mut Inner,
+        account: &AccountConfig,
+        result: Result<Usage, UsageError>,
+    ) {
+        let before = inner.readings.accounts.get(&account.id).cloned();
         let message = result.as_ref().err().map(describe);
         // A Claude answer with a readable list of limit resets (eligible or not) is their last read, once kept: an
         // answer for an identity no longer the account's is ignored and does not hold off the new one's resets.
         let gave_resets = result.as_ref().is_ok_and(|u| u.resets.is_some());
-        match inner.readings.apply_usage(id, result) {
+        match inner.readings.apply_usage(&account.id, result) {
             UsageUpdate::Ignored => return,
-            UsageUpdate::Read => {
+            UsageUpdate::Read { changed } => {
                 if gave_resets {
-                    inner.resets_read.insert(id.to_owned(), now_ms());
+                    inner.resets_read.insert(account.id.clone(), now_ms());
                 }
-                (self.log)(&format!("{label}: usage read"))
+                if account.provider == Provider::Claude || changed {
+                    (self.log)(&format!("{}: usage read", account.label));
+                }
+                if account.provider == Provider::Codex {
+                    self.record_codex_usage_read(inner, changed);
+                    return;
+                }
             }
             UsageUpdate::Failed { new: true } => (self.log)(&format!(
-                "{label}: no usage reading ({})",
+                "{}: no usage reading ({})",
+                account.label,
                 message.unwrap_or_default()
             )),
-            UsageUpdate::Failed { new: false } => {}
+            UsageUpdate::Failed { new: false } => {
+                if inner.readings.accounts.get(&account.id) == before.as_ref() {
+                    return;
+                }
+            }
         }
-        self.save_readings(&mut inner);
+        self.save_readings(inner);
+    }
+
+    /// Keep the fresh timestamps for routing and the next state read. A timestamp alone wakes the UI at most once
+    /// a minute, even when several accounts are active.
+    fn record_codex_usage_read(&self, inner: &mut Inner, changed: bool) {
+        let now = Instant::now();
+        inner.last_read = Some(now_ms());
+        if changed
+            || inner
+                .codex_usage_notified_at
+                .is_none_or(|last| now - last >= Duration::from_secs(60))
+        {
+            inner.codex_usage_notified_at = Some(now);
+            self.touch(inner);
+        } else {
+            inner.accounts_view = None;
+        }
+        self.persist_readings(inner);
     }
 
     /// Applies a Codex usage reading from the logs, unless the folder is signed in as someone else.
     pub fn apply_codex_usage(&self, id: &str, usage: Usage) {
-        let (held, signed_out) = {
-            let inner = self.lock();
-            let signed_out = inner
-                .settings
-                .account_in(&self.env, id)
-                .is_some_and(|a| !codex::has_login(&a.folder));
-            (inner.readings.identity_changed(id), signed_out)
+        let mut inner = self.lock();
+        let Some(account) = inner.settings.account_in(&self.env, id) else {
+            return;
         };
-        if held {
-            self.apply_usage(id, Err(UsageError::IdentityChanged));
-        } else if signed_out {
+        let result = if inner.readings.identity_changed(id) {
+            Err(UsageError::IdentityChanged)
+        } else if !codex::has_login(&account.folder) {
             // A log written after signing out: the account stays signed out until its login is back.
-            self.apply_usage(id, Err(UsageError::SignedOut));
+            Err(UsageError::SignedOut)
         } else {
-            self.apply_usage(id, Ok(usage));
-            let mut inner = self.lock();
-            inner.last_read = Some(now_ms());
-            self.touch(&mut inner);
-        }
+            Ok(usage)
+        };
+        self.apply_account_usage(&mut inner, &account, result);
     }
 
     /// Checks a Codex folder's login file: who it is signed in as, and whether it is signed in at all.
@@ -3064,5 +3100,195 @@ pub fn watch_hook_files(app: &Arc<App>) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+    use warden_core::model::Limit;
+    use warden_core::testdir::Dir;
+
+    const ID: &str = "a1";
+    type LogLines = Arc<Mutex<Vec<String>>>;
+
+    fn usage_app(provider: Provider) -> (Dir, App, LogLines) {
+        let scratch = Dir::new("usage-notices");
+        let data = scratch.path().join("data");
+        let folder = scratch.path().join("account");
+        std::fs::create_dir_all(&data).expect("create the data folder");
+        std::fs::create_dir_all(&folder).expect("create the account folder");
+        if provider == Provider::Codex {
+            std::fs::write(folder.join("auth.json"), "{}").expect("write the stand-in login file");
+        }
+        store::save(
+            &data,
+            SETTINGS_FILE,
+            &Settings {
+                setup_done: true,
+                accounts: vec![AccountConfig {
+                    id: ID.into(),
+                    label: "Work".into(),
+                    provider,
+                    folder,
+                    enabled: true,
+                    identity: None,
+                }],
+                ..Settings::default()
+            },
+        )
+        .expect("save test settings");
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let saved_logs = Arc::clone(&logs);
+        let app = App::new(
+            data.clone(),
+            Env {
+                home: Some(scratch.path().to_owned()),
+                ..Env::default()
+            },
+            (
+                Arc::new(claude::AnthropicUsageEndpoint::new(None)),
+                Arc::new(mainlogin::AnthropicSignInServer::default()),
+                Arc::new(codex_resets::ChatGptResetsEndpoint::new()),
+            ),
+            Arc::new(|_, _, _, _| unreachable!("no sign-in")),
+            Arc::new(move |line| saved_logs.lock().expect("log lock").push(line.to_owned())),
+            None,
+            None,
+        )
+        .expect("open the test app");
+        (scratch, app, logs)
+    }
+
+    fn usage_logs(logs: &LogLines) -> usize {
+        logs.lock()
+            .expect("log lock")
+            .iter()
+            .filter(|line| *line == "Work: usage read")
+            .count()
+    }
+
+    fn usage(read_at: i64, resets_at: i64) -> Usage {
+        Usage {
+            read_at,
+            five_hour: None,
+            weekly: Some(Limit {
+                used_percent: 25.0,
+                resets_at: Some(resets_at),
+            }),
+            per_model_weekly: Vec::new(),
+            extra: None,
+            resets: None,
+        }
+    }
+
+    #[test]
+    fn claude_logs_and_announces_every_reading() {
+        let (_scratch, app, logs) = usage_app(Provider::Claude);
+        let revision = app.state().revision;
+        for (read_at, count) in [(1_000, 1), (2_000, 2)] {
+            app.apply_usage(ID, Ok(usage(read_at, 80_000)));
+            assert_eq!(app.state().revision, revision + count);
+            assert_eq!(usage_logs(&logs) as u64, count);
+        }
+    }
+
+    #[test]
+    fn codex_usage_only_announces_figures_and_occasional_timestamps() {
+        let (_scratch, app, logs) = usage_app(Provider::Codex);
+        let apply = |read_at, resets_at| app.apply_codex_usage(ID, usage(read_at, resets_at));
+
+        apply(1_000, 80_000);
+        let revision = app.state().revision;
+        assert_eq!(usage_logs(&logs), 1);
+
+        app.lock().last_read = Some(0);
+        apply(2_000, 80_000);
+        let state = app.state();
+        assert_eq!(
+            state.revision, revision,
+            "a timestamp alone leaves state waiters asleep"
+        );
+        assert!(state.last_read.is_some_and(|at| at > 0));
+        assert_eq!(
+            state.accounts.0[0]
+                .usage
+                .as_ref()
+                .expect("current reading")
+                .read_at,
+            2_000
+        );
+        let saved: Readings =
+            store::load(&app.data_dir, READINGS_FILE).expect("load saved readings");
+        assert_eq!(
+            saved.accounts[ID]
+                .usage
+                .as_ref()
+                .expect("saved reading")
+                .read_at,
+            2_000
+        );
+        assert_eq!(usage_logs(&logs), 1);
+
+        app.lock().codex_usage_notified_at = Some(Instant::now() - Duration::from_secs(60));
+        apply(3_000, 80_000);
+        assert_eq!(
+            app.state().revision,
+            revision + 1,
+            "the timestamp notice is due"
+        );
+        apply(4_000, 80_000);
+        assert_eq!(app.state().revision, revision + 1, "the minute starts over");
+        assert_eq!(usage_logs(&logs), 1);
+
+        apply(5_000, 90_000);
+        assert_eq!(app.state().revision, revision + 2);
+        assert_eq!(usage_logs(&logs), 2);
+    }
+
+    #[test]
+    fn codex_logs_and_announces_recovery_even_with_unchanged_figures() {
+        let (_scratch, app, logs) = usage_app(Provider::Codex);
+        app.apply_codex_usage(ID, usage(1_000, 80_000));
+        app.apply_usage(ID, Err(UsageError::SignedOut));
+        let revision = app.state().revision;
+
+        app.apply_usage(ID, Err(UsageError::SignedOut));
+        assert_eq!(
+            app.state().revision,
+            revision,
+            "same failure leaves waiters asleep"
+        );
+        assert_eq!(usage_logs(&logs), 1);
+
+        app.apply_codex_usage(ID, usage(2_000, 80_000));
+        let state = app.state();
+        assert_eq!(state.accounts.0[0].usage_error, None);
+        assert_eq!(state.revision, revision + 1);
+        assert_eq!(usage_logs(&logs), 2);
+    }
+
+    #[test]
+    fn an_old_codex_log_can_set_no_logs_once() {
+        let (_scratch, app, logs) = usage_app(Provider::Codex);
+        app.lock()
+            .readings
+            .accounts
+            .entry(ID.into())
+            .or_default()
+            .identity_since = Some(2_000);
+        let revision = app.state().revision;
+
+        app.apply_codex_usage(ID, usage(1_000, 80_000));
+        let state = app.state();
+        assert_eq!(state.accounts.0[0].usage_error, Some(UsageError::NoLogs));
+        assert_eq!(state.revision, revision + 1);
+        let saved: Readings =
+            store::load(&app.data_dir, READINGS_FILE).expect("load saved readings");
+        assert_eq!(saved.accounts[ID].error, Some(UsageError::NoLogs));
+
+        app.apply_codex_usage(ID, usage(1_001, 80_000));
+        assert_eq!(app.state().revision, revision + 1);
+        assert_eq!(usage_logs(&logs), 0);
     }
 }

@@ -150,8 +150,9 @@ describe('WButton', () => {
     const busy = mount(WButton, { props: { type: 'submit', busy: true, icon: Folder }, slots: { default: 'Scan' } });
     expect(busy.get('button').attributes('type')).toBe('submit');
     expect(busy.get('button').attributes('aria-busy')).toBe('true');
-    expect(busy.get('svg').attributes('aria-hidden')).toBe('true');
-    expect(busy.get('svg').classes()).toContain('animate-spin-slow');
+    const spinner = busy.get('span.animate-spin-slow');
+    expect(spinner.attributes('aria-hidden')).toBe('true');
+    expect(spinner.get('svg').classes()).not.toContain('animate-spin-slow');
   });
 });
 

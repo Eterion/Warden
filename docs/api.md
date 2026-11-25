@@ -30,6 +30,7 @@ interface Limit {
 }
 
 interface Usage {
+  /** The reading's time. A Codex log reading with unchanged figures updates it and wakes the window at most once a minute. */
   readAt: number;
   fiveHour: Limit | null;
   weekly: Limit | null;
@@ -161,6 +162,7 @@ interface State {
   accounts: Account[];
   main: Main | null;
   problems: Problem[];
+  /** A Codex log reading with unchanged figures updates this time and wakes the window at most once a minute. */
   lastRead: number | null;
   revision: number;
   homeDir: string | null;

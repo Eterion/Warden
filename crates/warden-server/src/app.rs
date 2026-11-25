@@ -222,6 +222,8 @@ pub struct App {
     desktop: Option<Arc<dyn Desktop>>,
     /// Memory over time: today's minutes and the day files. Apart from the state, so a sample changes no revision.
     memory: Mutex<memory::Recorder>,
+    /// Serializes link preparation and disk writes across sampling and shutdown without blocking memory readers.
+    memory_writer: Mutex<()>,
     /// Wakes the memory sampler when the server stops.
     memory_wake: Condvar,
     /// How many samples have landed, and whether the server stops: the open Memory page waits on it.
@@ -231,6 +233,32 @@ pub struct App {
 }
 
 type CodexSender = std::sync::mpsc::Sender<notify::Result<notify::Event>>;
+
+pub struct MemoryWrites {
+    pub day: io::Result<()>,
+    pub links: io::Result<()>,
+}
+
+impl MemoryWrites {
+    pub(crate) fn log_failures(self, log: &Log, failing: &mut [bool; 2]) {
+        for ((file, result), failed) in [
+            ("the memory history", self.day),
+            ("the saved memory links", self.links),
+        ]
+        .into_iter()
+        .zip(failing)
+        {
+            match result {
+                Ok(()) => *failed = false,
+                Err(e) if !*failed => {
+                    *failed = true;
+                    log(&format!("could not write {file}: {e}"));
+                }
+                Err(_) => {}
+            }
+        }
+    }
+}
 
 /// What `GET /api/memory/today/wait` answers: today's memory from a minute on, with the number of the sample it holds.
 #[derive(Debug, Serialize)]
@@ -528,6 +556,7 @@ impl App {
             transcripts: Mutex::new(titles::Transcripts::default()),
             desktop,
             memory: Mutex::new(recorder),
+            memory_writer: Mutex::new(()),
             memory_wake: Condvar::new(),
             memory_sample: Mutex::new((0, false)),
             memory_changed: Condvar::new(),
@@ -1464,14 +1493,41 @@ impl App {
             .collect()
     }
 
+    /// Reads the saved process links once, for the sampler. No file contents reach the log.
+    pub(crate) fn load_memory_links(&self) -> memory::LeftRunning {
+        let loaded = {
+            let _writer = self.memory_writer_lock();
+            self.memory_lock().load_links()
+        };
+        loaded.unwrap_or_else(|_| {
+            (self.log)("could not load saved memory links");
+            memory::LeftRunning::default()
+        })
+    }
+
+    fn memory_writer_lock(&self) -> MutexGuard<'_, ()> {
+        self.memory_writer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The caller holds the writer lock so finishing cannot overtake a sample's write.
+    fn save_memory_links(&self, prepared: io::Result<Option<memory::LinkWrite>>) -> io::Result<()> {
+        if let Some(write) = prepared? {
+            write.write()?;
+            self.memory_lock().links_saved();
+        }
+        Ok(())
+    }
+
     /// One memory sample always reads the computer's memory. A hooked session with a known CLI or a remembered
     /// process still running at the last snapshot warrants a new snapshot. Only linked processes and Warden's own
-    /// count. Errors are the day file's.
+    /// count. Errors are from saving the day or the process links.
     pub fn sample_memory(
         &self,
         source: &dyn crate::procs::MemorySource,
         left: &mut memory::LeftRunning,
-    ) -> io::Result<()> {
+    ) -> MemoryWrites {
         let live = self.live_sessions(source);
         let (total, available) = source.computer().unwrap_or((0, 0));
         let mut values = Vec::new();
@@ -1493,16 +1549,22 @@ impl App {
         } else {
             *left = memory::LeftRunning::default();
         }
-        let recorded = self.memory_lock().record(&memory::Reading {
-            at_ms: now_ms(),
-            total,
-            available,
-            values,
-        });
+        let _writer = self.memory_writer_lock();
+        let (day, links) = {
+            let mut recorder = self.memory_lock();
+            let day = recorder.record(&memory::Reading {
+                at_ms: now_ms(),
+                total,
+                available,
+                values,
+            });
+            (day, recorder.prepare_links(left))
+        };
+        let links = self.save_memory_links(links);
         // Kept in memory even when the day file failed: the open Memory page follows it either way.
         self.memory_sample_lock().0 += 1;
         self.memory_changed.notify_all();
-        recorded
+        MemoryWrites { day, links }
     }
 
     fn memory_sample_lock(&self) -> MutexGuard<'_, (u64, bool)> {
@@ -1544,9 +1606,19 @@ impl App {
         MemoryWait { sample, day }
     }
 
-    /// Writes the minute being gathered (the server stops).
-    pub fn finish_memory(&self) -> io::Result<()> {
-        self.memory_lock().finish()
+    /// Writes the minute being gathered and the latest process links (the server stops).
+    pub fn finish_memory(&self) {
+        let written = {
+            let _writer = self.memory_writer_lock();
+            let (day, links) = {
+                let mut recorder = self.memory_lock();
+                (recorder.finish(), recorder.finish_links())
+            };
+            let links = self.save_memory_links(links);
+            MemoryWrites { day, links }
+        };
+        // Report final failures even if a previous sample could not write the same file.
+        written.log_failures(&self.log, &mut [false; 2]);
     }
 
     /// One day's memory: today's from memory, a past day's from its file. `400` for a date not written

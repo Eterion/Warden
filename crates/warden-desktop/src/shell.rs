@@ -154,7 +154,7 @@ impl Source for Releases {
                 save_place(&h);
                 if let Some(core) = h.try_state::<Core>() {
                     core.app.stop();
-                    let _ = core.app.finish_memory();
+                    core.app.finish_memory();
                 }
                 h.cleanup_before_exit();
             })
@@ -801,7 +801,7 @@ pub fn run(
             save_place(handle);
             // The memory minute being gathered is written now: the process may end before the sampler wakes.
             if let Some(core) = handle.try_state::<Core>() {
-                let _ = core.app.finish_memory();
+                core.app.finish_memory();
             }
             // Only after the user's quit (never when Windows ends the session) a downloaded update installs, without
             // starting Warden again; Warden closes for it.

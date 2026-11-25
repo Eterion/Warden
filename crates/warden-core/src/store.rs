@@ -651,9 +651,6 @@ pub fn save<T: Serialize>(data_dir: &Path, name: &str, value: &T) -> io::Result<
 /// can redirect the write. A link at `path` itself (a settings file kept elsewhere and linked in) is kept: the file
 /// it points to is the one written.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    use std::io::Write;
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static NEXT: AtomicU32 = AtomicU32::new(0);
     let linked;
     let path = if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
         linked = fs::canonicalize(path)?;
@@ -661,6 +658,15 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     } else {
         path
     };
+    replace_atomic(path, bytes, true)
+}
+
+/// Writes by renaming a new file over the destination, without resolving a link at the destination.
+/// `sync` makes the contents durable before renaming, for files that need it.
+pub(crate) fn replace_atomic(path: &Path, bytes: &[u8], sync: bool) -> io::Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static NEXT: AtomicU32 = AtomicU32::new(0);
     let mut attempts = 0;
     let (tmp, mut file) = loop {
         let mut name = path.file_name().unwrap_or_default().to_owned();
@@ -680,7 +686,9 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
             Err(e) => return Err(e),
         }
     };
-    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    let written = file
+        .write_all(bytes)
+        .and_then(|()| if sync { file.sync_all() } else { Ok(()) });
     drop(file);
     written
         .and_then(|()| fs::rename(&tmp, path))

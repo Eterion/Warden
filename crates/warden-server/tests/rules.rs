@@ -792,7 +792,7 @@ fn memory_helper() {
     common::memory_helper();
 }
 
-/// Every day file in the data folder's memory folder, by name.
+/// Every file in the data folder's memory folder, by name.
 fn memory_files(data: &std::path::Path) -> Vec<(String, String)> {
     std::fs::read_dir(data.join("memory"))
         .expect("the memory folder")
@@ -800,7 +800,7 @@ fn memory_files(data: &std::path::Path) -> Vec<(String, String)> {
         .map(|e| {
             (
                 e.file_name().to_string_lossy().into_owned(),
-                std::fs::read_to_string(e.path()).expect("a day file"),
+                std::fs::read_to_string(e.path()).expect("a memory file"),
             )
         })
         .collect()
@@ -863,14 +863,23 @@ fn memory_history_keeps_only_what_is_allowed() {
         answers.push(day.to_string());
         found
     });
-    drop(tree);
     server.stop();
+    drop(tree);
 
     let files = memory_files(f.data.path());
-    assert!(!files.is_empty(), "a day file is written");
+    assert!(
+        files
+            .iter()
+            .any(|(name, _)| name == warden_core::memory::LINK_FILE)
+    );
+    assert!(files.iter().any(|(name, _)| name.ends_with(".jsonl")));
     let home = f.home.path().to_string_lossy().into_owned();
     for (name, text) in &files {
-        memory_history::assert_only_allowed(name, text);
+        if name == warden_core::memory::LINK_FILE {
+            memory_history::assert_linked_only_allowed(name, text);
+        } else {
+            memory_history::assert_only_allowed(name, text);
+        }
         assert!(text.contains("\"project\":\"Warden\""), "{name}: {text}");
         assert!(
             text.contains("\"name\":\"Investigate … now\""),
@@ -894,7 +903,10 @@ fn memory_history_keeps_only_what_is_allowed() {
 
 #[test]
 fn memory_history_is_capped() {
-    use warden_core::memory::{self, MAX_MINUTES, MAX_SERIES, MAX_TOTAL_BYTES, Reading, Recorder};
+    use warden_core::memory::{
+        self, LINK_FILE, MAX_LEFT, MAX_LINK_BYTES, MAX_MINUTES, MAX_SERIES, MAX_TOTAL_BYTES,
+        Reading, Recorder,
+    };
     let f = Fixture::new();
     let mem = f.data.path().join(memory::DIR);
     let today = memory::today(warden_core::time::now_ms());
@@ -948,13 +960,47 @@ fn memory_history_is_capped() {
         };
         recorder.record_in(&reading, 0).expect("record");
     }
+    // The process link file has its own cap even when more processes are in a session's tree.
+    let processes: Vec<_> = (10..=10 + MAX_LEFT as u32)
+        .map(|pid| memory::Proc {
+            pid,
+            parent: (pid != 10).then_some(10),
+            started: 1,
+            private: None,
+        })
+        .collect();
+    let live = memory::Live {
+        provider: warden_core::model::Provider::Codex,
+        session_id: "session-0".into(),
+        parent_session_id: None,
+        account_id: "a1".into(),
+        account_label: Some("Work".into()),
+        other_sign_in: false,
+        name: Some("Session 0".into()),
+        project: Some("Warden".into()),
+        cli: 10,
+        last_event_at: start,
+    };
+    let mut left = memory::LeftRunning::default();
+    left.update(&memory::plan(&processes, &[live], 1, &left, start as u64));
+    recorder
+        .prepare_links(&left)
+        .expect("prepare links")
+        .expect("pending links")
+        .write()
+        .expect("write links");
     recorder.finish().expect("finish");
     let caps = memory_history::Caps {
         oldest: "1970-01-01",
         ..caps
     };
     memory_history::assert_capped(&other.join(memory::DIR), &caps);
+    let links = std::fs::read_to_string(other.join(memory::DIR).join(LINK_FILE)).expect("links");
+    memory_history::assert_linked_only_allowed(LINK_FILE, &links);
+    memory_history::assert_linked_capped(LINK_FILE, &links, MAX_LINK_BYTES, MAX_LEFT);
     for (name, text) in memory_files(&other) {
-        memory_history::assert_only_allowed(&name, &text);
+        if name != LINK_FILE {
+            memory_history::assert_only_allowed(&name, &text);
+        }
     }
 }

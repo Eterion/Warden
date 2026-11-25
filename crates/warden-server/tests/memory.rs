@@ -96,13 +96,17 @@ fn a_sessions_tree_is_measured_and_what_it_leaves_running_too() {
 }
 
 #[test]
-fn exited_records_alone_do_not_keep_process_snapshots_running() {
+fn a_left_running_process_still_counts_after_a_restart() {
     #[derive(Default)]
-    struct EmptySnapshot(AtomicUsize);
+    struct MadeUpMemory(AtomicUsize);
 
-    impl MemorySource for EmptySnapshot {
+    impl MemorySource for MadeUpMemory {
         fn computer(&self) -> Option<(u64, u64)> {
-            Some((1024, 512))
+            Some((128 * 1024, 64 * 1024))
+        }
+
+        fn stand_in_cli(&self, _provider: Provider, _id: &str) -> Option<u32> {
+            Some(u32::MAX - 1)
         }
 
         fn processes(
@@ -111,12 +115,109 @@ fn exited_records_alone_do_not_keep_process_snapshots_running() {
             _own: u32,
             pick: &mut dyn FnMut(&[memory::Proc]) -> Vec<u32>,
         ) -> Vec<memory::Proc> {
-            self.0.fetch_add(1, Ordering::Relaxed);
-            pick(&[]);
-            Vec::new()
+            let stage = self.0.load(Ordering::Relaxed) as u64;
+            let cli = u32::MAX - 1;
+            let mut processes = vec![memory::Proc {
+                pid: u32::MAX - 2,
+                parent: Some(cli),
+                started: 2,
+                private: Some((8 + stage * 8) * 1024),
+            }];
+            if stage == 0 {
+                processes.push(memory::Proc {
+                    pid: cli,
+                    parent: None,
+                    started: 1,
+                    private: Some(0),
+                });
+            }
+            let chosen = pick(&processes);
+            processes
+                .iter_mut()
+                .filter(|p| !chosen.contains(&p.pid))
+                .for_each(|p| p.private = None);
+            processes
+        }
+
+        fn every(&self) -> std::time::Duration {
+            MEMORY_EVERY
         }
     }
 
+    let f = Fixture::new();
+    let source = Arc::new(MadeUpMemory::default());
+    let server = f.start_with_memory(None, source.clone());
+    let claude = f.claude_folder(".claude-work", "ann@acme.example", "t1");
+    let id = server
+        .app
+        .add_existing(Provider::Claude, claude.to_str().expect("folder"), "Work")
+        .expect("account");
+    let event = |kind| {
+        let json = serde_json::json!({ "session_id": "s1", "hook_event_name": kind });
+        warden_core::sessions::parse_event(json.to_string().as_bytes()).expect("event")
+    };
+    server
+        .app
+        .receive_event(&id, &event("SessionStart"))
+        .expect("start session");
+    eventually("the session measured", || {
+        memory_now(&memory_today(server.addr), "session", "s1") == Some(8)
+    });
+    assert!(!f.log_text().contains("could not load saved memory links"));
+    server
+        .app
+        .receive_event(&id, &event("SessionEnd"))
+        .expect("end session");
+    source.0.store(1, Ordering::Relaxed);
+    eventually("the process left running", || {
+        memory_now(&memory_today(server.addr), "left", "s1") == Some(16)
+    });
+    server.stop();
+    let links = f.data.path().join(memory::DIR).join(memory::LINK_FILE);
+    assert!(links.is_file());
+
+    source.0.store(2, Ordering::Relaxed);
+    let server = f.start_with_memory(None, source);
+    eventually("the restored process measured with its new value", || {
+        let day = memory_today(server.addr);
+        if memory_now(&day, "left", "s1") != Some(24) {
+            return false;
+        }
+        assert_eq!(day["days"], serde_json::json!([day["date"]]));
+        assert!(day["series"].as_array().expect("series").iter().any(|s| {
+            s["kind"] == "left"
+                && s["sessionId"] == "s1"
+                && s["accountId"] == id
+                && s["account"] == "Work"
+        }));
+        true
+    });
+    assert!(links.is_file());
+    server.stop();
+}
+
+#[derive(Default)]
+struct EmptySnapshot(AtomicUsize);
+
+impl MemorySource for EmptySnapshot {
+    fn computer(&self) -> Option<(u64, u64)> {
+        Some((1024, 512))
+    }
+
+    fn processes(
+        &self,
+        _roots: &[u32],
+        _own: u32,
+        pick: &mut dyn FnMut(&[memory::Proc]) -> Vec<u32>,
+    ) -> Vec<memory::Proc> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        pick(&[]);
+        Vec::new()
+    }
+}
+
+#[test]
+fn exited_records_alone_do_not_keep_process_snapshots_running() {
     let f = Fixture::new();
     let app = App::new(
         f.data.path().to_owned(),
@@ -151,12 +252,16 @@ fn exited_records_alone_do_not_keep_process_snapshots_running() {
     let source = EmptySnapshot::default();
 
     // The process was running, so take the snapshot that finds it gone.
-    app.sample_memory(&source, &mut left).expect("first sample");
+    let written = app.sample_memory(&source, &mut left);
+    written.day.expect("first day sample");
+    written.links.expect("first links sample");
     assert_eq!(source.0.load(Ordering::Relaxed), 1);
     assert!(!left.any_running());
 
     // There is only a missing-parent record. The next sample reads the computer without a snapshot.
-    app.sample_memory(&source, &mut left).expect("idle sample");
+    let written = app.sample_memory(&source, &mut left);
+    written.day.expect("idle day sample");
+    written.links.expect("idle links sample");
     assert_eq!(source.0.load(Ordering::Relaxed), 1);
 }
 
@@ -165,6 +270,8 @@ fn a_day_is_asked_for_by_its_date() {
     let f = Fixture::new();
     // A past day already on disk, and one Warden would drop (older than 30 days).
     let mem = f.data.path().join("memory");
+    let bad_links = mem.join(memory::LINK_FILE);
+    common::write(&bad_links, "marker from a malformed file");
     let now = warden_core::time::now_ms();
     let today = warden_core::memory::today(now);
     let today_n = warden_core::time::parse_date(&today).expect("today");
@@ -232,6 +339,10 @@ fn a_day_is_asked_for_by_its_date() {
         revision
     );
     server.stop();
+    assert!(!bad_links.exists());
+    let log = f.log_text();
+    assert_eq!(log.matches("could not load saved memory links").count(), 1);
+    assert!(!log.contains("marker from a malformed file"));
 }
 
 #[test]
@@ -317,11 +428,20 @@ fn a_linked_memory_folder_is_left_alone() {
         &old,
         "{\"m\":1,\"total\":1,\"used\":1,\"sum\":1,\"s\":[]}\n",
     );
+    common::write(
+        &outside.path().join(memory::LINK_FILE),
+        r#"{"version":1,"sampledAtMs":2000,"series":[{"kind":"left","provider":"claude","sessionId":"s1"}],"processes":[[10,1,0]]}"#,
+    );
+    common::write(
+        &outside.path().join("linked.json.12-3.tmp"),
+        "interrupted write",
+    );
     std::fs::create_dir_all(f.data.path()).expect("data");
     junction::create(outside.path(), f.data.path().join("memory")).expect("junction");
     let before = common::folder_bytes(outside.path());
 
-    let server = f.start();
+    let source = Arc::new(EmptySnapshot::default());
+    let server = f.start_with_memory(None, source.clone());
     let addr = server.addr;
     // Samples go on (and are answered from memory); nothing is read, written or removed through the link.
     eventually("today's first sample", || {
@@ -334,6 +454,14 @@ fn a_linked_memory_folder_is_left_alone() {
     assert_eq!(day["minutes"], serde_json::json!([]));
     assert_eq!(day["days"], serde_json::json!([today]));
     server.stop();
+    assert_eq!(
+        source.0.load(Ordering::Relaxed),
+        0,
+        "the saved links were not loaded"
+    );
     assert_eq!(common::folder_bytes(outside.path()), before);
-    assert!(f.log_text().contains("could not write the memory history"));
+    let log = f.log_text();
+    assert_eq!(log.matches("could not load saved memory links").count(), 1);
+    assert!(log.contains("could not write the memory history"));
+    assert!(log.contains("could not write the saved memory links"));
 }

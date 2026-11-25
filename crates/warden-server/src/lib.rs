@@ -153,25 +153,17 @@ pub fn start_core(config: Config) -> io::Result<Core> {
         let source = config.memory;
         threads.push(std::thread::spawn(move || {
             // Sample the computer's memory on its interval. The app takes a process snapshot when a session has a
-            // known CLI or a remembered process was running at the last snapshot. Log a day file failure once.
-            let mut left = warden_core::memory::LeftRunning::default();
-            let mut failing = false;
+            // known CLI or a remembered process was running at the last snapshot. Log each file's failures once.
+            let mut left = app.load_memory_links();
+            let mut failing = [false; 2];
             loop {
-                match app.sample_memory(&*source, &mut left) {
-                    Ok(()) => failing = false,
-                    Err(e) if !failing => {
-                        failing = true;
-                        (app.log)(&format!("could not write the memory history: {e}"));
-                    }
-                    Err(_) => {}
-                }
+                app.sample_memory(&*source, &mut left)
+                    .log_failures(&app.log, &mut failing);
                 if !app.memory_wait(source.every()) {
                     break;
                 }
             }
-            if let Err(e) = app.finish_memory() {
-                (app.log)(&format!("could not write the memory history: {e}"));
-            }
+            app.finish_memory();
         }));
     }
     {

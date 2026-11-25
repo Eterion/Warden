@@ -4,9 +4,10 @@
 //! memory figures, account ids and labels, session ids, and session and project names. Never a prompt, token,
 //! command line, environment, path or process name. Pass a day file's text to [`assert_only_allowed`] (and the
 //! canaries planted where those would be read to `hook_data::assert_not_kept`), and the memory folder to
-//! [`assert_capped`].
+//! [`assert_capped`]. Check `memory/linked.json` with [`assert_linked_only_allowed`] and [`assert_linked_capped`]:
+//! it adds only a version, a snapshot timestamp and numeric process identities referencing the same series fields.
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::path::Path;
 
 /// The fields a series line may have.
@@ -72,39 +73,99 @@ pub fn assert_only_allowed(place: &str, text: &str) {
                 }
             }
         } else if fields.contains_key("series") {
-            for (key, value) in &fields {
-                if !SERIES_FIELDS.contains(&key.as_str()) {
-                    fail(
-                        place,
-                        &format!("keeps a field not allowed in a series: {key}"),
-                    );
-                }
-                match (key.as_str(), value) {
-                    ("series", Value::Number(_)) | (_, Value::Null) => {}
-                    ("kind", Value::String(k)) if KINDS.contains(&k.as_str()) => {}
-                    ("kind", _) => fail(place, "has a series of an unknown kind"),
-                    (_, Value::String(t)) => {
-                        if t.chars().count() > MAX_TEXT {
-                            fail(
-                                place,
-                                &format!("keeps a {key} longer than {MAX_TEXT} characters"),
-                            );
-                        }
-                        if looks_like_a_path(t) {
-                            fail(
-                                place,
-                                &format!("keeps a path or program in a series' {key}"),
-                            );
-                        }
-                    }
-                    _ => fail(
-                        place,
-                        &format!("keeps something other than a text in a series' {key}"),
-                    ),
-                }
-            }
+            assert_series(place, &fields, true);
         } else {
             fail(place, "has a line that is neither a series nor a minute");
+        }
+    }
+}
+
+fn assert_series(place: &str, fields: &Map<String, Value>, numbered: bool) {
+    for (key, value) in fields {
+        if !SERIES_FIELDS.contains(&key.as_str()) || (!numbered && key == "series") {
+            fail(
+                place,
+                &format!("keeps a field not allowed in a series: {key}"),
+            );
+        }
+        match (key.as_str(), value) {
+            ("series", Value::Number(_)) | (_, Value::Null) => {}
+            ("kind", Value::String(k)) if KINDS.contains(&k.as_str()) => {}
+            ("kind", _) => fail(place, "has a series of an unknown kind"),
+            (_, Value::String(t)) => {
+                if t.chars().count() > MAX_TEXT {
+                    fail(
+                        place,
+                        &format!("keeps a {key} longer than {MAX_TEXT} characters"),
+                    );
+                }
+                if looks_like_a_path(t) {
+                    fail(
+                        place,
+                        &format!("keeps a path or program in a series' {key}"),
+                    );
+                }
+            }
+            _ => fail(
+                place,
+                &format!("keeps something other than a text in a series' {key}"),
+            ),
+        }
+    }
+}
+
+fn linked_file(place: &str, text: &str) -> Map<String, Value> {
+    let Ok(Value::Object(fields)) = serde_json::from_str(text) else {
+        fail(place, "is not a JSON object");
+    };
+    fields
+}
+
+/// Panics unless the process link file contains only its numeric fields and allowed series information.
+pub fn assert_linked_only_allowed(place: &str, text: &str) {
+    let fields = linked_file(place, text);
+    if fields.len() != 4
+        || !fields.get("version").is_some_and(Value::is_u64)
+        || !fields.get("sampledAtMs").is_some_and(Value::is_u64)
+    {
+        fail(place, "has unexpected process link fields");
+    }
+    let Some(series) = fields.get("series").and_then(Value::as_array) else {
+        fail(place, "has no list of linked series");
+    };
+    for line in series {
+        let Some(info) = line.as_object() else {
+            fail(place, "has a linked series that is not an object");
+        };
+        assert_series(place, info, false);
+    }
+    let Some(processes) = fields.get("processes").and_then(Value::as_array) else {
+        fail(place, "has no list of linked processes");
+    };
+    for p in processes {
+        if !p.as_array().is_some_and(|p| {
+            p.len() == 3
+                && p.iter().all(Value::is_u64)
+                && p[2].as_u64().is_some_and(|n| n < series.len() as u64)
+        }) {
+            fail(
+                place,
+                "has a process link other than [pid, started, series]",
+            );
+        }
+    }
+}
+
+/// Panics if the process link file exceeds its own byte or entry cap.
+pub fn assert_linked_capped(place: &str, text: &str, max_bytes: u64, max_entries: usize) {
+    if text.len() as u64 > max_bytes {
+        fail(place, &format!("holds more than {max_bytes} bytes"));
+    }
+    let fields = linked_file(place, text);
+    for key in ["processes", "series"] {
+        let entries = fields.get(key).and_then(Value::as_array).expect(key);
+        if entries.len() > max_entries {
+            fail(place, &format!("holds more than {max_entries} {key}"));
         }
     }
 }
@@ -181,6 +242,66 @@ mod tests {
     #[test]
     fn a_clean_day_passes() {
         assert_only_allowed("day", &format!("{SERIES}\n{MINUTE}\n"));
+    }
+
+    fn linked_text(series: &str) -> String {
+        let info = series
+            .replace(r#""series":1,"#, "")
+            .replace("session\"", "left\"");
+        format!(r#"{{"version":1,"sampledAtMs":6000,"series":[{info}],"processes":[[10,5,0]]}}"#)
+    }
+
+    #[test]
+    fn clean_process_links_pass() {
+        let text = linked_text(SERIES);
+        assert_linked_only_allowed("linked.json", &text);
+        assert_linked_capped("linked.json", &text, 600, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "keeps a field not allowed in a series: commandLine")]
+    fn a_command_line_in_linked_series_is_caught() {
+        let text = linked_text(&SERIES.replace(
+            r#""project":"Warden""#,
+            r#""project":"Warden","commandLine":"claude -p secret""#,
+        ));
+        assert_linked_only_allowed("linked.json", &text);
+    }
+
+    #[test]
+    #[should_panic(expected = "has a process link other than [pid, started, series]")]
+    fn an_extra_value_in_a_process_link_is_caught() {
+        let text = linked_text(SERIES).replace("[10,5,0]", r#"[10,5,0,"node.exe"]"#);
+        assert_linked_only_allowed("linked.json", &text);
+    }
+
+    #[test]
+    #[should_panic(expected = "has a process link other than [pid, started, series]")]
+    fn an_out_of_range_process_link_index_is_caught() {
+        let text = linked_text(SERIES).replace("[10,5,0]", "[10,5,1]");
+        assert_linked_only_allowed("linked.json", &text);
+    }
+
+    #[test]
+    #[should_panic(expected = "has unexpected process link fields")]
+    fn an_extra_top_level_link_field_is_caught() {
+        let text = linked_text(SERIES)
+            .replace(r#""version":1"#, r#""version":1,"commandLine":"node.exe""#);
+        assert_linked_only_allowed("linked.json", &text);
+    }
+
+    #[test]
+    #[should_panic(expected = "keeps a field not allowed in a series: series")]
+    fn a_series_number_in_a_linked_series_is_caught() {
+        let text = linked_text(SERIES).replace(r#""kind":"left""#, r#""kind":"left","series":1"#);
+        assert_linked_only_allowed("linked.json", &text);
+    }
+
+    #[test]
+    #[should_panic(expected = "holds more than 1 processes")]
+    fn too_many_process_links_are_caught() {
+        let text = linked_text(SERIES).replace("[10,5,0]", "[10,5,0],[11,5,0]");
+        assert_linked_capped("linked.json", &text, 600, 1);
     }
 
     #[test]

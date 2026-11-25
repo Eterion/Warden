@@ -278,6 +278,17 @@ impl Fixture {
 
     /// Starts the server as the desktop app does, with its own parts stood in for.
     pub fn start_with(&self, desktop: Option<Arc<dyn Desktop>>) -> Running {
+        self.start_with_memory(
+            desktop,
+            Arc::new(warden_server::procs::SystemMemory::every(MEMORY_EVERY)),
+        )
+    }
+
+    pub fn start_with_memory(
+        &self,
+        desktop: Option<Arc<dyn Desktop>>,
+        memory: Arc<dyn warden_server::procs::MemorySource>,
+    ) -> Running {
         let log = Arc::clone(&self.log);
         let sign_ins = Arc::clone(&self.sign_ins);
         let running = start(
@@ -302,7 +313,7 @@ impl Fixture {
                     l.push('\n');
                 }),
                 desktop,
-                memory: Arc::new(warden_server::procs::SystemMemory::every(MEMORY_EVERY)),
+                memory,
             },
             0,
         )

@@ -127,7 +127,7 @@ function toggle(key: string): void {
       Nothing recorded on this day.
     </div>
     <div v-else-if="figs" class="flex flex-col gap-4">
-      <MemoryFigures :figures="figs" :today="isToday" :total="total" :model="model" />
+      <MemoryFigures :figures="figs" :today="isToday" :total="total" :model="model" :day="data" />
 
       <div
         v-if="noSessions"

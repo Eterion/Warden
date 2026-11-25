@@ -177,6 +177,7 @@ export const PAGES: {
     path: '/#/memory',
     fixture: 'memory',
     ready: '[data-memory-chart]',
+    steps: [{ waitFor: '[data-figure=warden] [data-memory-trend]' }],
   },
   {
     // The first widget starts at the same place after navigating from Overview at the smallest desktop width.
@@ -223,6 +224,7 @@ export const PAGES: {
       },
       { waitFor: 'text=Share at peak' },
       { waitFor: '[data-memory-chart]' },
+      { waitFor: '[data-figure=warden] [data-memory-trend]' },
     ],
   },
   {

@@ -200,6 +200,7 @@ export interface Figures {
   computer: { used: number; total: number; high: boolean; ai: number; at: number } | null;
   /** Warden itself (today: now; a past day: at its highest). */
   warden: number | null;
+  wardenPeak: { used: number; at: number } | null;
   rows: BandRow[];
 }
 
@@ -242,10 +243,14 @@ export function figures(day: MemoryDay, bands: Band[], shown: Set<string>): Figu
         usedTotal = m.total;
         usedAt = m;
       }
-  const wardenSeries = day.series.filter((s) => s.kind === 'warden').map((s) => s.series);
-  const wardenAt = (m: MemoryMinute) => m.s.filter(([n]) => wardenSeries.includes(n)).reduce((a, [, v]) => a + v, 0);
-  let warden: number | null = null;
-  if (wardenSeries.length) warden = day.today && last ? wardenAt(last) : Math.max(0, ...day.minutes.map(wardenAt));
+  const wardenAt = wardenMemory(day);
+  let wardenPeak: Figures['wardenPeak'] = null;
+  if (wardenAt) {
+    for (const minute of day.minutes) {
+      const used = wardenAt(minute);
+      if (!wardenPeak || used > wardenPeak.used) wardenPeak = { used, at: minute.m };
+    }
+  }
   return {
     now,
     nowShare: now === null ? '' : shareText(now, total),
@@ -261,7 +266,8 @@ export function figures(day: MemoryDay, bands: Band[], shown: Set<string>): Figu
             at: usedAt.m,
           }
         : null,
-    warden,
+    warden: wardenAt ? (day.today && last ? wardenAt(last) : (wardenPeak?.used ?? 0)) : null,
+    wardenPeak,
     rows,
   };
 }
@@ -372,14 +378,21 @@ function recordedRuns(minutes: MemoryMinute[]): MemoryMinute[][] {
   return runs;
 }
 
-/** The shown bands' total over the recorded span, in a 100 by 24 SVG view box. */
-export function memoryTrend(model: ChartModel): { line: string; area: string } {
-  const from = model.minutes[0]!.m;
-  const to = model.minutes[model.minutes.length - 1]!.m + 1;
+/** Warden's own memory at a recorded minute, when the day has a Warden series. */
+export function wardenMemory(day: MemoryDay): ((minute: MemoryMinute) => number) | null {
+  const series = new Set(day.series.filter((s) => s.kind === 'warden').map((s) => s.series));
+  return series.size ? (m) => m.s.reduce((sum, [n, v]) => sum + (series.has(n) ? v : 0), 0) : null;
+}
+
+/** A memory line and fill over the recorded span, in a 100 by 24 SVG view box. */
+export function memoryTrend(minutes: MemoryMinute[], valueAt: (minute: MemoryMinute) => number) {
+  const first = minutes[0];
+  const last = minutes[minutes.length - 1];
+  if (!first || !last) return null;
+  const from = first.m;
+  const to = last.m + 1;
   const x = (m: number) => (((m - from) / (to - from)) * 100).toFixed(2);
-  const runs = recordedRuns(model.minutes).map((run) =>
-    run.map((m) => ({ m: m.m, total: model.bands.reduce((sum, b) => sum + bandAt(b, m), 0) })),
-  );
+  const runs = recordedRuns(minutes).map((run) => run.map((m) => ({ m: m.m, total: valueAt(m) })));
   const peak = Math.max(1, ...runs.flat().map((run) => run.total));
   const y = (total: number) => (22 - (total / peak) * 20).toFixed(2);
   let line = '';

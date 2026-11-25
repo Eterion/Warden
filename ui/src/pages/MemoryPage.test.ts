@@ -72,7 +72,7 @@ const busyDay = (date: string) =>
     minute(541, [
       [1, GIB],
       [2, GIB],
-      [3, 9 * 1024],
+      [3, 14 * 1024],
     ]),
     minute(
       542,
@@ -169,10 +169,20 @@ describe('MemoryPage', () => {
     expect(icons.every((icon) => icon.classes().includes('size-4') && icon.classes().includes('text-icon'))).toBe(true);
     expect(page.find('[data-figure="warden"] [data-owl-icon]').exists()).toBe(true);
     expect(page.get('[data-figure="peak"] header + div + .border-t').text()).toBe("9% of the computer's memory");
-    expect(page.get('[data-figure="warden"] header + div + .border-t').text()).toBe('Never counted in the chart');
+    const warden = page.get('[data-figure="warden"]');
+    const wardenBody = warden.get('header + div');
+    const wardenTrend = wardenBody.get('[data-memory-trend].mt-auto');
+    expect(wardenTrend.attributes('aria-hidden')).toBe('true');
+    expect(wardenTrend.get('.stroke-secondary').attributes('d')).toBe(
+      'M0.00,9.14L16.67,9.14L50.00,2.00L83.33,9.14H100.00',
+    );
+    expect(wardenBody.get('[data-warden-peak-text].sr-only').text()).toBe('Highest 14 MB at 09:01');
+    const wardenFooter = warden.get('header + div + .border-t');
+    expect(wardenFooter.get('p.text-12.text-tertiary').text()).toBe('Never counted in the By account chart');
+    expect(wardenFooter.find('svg').exists()).toBe(false);
     expect(page.get('[data-share-note]').element.tagName).toBe('BUTTON');
-    expect(page.get('[data-memory-trend]').attributes('aria-hidden')).toBe('true');
-    expect(page.get('[data-memory-trend] .stroke-secondary').attributes('d')).toContain('M');
+    expect(page.get('[data-figure="now"] [data-memory-trend]').attributes('aria-hidden')).toBe('true');
+    expect(page.get('[data-figure="now"] [data-memory-trend] .stroke-secondary').attributes('d')).toContain('M');
     // The computer above 90% in use: its number, share and meter amber.
     expect(page.get('[data-computer] strong').classes()).toContain('text-attn');
     expect(page.get('[data-computer] strong + span').classes()).toContain('text-attn');
@@ -217,8 +227,10 @@ describe('MemoryPage', () => {
     expect(figure(page, 'now')).toBeNull();
     expect(figure(page, 'peak')).toEqual(['Peak', '3 GB', 'at 09:00']);
     expect(figure(page, 'computer')).toEqual(['Computer', '30 GB', '94% of 32 GB at 09:02']);
-    expect(figure(page, 'warden')).toEqual(['Warden itself', '9 MB', '<1% of 32 GB at its highest']);
-    expect(page.find('[data-memory-trend]').exists()).toBe(false);
+    expect(figure(page, 'warden')).toEqual(['Warden itself', '14 MB', '<1% of 32 GB at its highest']);
+    expect(page.get('[data-warden-peak-text].sr-only').text()).toBe('Highest 14 MB at 09:01');
+    expect(page.findAll('[data-memory-trend]')).toHaveLength(1);
+    expect(page.get('[data-figure="warden"] [data-memory-trend] .fill-secondary').attributes('d')).toContain('Z');
     expect(page.find('[data-now-meter]').exists()).toBe(false);
     expect(page.get('button[aria-label="Previous day"]').attributes('aria-disabled')).toBe('true');
     await page.get('button[aria-label="Next day"]').trigger('click');
@@ -240,8 +252,10 @@ describe('MemoryPage', () => {
     expect(legend.classes()).toEqual(expect.arrayContaining(['text-12', 'text-secondary']));
     expect(swatch.classes()).toEqual(expect.arrayContaining(['size-2.5', 'bg-chart-claude-2']));
     expect(item.classes()).not.toContain('text-tertiary');
-    const trend = () => page.get('[data-memory-trend] .stroke-secondary').attributes('d');
+    const trend = () => page.get('[data-figure="now"] [data-memory-trend] .stroke-secondary').attributes('d');
+    const wardenTrend = () => page.get('[data-figure="warden"] [data-memory-trend] .stroke-secondary').attributes('d');
     const initialTrend = trend();
+    const initialWardenTrend = wardenTrend();
     expect(box.attributes('aria-checked')).toBe('true');
     await box.trigger('click');
     expect(page.get('[role=checkbox][aria-label="Show Work in the chart"]').attributes('aria-checked')).toBe('false');
@@ -251,6 +265,7 @@ describe('MemoryPage', () => {
     expect(swatch.classes()).not.toContain('bg-chart-claude-2');
     expect(item.text()).toBe('Work (hidden)');
     expect(trend()).not.toBe(initialTrend);
+    expect(wardenTrend()).toBe(initialWardenTrend);
     expect(figure(page, 'peak')?.[1]).toBe('2 GB');
     // The row stays, with its own figures.
     expect(page.get('[data-band-row="account:a1"]').text()).toContain('1 GB');
@@ -416,9 +431,10 @@ describe('MemoryPage', () => {
     const page = mount(MemoryPage, { attachTo: document.body });
     await flushPromises();
     const chart = page.get('[data-memory-chart]');
-    const trend = page.get('[data-memory-trend]');
-    expect(trend.get('.stroke-secondary').attributes('d')?.match(/M/g)).toHaveLength(2);
-    expect(trend.get('.fill-secondary').attributes('d')?.match(/Z/g)).toHaveLength(2);
+    for (const trend of page.findAll('[data-memory-trend]')) {
+      expect(trend.get('.stroke-secondary').attributes('d')?.match(/M/g)).toHaveLength(2);
+      expect(trend.get('.fill-secondary').attributes('d')?.match(/Z/g)).toHaveLength(2);
+    }
     await chart.trigger('focus');
     await chart.trigger('keydown', { key: 'Home' });
     await chart.trigger('keydown', { key: 'ArrowRight' });

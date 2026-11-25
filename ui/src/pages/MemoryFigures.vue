@@ -4,16 +4,42 @@ import { computed } from 'vue';
 import OwlIcon from '../components/OwlIcon.vue';
 import WTooltip from '../components/WTooltip.vue';
 import WWidget from '../components/WWidget.vue';
-import { memoryTrend, meterParts, shareText, size, type ChartModel, type Figures } from '../memory';
+import type { MemoryDay } from '../api';
+import {
+  bandAt,
+  memoryTrend,
+  meterParts,
+  shareText,
+  size,
+  wardenMemory,
+  type ChartModel,
+  type Figures,
+} from '../memory';
 import { clock } from '../format';
+import MemoryTrend from './MemoryTrend.vue';
 
-const props = defineProps<{ figures: Figures; today: boolean; total: number | null; model: ChartModel | null }>();
+const props = defineProps<{
+  figures: Figures;
+  today: boolean;
+  total: number | null;
+  model: ChartModel | null;
+  day: MemoryDay;
+}>();
 
 const SHARE_NOTE =
   'Shares count private memory, part of which Windows can page out to disk, so a share can read a little high when memory is short.';
 
 const meter = computed(() => (props.figures.computer ? meterParts(props.figures.computer) : null));
-const trend = computed(() => (props.today && props.model ? memoryTrend(props.model) : null));
+const trend = computed(() => {
+  const model = props.model;
+  return props.today && model
+    ? memoryTrend(model.minutes, (m) => model.bands.reduce((sum, b) => sum + bandAt(b, m), 0))
+    : null;
+});
+const wardenTrend = computed(() => {
+  const valueAt = wardenMemory(props.day);
+  return valueAt ? memoryTrend(props.day.minutes, valueAt) : null;
+});
 const ICON = 'size-4 shrink-0 text-icon';
 const BODY = 'flex flex-1 flex-col gap-2';
 const VALUE = 'flex flex-wrap items-baseline gap-x-2 tabular-nums';
@@ -36,22 +62,7 @@ const VALUE = 'flex flex-wrap items-baseline gap-x-2 tabular-nums';
               {{ props.figures.nowShare }} of {{ size(props.total) }}
             </WTooltip>
           </p>
-          <svg
-            v-if="trend"
-            aria-hidden="true"
-            class="mt-auto h-6 w-full"
-            viewBox="0 0 100 24"
-            preserveAspectRatio="none"
-            data-memory-trend
-          >
-            <path :d="trend.area" class="fill-secondary opacity-10" />
-            <path
-              :d="trend.line"
-              class="fill-none stroke-secondary"
-              stroke-width="1.5"
-              vector-effect="non-scaling-stroke"
-            />
-          </svg>
+          <MemoryTrend v-if="trend" :paths="trend" class="mt-auto" />
         </div>
       </template>
     </WWidget>
@@ -122,18 +133,24 @@ const VALUE = 'flex flex-wrap items-baseline gap-x-2 tabular-nums';
     <WWidget v-if="props.figures.warden !== null" group title="Warden itself" data-figure="warden">
       <template #icon><OwlIcon :class="ICON" :size="16" aria-hidden="true" /></template>
       <template #body>
-        <p :class="VALUE">
-          <strong class="text-24 font-semibold">{{ size(props.figures.warden) }}</strong>
-          <span v-if="props.total || !props.today" class="text-13 text-secondary">
-            <template v-if="props.total"
-              >{{ shareText(props.figures.warden, props.total) }} of {{ size(props.total) }}</template
-            >
-            <template v-if="!props.today">{{ props.total ? ' at its highest' : 'At its highest' }}</template>
-          </span>
-        </p>
+        <div :class="BODY">
+          <p :class="VALUE">
+            <strong class="text-24 font-semibold">{{ size(props.figures.warden) }}</strong>
+            <span v-if="props.total || !props.today" class="text-13 text-secondary">
+              <template v-if="props.total"
+                >{{ shareText(props.figures.warden, props.total) }} of {{ size(props.total) }}</template
+              >
+              <template v-if="!props.today">{{ props.total ? ' at its highest' : 'At its highest' }}</template>
+            </span>
+          </p>
+          <p v-if="props.figures.wardenPeak" class="sr-only" data-warden-peak-text>
+            Highest {{ size(props.figures.wardenPeak.used) }} at {{ clock(props.figures.wardenPeak.at) }}
+          </p>
+          <MemoryTrend v-if="wardenTrend" :paths="wardenTrend" class="mt-auto" />
+        </div>
       </template>
       <template #footer>
-        <p class="text-12 text-tertiary">Never counted in the chart</p>
+        <p class="text-12 text-tertiary">Never counted in the By account chart</p>
       </template>
     </WWidget>
   </div>

@@ -149,9 +149,6 @@ const VALUE = 'flex flex-wrap items-baseline gap-x-2 tabular-nums';
           <MemoryTrend v-if="wardenTrend" :paths="wardenTrend" class="mt-auto" />
         </div>
       </template>
-      <template #footer>
-        <p class="text-12 text-tertiary">Never counted in the By account chart</p>
-      </template>
     </WWidget>
   </div>
 </template>

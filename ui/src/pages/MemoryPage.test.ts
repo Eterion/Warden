@@ -177,9 +177,9 @@ describe('MemoryPage', () => {
       'M0.00,9.14L16.67,9.14L50.00,2.00L83.33,9.14H100.00',
     );
     expect(wardenBody.get('[data-warden-peak-text].sr-only').text()).toBe('Highest 14 MB at 09:01');
-    const wardenFooter = warden.get('header + div + .border-t');
-    expect(wardenFooter.get('p.text-12.text-tertiary').text()).toBe('Never counted in the By account chart');
-    expect(wardenFooter.find('svg').exists()).toBe(false);
+    // No footer: the line closes the figure.
+    expect(warden.find('header + div + .border-t').exists()).toBe(false);
+    expect(warden.text()).not.toContain('Never counted');
     expect(page.get('[data-share-note]').element.tagName).toBe('BUTTON');
     expect(page.get('[data-figure="now"] [data-memory-trend]').attributes('aria-hidden')).toBe('true');
     expect(page.get('[data-figure="now"] [data-memory-trend] .stroke-secondary').attributes('d')).toContain('M');

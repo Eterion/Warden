@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -662,6 +662,29 @@ pub fn read_day(dir: &Path, date: &str) -> Day {
     day
 }
 
+/// The day's series metadata only. Skip minute lines without decoding them or retaining the file's bytes.
+pub fn read_series(dir: &Path, date: &str) -> Vec<Series> {
+    let path = day_file(dir, date);
+    if linked(dir) || linked(&path) {
+        return Vec::new();
+    }
+    let Ok(file) = fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut reader = BufReader::new(file.take(MAX_DAY_BYTES + 64 * KIB));
+    let mut line = Vec::new();
+    let mut day = Day::default();
+    while let Ok(1..) = reader.read_until(b'\n', &mut line) {
+        if line.windows(8).any(|part| part == b"\"series\"")
+            && let Ok(series) = serde_json::from_slice::<Series>(&line)
+        {
+            day.add_series(series);
+        }
+        line.clear();
+    }
+    day.series
+}
+
 /// A day file's bytes, at most a full day's and a little more; none when it cannot be read.
 fn read_bounded(path: &Path) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -1197,6 +1220,33 @@ impl Recorder {
                 Err(e)
             }
         }
+    }
+
+    /// The recorded accounts in today's series, including additional series in the minute being gathered.
+    pub fn today_account_ids(&self, date: &str) -> HashSet<String> {
+        let series = self
+            .today
+            .as_ref()
+            .filter(|t| t.date == date)
+            .map_or(&[][..], |t| &t.day.series);
+        let mut accounts: HashSet<_> = series
+            .iter()
+            .filter_map(|s| s.info.account_id.clone())
+            .collect();
+        if let Some(g) = self.gathering.as_ref().filter(|g| g.date == date) {
+            let mut keys: HashSet<_> = series.iter().map(|s| s.info.key()).collect();
+            for (info, _) in &g.values {
+                if keys.len() >= MAX_SERIES {
+                    break;
+                }
+                if keys.insert(info.key())
+                    && let Some(id) = &info.account_id
+                {
+                    accounts.insert(id.clone());
+                }
+            }
+        }
+        accounts
     }
 
     /// Today's day as recorded, with the minute being gathered (its new series numbered as they will be). Empty when

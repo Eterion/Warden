@@ -70,7 +70,9 @@ type Fixture =
   | 'memory'
   | 'memoryQuiet'
   | 'memoryHigh'
-  | 'memoryShort';
+  | 'memoryShort'
+  | 'memoryComputer'
+  | 'memoryAllHidden';
 
 /** What to do on a page once it is ready, to reach a state such as a menu's modal (Playwright selectors). */
 /** `hover` rests the pointer on an element; `press` also holds the button down on it, until the page is checked. */
@@ -233,6 +235,53 @@ export const PAGES: {
     path: '/#/memory/2026-01-05',
     fixture: 'memory',
     ready: '[data-memory-empty]',
+  },
+  {
+    name: 'memory-account-open-today',
+    path: '/#/memory',
+    fixture: 'memory',
+    ready: '[data-memory-table]',
+    steps: [
+      { click: '[aria-label="Show the sessions of Main"]' },
+      { waitFor: '[data-session-of="account:main"] [data-line="elbow"]' },
+      { waitFor: '[data-slice-edge]' },
+      { hover: '[data-session-of="account:main"] [title="Memory page"]' },
+    ],
+    viewport: { width: 800, height: 1100 },
+  },
+  {
+    name: 'memory-account-and-left-open-past',
+    path: '/#/memory',
+    fixture: 'memory',
+    ready: '[data-memory-table]',
+    steps: [
+      { click: '[aria-label="Show the sessions of Second"]' },
+      { click: '[aria-label="Previous day"]' },
+      { waitFor: '[data-session-of="account:a2"] [data-line="elbow"]' },
+      { click: '[aria-label="Show the sessions of Left running"]' },
+      { waitFor: '[data-session-of="left"] [data-line="elbow"]' },
+    ],
+    viewport: { width: 1280, height: 1180 },
+  },
+  {
+    name: 'memory-filter-open',
+    path: '/#/memory',
+    fixture: 'memory',
+    ready: '[data-memory-chart]',
+    steps: [{ click: 'button[aria-label^="Filter memory"]' }, { waitFor: '[role=menuitemcheckbox]' }],
+  },
+  {
+    name: 'memory-whole-computer',
+    path: '/#/memory',
+    fixture: 'memoryComputer',
+    ready: '[data-memory-chart] [data-computer-line]',
+    steps: [{ focus: '[data-memory-chart]' }, { waitFor: '[data-guide-tip]' }],
+  },
+  {
+    name: 'memory-filter-everything-hidden',
+    path: '/#/memory',
+    fixture: 'memoryAllHidden',
+    ready: '[data-memory-all-hidden]',
   },
   {
     name: 'memory-nothing-running',
@@ -1117,6 +1166,17 @@ function fakeApi(current: () => Fixture): Plugin {
                         ? resetSuggestedState(now)
                         : normalState(now);
         if (fixture === 'hooksOff') state.hooksOff = true;
+        if (fixture === 'memoryComputer') {
+          state.settings.memoryScale = 'computer';
+          state.settings.memoryFilter.showWarden = true;
+        }
+        if (fixture === 'memoryAllHidden') {
+          state.settings.memoryFilter = {
+            hiddenAccounts: ['main', 'a2', 'a3', 'a4', 'gone', 'gone-codex', 'other-sign-in'],
+            showLeft: false,
+            showWarden: false,
+          };
+        }
         if (fixture === 'codexWeeklyReset') {
           const weekly = state.accounts.find((a) => a.id === 'a3')?.usage?.weekly;
           if (weekly) weekly.resetsAt = now - 5 * 60_000;

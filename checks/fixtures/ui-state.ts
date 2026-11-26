@@ -96,6 +96,8 @@ export function normalState(now: number): State {
       pageTransitions: true,
       hiddenResetAccounts: [],
       soonestResetOnly: false,
+      memoryScale: 'sessions',
+      memoryFilter: { hiddenAccounts: [], showLeft: true, showWarden: false },
     },
     accounts: accounts.slice(1),
     main: { ...accounts[0]!, signIn: { state: 'signedIn', email: accounts[0]!.identity?.email ?? null } },
@@ -542,9 +544,13 @@ export function memoryDay(date: string, now: number, variant: 'busy' | 'quiet' |
     provider,
     accountId,
     account: label,
-    sessionId: kind === 'warden' ? null : `memory-${series}`,
-    parentSessionId: null,
-    name: kind === 'warden' ? null : 'Memory page',
+    sessionId: kind === 'warden' ? null : `memory-${series === 4 ? 2 : series}`,
+    parentSessionId: series === 2 || series === 4 ? 'memory-1' : null,
+    name:
+      (series === 10
+        ? 'Update the fixtures'
+        : ['Memory page', 'Review the chart', 'Check the build', 'Review the chart'][series - 1]) ??
+      (kind === 'warden' ? null : `Memory run ${series}`),
     project: kind === 'warden' ? null : 'Warden',
   });
   const series = quiet
@@ -559,6 +565,7 @@ export function memoryDay(date: string, now: number, variant: 'busy' | 'quiet' |
         s(7, 'other-sign-in', null, null, 'claude'),
         s(8, 'session', 'a4', 'Codex personal', 'codex'),
         s(9, 'session', 'gone-codex', 'Old Codex', 'codex'),
+        s(10, 'session', 'main', 'Main', 'claude'),
       ];
   // Each series runs part of the day: [series, from, to, its highest in GB].
   const runs: [number, number, number, number][] = quiet
@@ -579,6 +586,7 @@ export function memoryDay(date: string, now: number, variant: 'busy' | 'quiet' |
           [7, 600, 700, 0.5],
           [8, 790, 900, 0.5],
           [9, 810, 880, 0.4],
+          [10, 510, 790, 0.6],
         ];
   const [start, end] = variant === 'short' ? [5, 50] : [480, 900];
   const gaps = variant === 'short' ? [] : [{ from: 720, to: 760 }];

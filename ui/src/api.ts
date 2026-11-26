@@ -102,6 +102,14 @@ export interface Delegation {
 
 export type Theme = 'system' | 'light' | 'dark';
 
+export type MemoryScale = 'sessions' | 'computer';
+
+export interface MemoryFilter {
+  hiddenAccounts: string[];
+  showLeft: boolean;
+  showWarden: boolean;
+}
+
 export interface Settings {
   reserve: number;
   usageIntervalMin: number;
@@ -120,6 +128,8 @@ export interface Settings {
   hiddenResetAccounts: string[];
   /** The Overview shows only each account's soonest limit reset (its filter). */
   soonestResetOnly: boolean;
+  memoryScale: MemoryScale;
+  memoryFilter: MemoryFilter;
 }
 
 /** One window on each work day, in local time: ISO weekdays (1 = Monday), minutes after midnight in steps of 30. */

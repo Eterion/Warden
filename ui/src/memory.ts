@@ -1,8 +1,6 @@
-// The Memory page's words and numbers: days as the page names them and the nearest recorded ones, sizes, the bands
-// (one per account, then "Other sign-in" and "Left running"; Warden itself is never one), the figures for what is
-// shown, and the chart's geometry. English whatever the Windows region is, on a 24-hour clock. Memory in KiB.
+// The Memory page's words and numbers: days, sizes, bands and figures, and the chart's geometry. Memory in KiB.
 
-import type { Account, MemoryDay, MemoryMinute, Provider } from './api';
+import type { Account, MemoryDay, MemoryMinute, MemoryScale, Provider } from './api';
 import { clock } from './format';
 
 // ---- Days ----
@@ -64,7 +62,7 @@ export function shareText(kib: number, total: number | null): string {
 
 // ---- Bands ----
 
-export type BandKind = 'account' | 'other-sign-in' | 'left';
+export type BandKind = 'account' | 'other-sign-in' | 'left' | 'warden';
 
 export interface Band {
   key: string;
@@ -76,20 +74,22 @@ export interface Band {
   series: number[];
   /** Its colour, which follows the account whatever is shown (`bandColours`). */
   colour: BandColour;
+  /** The shown sessions that divide an open group's band. */
+  slices?: Band[];
 }
 
 /** The shades each provider has; a fourth account of one provider takes the first again. */
 export const SHADES = 3;
 
 /** A band's colour: a shade of its provider for an account, a grey for each group. */
-export type BandColour = `${Provider}-${1 | 2 | 3}` | 'other-sign-in' | 'left';
+export type BandColour = `${Provider}-${1 | 2 | 3}` | 'other-sign-in' | 'left' | 'warden';
 
 /**
  * The day's bands: main and the accounts in use always, in the Overview's order, then any other account that ran
  * something that day (switched off, or removed: named as it was then), then "Other sign-in" and "Left running" when
  * there are any. Warden itself is never a band.
  */
-export function bandsOf(day: MemoryDay, used: Account[], all: Account[]): Band[] {
+export function bandsOf(day: Pick<MemoryDay, 'series'>, used: Account[], all: Account[]): Band[] {
   const bands: Band[] = [];
   const byKey = new Map<string, Band>();
   const add = (band: Omit<Band, 'colour'>) => {
@@ -170,20 +170,121 @@ export function bandColours(
   return colours;
 }
 
-/** A band's memory in one minute: its series added up. */
-export function bandAt(band: Band, minute: MemoryMinute): number {
-  let kib = 0;
-  for (const [n, v] of minute.s) if (band.series.includes(n)) kib += v;
-  return kib;
+/** The reading for each recorded minute, with its first maximum. Indices match the day's minute array. */
+interface Reading {
+  values: Float64Array;
+  peak: number;
+  peakIndex: number;
+}
+
+export interface MemoryReadings {
+  /** Whole-band and open session figures, including rows unchecked in the table. */
+  rows: Map<string, Reading>;
+  /** The same arrays for untouched groups, or separate arrays for partly hidden groups. */
+  shown: Map<string, Reading>;
+  total: Reading;
+  warden: Reading | null;
+}
+
+/** Aggregate the raw samples once for the table, figures, plot and guide. Closed groups need one array each. */
+export function memoryReadings(
+  day: Pick<MemoryDay, 'minutes' | 'series'>,
+  bands: Band[],
+  visible: Band[] = bands,
+  open?: ReadonlyMap<string, Band[]>,
+): MemoryReadings {
+  const { minutes } = day;
+  function reading(): Reading {
+    return { values: new Float64Array(minutes.length), peak: 0, peakIndex: minutes.length ? 0 : -1 };
+  }
+  interface Target {
+    row?: Reading;
+    partial?: Reading;
+    slice?: Reading;
+    shown?: true;
+    warden?: true;
+  }
+  const targets = new Map<number, Target>();
+  const rows = new Map<string, Reading>();
+  const shown = new Map<string, Reading>();
+  const visibleGroups = new Map(visible.map((b) => [b.key, b]));
+  for (const band of bands) {
+    const row = reading();
+    rows.set(band.key, row);
+    for (const id of band.series) targets.set(id, { row });
+    const active = visibleGroups.get(band.key);
+    if (active) {
+      const partial = active.series.length === band.series.length ? undefined : reading();
+      shown.set(band.key, partial ?? row);
+      for (const id of active.series) {
+        const target = targets.get(id)!;
+        target.shown = true;
+        target.partial = partial;
+      }
+    }
+    for (const slice of open?.get(band.key) ?? active?.slices ?? []) {
+      const detail = reading();
+      rows.set(slice.key, detail);
+      for (const id of slice.series) targets.get(id)!.slice = detail;
+    }
+  }
+  const total = reading();
+  let warden = rows.get('warden') ?? null;
+  for (const series of day.series) {
+    if (series.kind !== 'warden') continue;
+    const target = targets.get(series.series);
+    if (warden && target?.row === warden) continue;
+    warden ??= reading();
+    if (target) target.warden = true;
+    else targets.set(series.series, { warden: true });
+  }
+  // KiB values are nonnegative. A running sum can only reach its minute's maximum at its final value.
+  function add(to: Reading, index: number, kib: number): void {
+    const amount = (to.values[index]! += kib);
+    if (amount > to.peak) {
+      to.peak = amount;
+      to.peakIndex = index;
+    }
+  }
+  for (let i = 0; i < minutes.length; i++) {
+    const samples = minutes[i]!.s;
+    for (let j = 0; j < samples.length; j++) {
+      const sample = samples[j]!;
+      const target = targets.get(sample[0]);
+      if (!target) continue;
+      const kib = sample[1];
+      if (target.row) add(target.row, i, kib);
+      if (target.partial) add(target.partial, i, kib);
+      if (target.slice) add(target.slice, i, kib);
+      if (target.shown) add(total, i, kib);
+      if (target.warden) add(warden!, i, kib);
+    }
+  }
+  return { rows, shown, total, warden };
 }
 
 // ---- Figures ----
 
-export interface BandRow {
-  band: Band;
+export interface BandRow<T extends Band = Band> {
+  band: T;
   /** Today only: in the latest minute. */
   now: number | null;
   peak: number;
+}
+
+export function bandRows<T extends Band>(
+  day: MemoryDay,
+  bands: T[],
+  readings = memoryReadings(day, bands),
+): BandRow<T>[] {
+  return bands.map((band) => {
+    const reading = readings.rows.get(band.key)!;
+    return {
+      band,
+      now: day.today && day.minutes.length ? reading.values.at(-1)! : null,
+      peak: reading.peak,
+    };
+  });
 }
 
 export interface Figures {
@@ -205,70 +306,51 @@ export interface Figures {
 }
 
 /** The page's figures for the bands shown (`shown` holds their keys), and each band's row in the table. */
-export function figures(day: MemoryDay, bands: Band[], shown: Set<string>): Figures {
-  const last = day.minutes[day.minutes.length - 1] ?? null;
-  const rows = bands.map((band) => {
-    let peak = 0;
-    for (const m of day.minutes) peak = Math.max(peak, bandAt(band, m));
-    return { band, now: day.today && last ? bandAt(band, last) : null, peak };
-  });
-  const visible = bands.filter((b) => shown.has(b.key));
-  let peak: number | null = null;
-  let peakAt: number | null = null;
-  if (visible.length === bands.length && day.summary.peak !== null) {
-    // Every band: the total Warden recorded at once, not the bands' own highs in a minute added up.
-    peak = day.summary.peak;
-    peakAt = day.summary.peakAt;
-  } else
-    for (const m of day.minutes) {
-      const total = visible.reduce((sum, b) => sum + bandAt(b, m), 0);
-      if (peak === null || total > peak) {
-        peak = total;
-        peakAt = m.m;
-      }
-    }
-  const now = day.today && last ? visible.reduce((sum, b) => sum + bandAt(b, last), 0) : null;
-  const total = day.summary.computerTotal;
-  let used: number | null = null;
-  let usedTotal = total;
-  let usedAt: MemoryMinute | null = null;
-  if (day.today && last) {
-    used = last.used;
-    usedTotal = last.total;
-    usedAt = last;
-  } else
-    for (const m of day.minutes)
-      if (used === null || m.used > used) {
-        used = m.used;
-        usedTotal = m.total;
-        usedAt = m;
-      }
-  const wardenAt = wardenMemory(day);
-  let wardenPeak: Figures['wardenPeak'] = null;
-  if (wardenAt) {
-    for (const minute of day.minutes) {
-      const used = wardenAt(minute);
-      if (!wardenPeak || used > wardenPeak.used) wardenPeak = { used, at: minute.m };
+export function figures(
+  day: MemoryDay,
+  bands: Band[],
+  shown: Set<string>,
+  allAiShown = shown.size === bands.length,
+  visible = bands.filter((b) => shown.has(b.key)),
+  readings = memoryReadings(day, bands, visible),
+): Figures {
+  const { total, warden } = readings;
+  const last = day.minutes.length - 1;
+  const now = day.today && last >= 0 ? total.values[last]! : null;
+  let usedIndex = last;
+  if (!day.today) {
+    usedIndex = -1;
+    for (let i = 0; i <= last; i++) {
+      if (usedIndex < 0 || day.minutes[i]!.used > day.minutes[usedIndex]!.used) usedIndex = i;
     }
   }
+  const computer = day.minutes[usedIndex];
+  const peak = allAiShown && day.summary.peak !== null ? day.summary.peak : last >= 0 ? total.peak : null;
+  const peakAt =
+    allAiShown && day.summary.peak !== null ? day.summary.peakAt : (day.minutes[total.peakIndex]?.m ?? null);
   return {
     now,
-    nowShare: now === null ? '' : shareText(now, total),
+    nowShare: now === null ? '' : shareText(now, day.summary.computerTotal),
     peak,
     peakAt,
-    computer:
-      used !== null && usedTotal && usedAt
+    computer: computer?.total
+      ? {
+          used: computer.used,
+          total: computer.total,
+          high: computer.used / computer.total > 0.9,
+          ai: total.values[usedIndex]!,
+          at: computer.m,
+        }
+      : null,
+    warden: warden ? (day.today && last >= 0 ? warden.values[last]! : warden.peak) : null,
+    wardenPeak:
+      warden && warden.peakIndex >= 0
         ? {
-            used,
-            total: usedTotal,
-            high: used / usedTotal > 0.9,
-            ai: visible.reduce((sum, b) => sum + bandAt(b, usedAt), 0),
-            at: usedAt.m,
+            used: warden.peak,
+            at: day.minutes[warden.peakIndex]!.m,
           }
         : null,
-    warden: wardenAt ? (day.today && last ? wardenAt(last) : (wardenPeak?.used ?? 0)) : null,
-    wardenPeak,
-    rows,
+    rows: bandRows(day, bands, readings),
   };
 }
 
@@ -311,12 +393,14 @@ export interface ChartModel {
   to: number;
   /** The recorded minutes, in order. */
   minutes: MemoryMinute[];
+  readings: MemoryReadings;
   /** The shown bands, bottom first. */
   bands: Band[];
   /** The top of the scale (KiB) and its gridlines (three; two on the Overview's small chart). */
   top: number;
   grid: { kib: number; label: string }[];
   gaps: { from: number; to: number }[];
+  computer?: boolean;
 }
 
 /** Gridline steps in GB: `lines` of the smallest that reaches the peak make the scale. */
@@ -332,6 +416,8 @@ export function chartModel(
   shown: Set<string>,
   lines: 2 | 3 = 3,
   least = 60,
+  scale: MemoryScale = 'sessions',
+  readings?: MemoryReadings,
 ): ChartModel | null {
   const first = day.minutes[0];
   const last = day.minutes[day.minutes.length - 1];
@@ -343,103 +429,187 @@ export function chartModel(
     from = Math.max(0, to - least);
   }
   const visible = bands.filter((b) => shown.has(b.key));
-  let peak = 0;
-  for (const m of day.minutes)
-    peak = Math.max(
-      peak,
-      visible.reduce((sum, b) => sum + bandAt(b, m), 0),
-    );
-  const peakGb = peak / GIB;
-  const step = STEPS.find((s) => s * lines >= peakGb) ?? Math.ceil(peakGb / lines);
-  const top = step * lines * GIB;
+  readings ??= memoryReadings(day, visible);
+  const rows = readings.rows;
+  const ordered = visible.map((band) =>
+    band.slices?.length
+      ? { ...band, slices: [...band.slices].sort((a, b) => rows.get(b.key)!.peak - rows.get(a.key)!.peak) }
+      : band,
+  );
+  const computer = scale === 'computer' && last.total > 0;
+  let top = last.total;
+  let step: number;
+  if (computer) {
+    const room = top / GIB / lines;
+    step = room / 2;
+    for (const round of STEPS) {
+      if (round >= room) break;
+      step = round;
+    }
+  } else {
+    const peakGb = readings.total.peak / GIB;
+    step = STEPS.find((s) => s * lines >= peakGb) ?? Math.ceil(peakGb / lines);
+    top = step * lines * GIB;
+  }
   return {
     from,
     to,
     minutes: day.minutes,
-    bands: visible,
+    readings,
+    bands: ordered,
     top,
-    grid: Array.from({ length: lines }, (_, i) => i + 1).map((i) => ({
-      kib: step * i * GIB,
-      label: `${GRID.format(step * i)} GB`,
-    })),
+    grid: Array.from({ length: lines }, (_, i) => {
+      const kib = step * (i + 1) * GIB;
+      return { kib, label: `${GRID.format(kib / GIB)} GB` };
+    }),
     gaps: day.gaps,
+    computer,
   };
 }
 
-/** Runs of recorded minutes, so a path never joins the samples on either side of a gap. */
-function recordedRuns(minutes: MemoryMinute[]): MemoryMinute[][] {
-  const runs: MemoryMinute[][] = [];
-  for (const m of minutes) {
-    const run = runs[runs.length - 1];
-    const prev = run?.[run.length - 1];
-    if (run && prev && m.m === prev.m + 1) run.push(m);
-    else runs.push([m]);
+/** Computer memory in use over the stack, broken where nothing was recorded. */
+export function computerPath(model: ChartModel, width: number, chart: ChartSize): string {
+  if (!model.computer) return '';
+  const x = (m: number) => ((m - model.from) / (model.to - model.from)) * width;
+  const y = (kib: number) => chart.top + (1 - Math.min(kib, model.top) / model.top) * (chart.height - chart.top);
+  let path = '';
+  let last = -2;
+  for (const minute of model.minutes) {
+    const height = y(minute.used);
+    if (minute.m !== last + 1) {
+      if (last >= 0) path += `H${x(last + 1)}`;
+      path += `M${x(minute.m)},${height}`;
+    }
+    path += `L${x(minute.m + 0.5)},${height}`;
+    last = minute.m;
   }
-  return runs;
+  return last >= 0 ? `${path}H${x(last + 1)}` : '';
 }
 
-/** Warden's own memory at a recorded minute, when the day has a Warden series. */
-export function wardenMemory(day: MemoryDay): ((minute: MemoryMinute) => number) | null {
-  const series = new Set(day.series.filter((s) => s.kind === 'warden').map((s) => s.series));
-  return series.size ? (m) => m.s.reduce((sum, [n, v]) => sum + (series.has(n) ? v : 0), 0) : null;
-}
-
-/** A memory line and fill over the recorded span, in a 100 by 24 SVG view box. */
-export function memoryTrend(minutes: MemoryMinute[], valueAt: (minute: MemoryMinute) => number) {
+/** A trend over the recorded span in a 100 by 24 view box, from the same readings as the main chart. */
+export function memoryTrend(minutes: MemoryMinute[], reading: Reading) {
   const first = minutes[0];
-  const last = minutes[minutes.length - 1];
+  const last = minutes.at(-1);
   if (!first || !last) return null;
   const from = first.m;
-  const to = last.m + 1;
-  const x = (m: number) => (((m - from) / (to - from)) * 100).toFixed(2);
-  const runs = recordedRuns(minutes).map((run) => run.map((m) => ({ m: m.m, total: valueAt(m) })));
-  const peak = Math.max(1, ...runs.flat().map((run) => run.total));
-  const y = (total: number) => (22 - (total / peak) * 20).toFixed(2);
+  const span = last.m + 1 - from;
+  const peak = Math.max(1, reading.peak);
+  const x = (m: number) => (((m - from) / span) * 100).toFixed(2);
+  const y = (kib: number) => (22 - (kib / peak) * 20).toFixed(2);
   let line = '';
   let area = '';
-  for (const run of runs) {
-    const first = run[0]!;
-    const last = run[run.length - 1]!;
-    const start = x(first.m);
-    const end = x(last.m + 1);
-    const points = run.map(({ m, total }) => `L${x(m + 0.5)},${y(total)}`).join('');
-    const segment = `M${start},${y(first.total)}${points}H${end}`;
-    line += segment;
-    area += `${segment}V24H${start}Z`;
+  let segment = '';
+  let start = '';
+  let prev = -2;
+  function finishRun(end: number): void {
+    const run = `${segment}H${x(end)}`;
+    line += run;
+    area += `${run}V24H${start}Z`;
   }
+  for (let i = 0; i < minutes.length; i++) {
+    const minute = minutes[i]!.m;
+    const height = y(reading.values[i]!);
+    if (minute !== prev + 1) {
+      if (prev >= 0) finishRun(prev + 1);
+      start = x(minute);
+      segment = `M${start},${height}`;
+    }
+    segment += `L${x(minute + 0.5)},${height}`;
+    prev = minute;
+  }
+  finishRun(prev + 1);
   return { line, area };
 }
 
-/** Each shown band's area, as SVG paths over a plot `width` wide: a step per minute, broken where nothing was recorded. */
-export function bandPaths(
-  model: ChartModel,
-  width: number,
-  chart: ChartSize = CHART,
-): { key: string; colour: BandColour; area: string; edge: string }[] {
+interface BandPath {
+  key: string;
+  group?: string;
+  colour: BandColour;
+  area: string;
+  edge: string;
+}
+
+/** A step per minute, joining flat runs and reusing the top edge in the filled path. */
+export function bandPaths(model: ChartModel, width: number, chart: ChartSize = CHART): BandPath[] {
+  const { minutes, readings } = model;
   const span = model.to - model.from;
-  const x = (m: number) => ((m - model.from) / span) * width;
-  const y = (kib: number) => chart.top + (1 - Math.min(kib, model.top) / model.top) * (chart.height - chart.top);
-  const runs = recordedRuns(model.minutes);
-  const base = new Map<number, number>();
-  const n = (v: number) => Math.round(v * 100) / 100;
-  return model.bands.map((band) => {
+  const round = (v: number) => Math.round(v * 100) / 100;
+  const x = (m: number) => round(((m - model.from) / span) * width);
+  const y = (kib: number) => round(chart.top + (1 - Math.min(kib, model.top) / model.top) * (chart.height - chart.top));
+  const base = new Float64Array(minutes.length);
+  const top = new Float64Array(minutes.length);
+  const divided = model.bands.some((b) => b.slices?.length);
+  const sliceBase = divided ? new Float64Array(minutes.length) : base;
+  const sliceTop = divided ? new Float64Array(minutes.length) : top;
+  const paths: BandPath[] = [];
+
+  function stack(low: Float64Array, values: Float64Array, high: Float64Array): void {
+    for (let i = 0; i < minutes.length; i++) high[i] = low[i]! + values[i]!;
+  }
+  function steps(values: Float64Array, first: number, last: number, direction: 1 | -1): string {
+    const offset = direction === 1 ? 0 : 1;
+    let height = y(values[first]!);
+    let path = `${direction === 1 ? 'M' : 'L'}${x(minutes[first]!.m + offset)},${height}`;
+    for (let i = first; i !== last;) {
+      i += direction;
+      const next = y(values[i]!);
+      if (height !== next) {
+        path += `H${x(minutes[i]!.m + offset)}V${next}`;
+        height = next;
+      }
+    }
+    return `${path}H${x(minutes[last]!.m + 1 - offset)}`;
+  }
+  function draw(band: Band, reading: Reading, low: Float64Array, high: Float64Array, group?: string): void {
     let area = '';
     let edge = '';
-    for (const run of runs) {
-      const tops: string[] = [];
-      const bottoms: string[] = [];
-      for (const m of run) {
-        const below = base.get(m.m) ?? 0;
-        const above = below + bandAt(band, m);
-        base.set(m.m, above);
-        tops.push(`${n(x(m.m))},${n(y(above))}`, `${n(x(m.m + 1))},${n(y(above))}`);
-        bottoms.unshift(`${n(x(m.m + 1))},${n(y(below))}`, `${n(x(m.m))},${n(y(below))}`);
+    let i = 0;
+    while (i < minutes.length) {
+      if (group && !reading.values[i]) {
+        i++;
+        continue;
       }
-      area += `M${tops.join('L')}L${bottoms.join('L')}Z`;
-      edge += `M${tops.join('L')}`;
+      const first = i++;
+      while (i < minutes.length && minutes[i]!.m === minutes[i - 1]!.m + 1 && (!group || reading.values[i])) i++;
+      const last = i - 1;
+      const upper = steps(high, first, last, 1);
+      area += `${upper}${steps(low, last, first, -1)}Z`;
+      if (!group) {
+        edge += upper;
+        continue;
+      }
+      // A slice draws only the interior divider. Its group's edge already covers the outside.
+      let j = first;
+      while (j <= last) {
+        if (high[j]! >= top[j]!) {
+          j++;
+          continue;
+        }
+        const start = j++;
+        while (j <= last && high[j]! < top[j]!) j++;
+        edge += steps(high, start, j - 1, 1);
+      }
     }
-    return { key: band.key, colour: band.colour, area, edge };
-  });
+    paths.push({ key: band.key, group, colour: band.colour, area, edge });
+  }
+
+  for (const band of model.bands) {
+    const reading = readings.shown.get(band.key)!;
+    stack(base, reading.values, top);
+    draw(band, reading, base, top);
+    if (band.slices?.length) {
+      sliceBase.set(base);
+      for (const slice of band.slices) {
+        const values = readings.rows.get(slice.key)!;
+        if (!values.peak) continue;
+        stack(sliceBase, values.values, sliceTop);
+        draw(slice, values, sliceBase, sliceTop, band.key);
+        sliceBase.set(sliceTop);
+      }
+    }
+    base.set(top);
+  }
+  return paths;
 }
 
 /** The axis's label steps in minutes: a quarter of an hour to three hours. */
@@ -515,36 +685,77 @@ export function endAxis(model: ChartModel, width: number): Axis {
   };
 }
 
+interface GuideReading {
+  key: string;
+  label: string;
+  kib: number;
+}
+
 export interface Guide {
   time: string;
-  /** Each shown band that ran that day, top first; empty in a minute with no recording. */
-  rows: { key: string; label: string; kib: number }[];
+  rows: (GuideReading & {
+    sessions?: GuideReading[];
+    more?: { count: number; kib: number };
+  })[];
   total: number;
-  /** A minute with no recording: Warden was not running (a gap), or nothing was recorded (before the first). */
+  computer?: number;
+  /** A minute with no recording: Warden was not running (a gap), or nothing was recorded. */
   missing: 'not-running' | 'nothing' | null;
 }
 
-/** What the guide says at a minute of the span: the time, each shown band and their total, or why there is none. */
-export function guideAt(model: ChartModel, m: number, ran: Set<string>): Guide {
-  const minute = model.minutes.find((x) => x.m === m);
-  if (!minute) {
+/** The complete account stack and up to five sessions from each open band at the chosen minute. */
+export function guideAt(model: ChartModel, m: number): Guide {
+  const index = model.minutes.findIndex((minute) => minute.m === m);
+  if (index < 0) {
     const gap = model.gaps.some((g) => m >= g.from && m < g.to);
     return { time: clock(m), rows: [], total: 0, missing: gap ? 'not-running' : 'nothing' };
   }
+  const { readings } = model;
+  const entry = (band: Band, reading: Reading): GuideReading => ({
+    key: band.key,
+    label: band.label,
+    kib: reading.values[index]!,
+  });
+  const largest = (a: GuideReading, b: GuideReading) => b.kib - a.kib;
   const rows = model.bands
-    .filter((b) => ran.has(b.key))
-    .map((b) => ({ key: b.key, label: b.label, kib: bandAt(b, minute) }))
-    .reverse();
-  return { time: clock(m), rows, total: rows.reduce((sum, r) => sum + r.kib, 0), missing: null };
+    .map((band) => {
+      const row = entry(band, readings.shown.get(band.key)!);
+      if (!band.slices?.length) return row;
+      const sessions = band.slices
+        .map((slice) => entry(slice, readings.rows.get(slice.key)!))
+        .filter((s) => s.kib > 0)
+        .sort(largest);
+      const more = sessions.slice(5);
+      return {
+        ...row,
+        sessions: sessions.slice(0, 5),
+        ...(more.length ? { more: { count: more.length, kib: more.reduce((sum, r) => sum + r.kib, 0) } } : {}),
+      };
+    })
+    .sort(largest);
+  return {
+    time: clock(m),
+    rows,
+    total: readings.total.values[index]!,
+    ...(model.computer ? { computer: model.minutes[index]!.used } : {}),
+    missing: null,
+  };
 }
 
 export const MISSING_TEXT = { 'not-running': 'Warden not running', nothing: 'Nothing recorded' } as const;
 
-/** The guide's words for assistive technology: "14:12: Main 2.1 GB, Claude 2 1.2 GB, total 3.3 GB". */
+/** The guide's words for assistive technology, including which group contains each session. */
 export function guideText(g: Guide): string {
   if (g.missing) return `${g.time}: ${MISSING_TEXT[g.missing]}`;
-  const parts = g.rows.map((r) => `${r.label} ${size(r.kib)}`);
-  return `${g.time}: ${[...parts, `total ${size(g.total)}`].join(', ')}`;
+  const parts = g.rows.flatMap((r) => {
+    const lines = [`${r.label} ${size(r.kib)}`];
+    for (const s of r.sessions ?? []) lines.push(`${s.label} under ${r.label} ${size(s.kib)}`);
+    if (r.more) lines.push(`${r.more.count} more, ${size(r.more.kib)} included in ${r.label}`);
+    return lines;
+  });
+  parts.push(`total ${size(g.total)}`);
+  if (g.computer !== undefined) parts.push(`Computer in use ${size(g.computer)}`);
+  return `${g.time}: ${parts.join(', ')}`;
 }
 
 /**
@@ -552,7 +763,40 @@ export function guideText(g: Guide): string {
  * minute too, when the clock went back an hour), the rest stay, in order.
  */
 export function mergeToday(day: MemoryDay, later: MemoryDay): MemoryDay {
-  const brought = new Set(later.minutes.map((m) => m.m));
-  const minutes = [...day.minutes.filter((m) => !brought.has(m.m)), ...later.minutes].sort((a, b) => a.m - b.m);
-  return { ...later, minutes };
+  let minutes = day.minutes;
+  if (later.minutes.length) {
+    // The API supplies both lists in order. A new reading wins when the lists name the same minute.
+    minutes = [];
+    let before = 0;
+    let after = 0;
+    while (before < day.minutes.length || after < later.minutes.length) {
+      const held = day.minutes[before];
+      const update = later.minutes[after];
+      if (!update || (held && held.m < update.m)) {
+        minutes.push(held!);
+        before++;
+      } else {
+        minutes.push(update);
+        after++;
+        if (held?.m === update.m) before++;
+      }
+    }
+  }
+  const sameSeries =
+    day.series.length === later.series.length &&
+    later.series.every((s, i) => {
+      const old = day.series[i]!;
+      return (
+        s.series === old.series &&
+        s.kind === old.kind &&
+        s.provider === old.provider &&
+        s.accountId === old.accountId &&
+        s.account === old.account &&
+        s.sessionId === old.sessionId &&
+        s.parentSessionId === old.parentSessionId &&
+        s.name === old.name &&
+        s.project === old.project
+      );
+    });
+  return { ...later, minutes, series: sameSeries ? day.series : later.series };
 }

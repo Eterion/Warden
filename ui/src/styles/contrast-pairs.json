@@ -1392,6 +1392,18 @@
     "use": "the Memory chart's band of the hovered table row, against the panel"
   },
   {
+    "fg": "chart-warden",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "Warden's band and the legend and table swatches on the panel"
+  },
+  {
+    "fg": "text",
+    "bg": ["panel"],
+    "min": 3,
+    "use": "the Memory chart's Computer in use line and its legend mark"
+  },
+  {
     "fg": "chart-hover",
     "bg": ["panel", "row-hover"],
     "min": 3,
@@ -1630,5 +1642,89 @@
     "bg": ["panel", "row-press", "track", "panel"],
     "min": 3,
     "use": "Now bar against its panel-colour edge on a pressed row"
+  },
+  {
+    "fg": "chart-warden",
+    "bg": ["panel", "track", "panel"],
+    "min": 3,
+    "use": "Warden's Now bar against its panel-colour edge at rest"
+  },
+  {
+    "fg": "chart-warden",
+    "bg": ["panel", "row-hover", "track", "panel"],
+    "min": 3,
+    "use": "Warden's Now bar against its panel-colour edge on a hovered row"
+  },
+  {
+    "fg": "chart-warden",
+    "bg": ["panel", "row-press", "track", "panel"],
+    "min": 3,
+    "use": "Warden's Now bar against its panel-colour edge on a pressed row"
+  },
+  {
+    "fg": "chart-hover-outline",
+    "bg": ["chart-claude-1"],
+    "min": 3,
+    "use": "outline on a highlighted band, against its fill or the band it replaces"
+  },
+  {
+    "fg": "chart-hover-outline",
+    "bg": ["chart-claude-2"],
+    "min": 3,
+    "use": "outline on a highlighted band, against its fill or the band it replaces"
+  },
+  {
+    "fg": "chart-hover-outline",
+    "bg": ["chart-claude-3"],
+    "min": 3,
+    "use": "outline on a highlighted band, against its fill or the band it replaces"
+  },
+  {
+    "fg": "chart-hover-outline",
+    "bg": ["chart-codex-1"],
+    "min": 3,
+    "use": "outline on a highlighted band, against its fill or the band it replaces"
+  },
+  {
+    "fg": "chart-hover-outline",
+    "bg": ["chart-codex-2"],
+    "min": 3,
+    "use": "outline on a highlighted band, against its fill or the band it replaces"
+  },
+  {
+    "fg": "chart-hover-outline",
+    "bg": ["chart-codex-3"],
+    "min": 3,
+    "use": "outline on a highlighted band, against its fill or the band it replaces"
+  },
+  {
+    "fg": "chart-hover-outline",
+    "bg": ["chart-other-sign-in"],
+    "min": 3,
+    "use": "outline on a highlighted band, against its fill or the band it replaces"
+  },
+  {
+    "fg": "chart-hover-outline",
+    "bg": ["chart-left"],
+    "min": 3,
+    "use": "outline on a highlighted band, against its fill or the band it replaces"
+  },
+  {
+    "fg": "chart-hover-outline",
+    "bg": ["chart-warden"],
+    "min": 3,
+    "use": "outline on a highlighted band, against its fill or the band it replaces"
+  },
+  {
+    "fg": "chart-hover-outline",
+    "bg": ["chart-hover"],
+    "min": 3,
+    "use": "outline on a highlighted band, against its fill or the band it replaces"
+  },
+  {
+    "fg": "chart-warden",
+    "bg": ["panel", "row-hover"],
+    "min": 3,
+    "use": "Warden's swatch in the Memory table on a hovered row"
   }
 ]

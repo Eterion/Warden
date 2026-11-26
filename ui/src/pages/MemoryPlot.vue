@@ -2,11 +2,20 @@
 // The memory chart's drawing, in SVG (no chart library), shared by the Memory page's chart (MemoryChart) and the
 // Overview's small one (MemoryCard): the minutes Warden was not running as an empty band, named on one line or two
 // where that fits; faint gridlines labelled in GB; a stacked band per account (coloured by provider, greys for the
-// groups, the `hovered` band in chart-hover), each edged by a thin line in the panel's colour; the baseline with its
-// ticks and times; and the guide's line at `guideX` when there is one. Decoration only: whoever holds it says what it
+// groups), with panel-colour edges and optional session slices. Hovered fills get a contrasting outline. The whole
+// computer scale adds the Computer in use line. The baseline has ticks and times. The guide's line sits at `guideX`.
+// Decoration only: whoever holds it says what it
 // shows. `width` is the plot's, beside the gutter; `chart` its size.
 import { computed } from 'vue';
-import { MISSING_TEXT, bandPaths, type Axis, type BandColour, type ChartModel, type ChartSize } from '../memory';
+import {
+  MISSING_TEXT,
+  bandPaths,
+  computerPath,
+  type Axis,
+  type BandColour,
+  type ChartModel,
+  type ChartSize,
+} from '../memory';
 
 const props = defineProps<{
   model: ChartModel;
@@ -26,6 +35,7 @@ const FILL: Record<BandColour, string> = {
   'codex-3': 'fill-chart-codex-3',
   'other-sign-in': 'fill-chart-other-sign-in',
   left: 'fill-chart-left',
+  warden: 'fill-chart-warden',
 };
 const ANCHOR = { start: 'start', end: 'end', middle: 'middle' } as const;
 
@@ -34,6 +44,8 @@ const x = (m: number) => props.chart.gutter + ((m - props.model.from) / span.val
 const y = (kib: number) => props.chart.top + (1 - kib / props.model.top) * (props.chart.height - props.chart.top);
 
 const paths = computed(() => bandPaths(props.model, props.width, props.chart));
+const outline = computed(() => paths.value.find((p) => p.key === props.hovered)?.area ?? '');
+const computer = computed(() => computerPath(props.model, props.width, props.chart));
 /** A gap's label: on one line where it fits, on two ("Warden", "not running") in a narrower gap, none in a sliver. */
 const GAP_ONE_LINE = 120;
 const GAP_TWO_LINES = 76;
@@ -124,16 +136,27 @@ const middle = computed(() => props.chart.top + (props.chart.height - props.char
         v-for="p in paths"
         :key="p.key"
         :d="p.area"
-        :class="props.hovered === p.key ? 'fill-chart-hover' : FILL[p.colour]"
-        :data-band="p.key"
+        :class="props.hovered === p.key || (p.group && props.hovered === p.group) ? 'fill-chart-hover' : FILL[p.colour]"
+        :data-band="p.group ? undefined : p.key"
+        :data-slice="p.group ? p.key : undefined"
       />
       <path
         v-for="p in paths"
         :key="`${p.key}-edge`"
         :d="p.edge"
+        :data-slice-edge="p.group && p.edge ? p.key : undefined"
         class="fill-none stroke-panel"
         stroke-width="1"
         stroke-linejoin="round"
+      />
+      <path v-if="computer" :d="computer" class="fill-none stroke-text" data-computer-line />
+      <path
+        v-if="outline"
+        :d="outline"
+        class="fill-none stroke-chart-hover-outline"
+        stroke-width="2"
+        stroke-linejoin="round"
+        data-memory-highlight
       />
     </g>
     <!-- The baseline over the bands' feet, its ticks (longer under a label) and the times. -->

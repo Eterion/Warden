@@ -35,6 +35,8 @@ export function state(accounts: Account[]): State {
       pageTransitions: true,
       hiddenResetAccounts: [],
       soonestResetOnly: false,
+      memoryScale: 'sessions',
+      memoryFilter: { hiddenAccounts: [], showLeft: true, showWarden: false },
     },
     main: main ? { ...main, signIn: { state: 'signedIn', email: main.identity?.email ?? null } } : null,
     accounts: accounts.filter((a) => a.id !== 'main'),

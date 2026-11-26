@@ -30,7 +30,7 @@ function heldServer() {
 describe('apply', () => {
   it('takes the new state, marks the server reachable and sets the theme on the page', () => {
     store.connected = false;
-    const next = {
+    const next: State = {
       ...state([]),
       settings: {
         reserve: 25,
@@ -43,6 +43,8 @@ describe('apply', () => {
         pageTransitions: true,
         hiddenResetAccounts: [],
         soonestResetOnly: false,
+        memoryScale: 'sessions',
+        memoryFilter: { hiddenAccounts: [], showLeft: true, showWarden: false },
       },
     };
     apply(next);

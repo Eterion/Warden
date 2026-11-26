@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
-import type { MemoryDay, MemoryMinute, MemorySeries, MemoryWait } from '../api';
+import type { MemoryDay, MemoryMinute, MemorySeries, MemoryWait, SettingsPatch } from '../api';
 import { isoDay } from '../memory';
 import { go, route } from '../route';
 import { store } from '../store';
@@ -85,10 +85,16 @@ const busyDay = (date: string) =>
   ]);
 
 /** A stand-in server: the day asked for, and today's waits answered from a queue (or held open). */
-function server(days: Record<string, MemoryDay>, waits: MemoryWait[] = []) {
+function server(days: Record<string, MemoryDay>, waits: MemoryWait[] = [], saves: SettingsPatch[] = []) {
   const asked: string[] = [];
   vi.stubGlobal('fetch', (path: string, init: RequestInit = {}) => {
     asked.push(path);
+    if (path === '/api/settings' && typeof init.body === 'string') {
+      const patch: SettingsPatch = JSON.parse(init.body);
+      saves.push(patch);
+      const current = store.state!;
+      return Promise.resolve(new Response(JSON.stringify({ ...current, settings: { ...current.settings, ...patch } })));
+    }
     const date = /date=([\d-]+)/.exec(path)?.[1];
     if (date) {
       const d = days[date] ?? day(date, []);
@@ -139,6 +145,154 @@ describe('the address', () => {
 });
 
 describe('MemoryPage', () => {
+  it('remembers scale and filter, while keeping group checks local to the page', async () => {
+    const saves: SettingsPatch[] = [];
+    server({ [TODAY]: busyDay(TODAY), [PAST]: busyDay(PAST) }, [], saves);
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    const choose = async (label: string) => {
+      await page
+        .findAll('[role=radio]')
+        .find((r) => r.text() === label)!
+        .trigger('click');
+      await flushPromises();
+    };
+    await choose('Whole computer');
+    expect(saves).toEqual([{ memoryScale: 'computer' }]);
+    expect(page.find('[data-computer-line]').exists()).toBe(true);
+    expect(page.find('[data-memory-hidden]').exists()).toBe(false);
+    await page.get('button[aria-label="Filter memory"]').trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    const items = page.findAll('[role=menuitemcheckbox]');
+    expect(items.map((item) => item.text().replace(/\s+/g, ' '))).toEqual([
+      'Main 1, 1 session',
+      'Work 1, 1 session',
+      'Other sign-in 0, 0 sessions',
+      'Left running 0, 0 sessions',
+      'Warden itself',
+    ]);
+    await items[1]!.trigger('click');
+    expect(page.get('[data-memory-filter-status]').text()).toBe('1 hidden');
+    await items[4]!.trigger('click');
+    await flushPromises();
+    expect(saves.at(-1)).toEqual({ memoryFilter: { hiddenAccounts: ['a1'], showLeft: true, showWarden: true } });
+    expect(page.find('[data-band-row="account:a1"]').exists()).toBe(false);
+    expect(page.find('[data-band="warden"]').exists()).toBe(true);
+    expect(page.find('[data-legend-band="warden"]').exists()).toBe(true);
+    const guide = page.get('[data-memory-chart]');
+    await guide.trigger('focus');
+    expect(guide.attributes('aria-valuetext')).toContain('Warden itself 9 MB');
+    expect(figure(page, 'now')?.[0]).toBe('AI sessions now');
+    expect(page.get('[data-memory-hidden]').text()).toBe('1 hidden');
+    expect(page.get('[data-meter-text]').text()).toMatch(/^AI sessions /);
+    await page.get('[data-band-row="warden"] button').trigger('click');
+    expect(page.find('[data-band="warden"]').exists()).toBe(false);
+    expect(saves).toHaveLength(3);
+    go(`memory/${PAST}`);
+    await flushPromises();
+    expect(page.find('[data-computer-line]').exists()).toBe(true);
+    expect(page.find('[aria-label="Memory by account"] [data-band-row="warden"]').exists()).toBe(true);
+    page.unmount();
+    const reopened = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    expect(reopened.find('[data-band="warden"]').exists()).toBe(true);
+    expect(reopened.find('[data-band-row="account:a1"]').exists()).toBe(false);
+    reopened.unmount();
+  });
+
+  it('opens account details by peak, keeps them across days, and highlights and checks individual slices', async () => {
+    const detailed = (date: string) =>
+      day(
+        date,
+        [
+          minute(540, [
+            [1, GIB],
+            [2, GIB],
+            [4, 2 * GIB],
+            [5, 256 * 1024],
+            [6, 512 * 1024],
+          ]),
+        ],
+        {
+          series: [
+            { ...series(1, 'session', 'main'), name: 'Fix login' },
+            { ...series(2, 'session', 'a1'), name: 'Review login', parentSessionId: 's1' },
+            { ...series(4, 'session', 'main'), name: 'Run the build' },
+            { ...series(5, 'left', 'a1'), name: 'Review login', sessionId: 's2', parentSessionId: 's1' },
+            { ...series(6, 'other-sign-in', null), name: 'Read the logs', provider: 'codex' },
+          ],
+        },
+      );
+    server({ [TODAY]: detailed(TODAY), [PAST]: detailed(PAST) });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    const main = () => page.get('[data-band-row="account:main"]');
+    const mainCheck = () => main().get('[role=checkbox]');
+    const first = () => page.get('[data-band-row="account:main:claude:s4"]');
+    const slice = () => page.get('[data-slice="account:main:claude:s4"]');
+    const disclosure = () => main().get('[aria-expanded]');
+    const open = async (group: string) => page.get(`[aria-label="Show the sessions of ${group}"]`).trigger('click');
+    const now = () => page.get('[data-figure="now"] strong').text();
+    expect(disclosure().attributes('aria-expanded')).toBe('false');
+    expect(page.find('[data-session-of]').exists()).toBe(false);
+    expect(page.find('[data-slice]').exists()).toBe(false);
+    await open('Main');
+    expect(disclosure().attributes('aria-expanded')).toBe('true');
+    expect(disclosure().attributes('aria-label')).toBe('Hide the sessions of Main');
+    expect(mainCheck().attributes('aria-checked')).toBe('true');
+    expect(page.findAll('[data-session-of="account:main"]').map((r) => r.get('[title]').text())).toEqual([
+      'Run the build',
+      'Fix login',
+    ]);
+    expect(page.find('[data-slice-edge]').exists()).toBe(true);
+    expect(slice().classes()).toContain('fill-chart-claude-1');
+    await first().trigger('pointerover');
+    expect(slice().classes()).toContain('fill-chart-hover');
+    expect(page.get('[data-memory-highlight]').classes()).toContain('stroke-chart-hover-outline');
+    expect(page.get('[data-band="account:main"]').classes()).toContain('fill-chart-claude-1');
+    await first().trigger('pointerout');
+    await first().get('[role=checkbox]').trigger('focusin');
+    expect(slice().classes()).toContain('fill-chart-hover');
+    expect(page.get('[data-memory-highlight]').classes()).toContain('stroke-chart-hover-outline');
+    await first().get('[role=checkbox]').trigger('focusout');
+    await main().trigger('pointerover');
+    expect(page.findAll('[data-slice]').every((s) => s.classes().includes('fill-chart-hover'))).toBe(true);
+    await main().trigger('pointerout');
+    expect(now()).toBe('4.8 GB');
+    await first().get('[role=checkbox]').trigger('click');
+    expect(mainCheck().attributes('aria-checked')).toBe('mixed');
+    expect(page.find('[data-slice="account:main:claude:s4"]').exists()).toBe(false);
+    expect(now()).toBe('2.8 GB');
+    await disclosure().trigger('click');
+    expect(mainCheck().attributes('aria-checked')).toBe('mixed');
+    expect(page.find('[data-slice]').exists()).toBe(false);
+    await mainCheck().trigger('click');
+    expect(now()).toBe('4.8 GB');
+    await open('Main');
+    await mainCheck().trigger('click');
+    expect(mainCheck().attributes('aria-checked')).toBe('false');
+    expect(page.find('[data-band="account:main"]').exists()).toBe(false);
+    await first().get('[role=checkbox]').trigger('click');
+    expect(mainCheck().attributes('aria-checked')).toBe('mixed');
+    expect(now()).toBe('3.8 GB');
+    await open('Work');
+    await open('Left running');
+    await open('Other sign-in');
+    expect(page.get('[data-session-of="account:a1"]').text()).toContain('from Fix login');
+    expect(page.get('[data-session-of="left"]').text()).toContain('Review login');
+    expect(page.find('[data-session-of="other-sign-in"] [aria-label="Codex"]').exists()).toBe(true);
+    go(`memory/${PAST}`);
+    await flushPromises();
+    expect(disclosure().attributes('aria-expanded')).toBe('true');
+    expect(mainCheck().attributes('aria-checked')).toBe('mixed');
+    expect(page.find('[data-session-of="left"]').exists()).toBe(true);
+    page.unmount();
+    const reopened = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    expect(reopened.find('[data-session-of]').exists()).toBe(false);
+    reopened.unmount();
+  });
+
   it('shows today: the figures, the chart and the table, Next and Today saying why they do nothing', async () => {
     server({ [TODAY]: busyDay(TODAY) });
     const page = mount(MemoryPage, { attachTo: document.body });
@@ -269,9 +423,9 @@ describe('MemoryPage', () => {
     expect(figure(page, 'peak')?.[1]).toBe('2 GB');
     // The row stays, with its own figures.
     expect(page.get('[data-band-row="account:a1"]').text()).toContain('1 GB');
-    await page.get('[data-band-row="account:main"]').trigger('pointerenter');
+    await page.get('[data-band-row="account:main"]').trigger('pointerover');
     expect(page.get('[data-band="account:main"]').classes()).toContain('fill-chart-hover');
-    await page.get('[data-band-row="account:main"]').trigger('pointerleave');
+    await page.get('[data-band-row="account:main"]').trigger('pointerout');
     expect(page.get('[data-band="account:main"]').classes()).toContain('fill-chart-claude-1');
     await box.trigger('click');
     expect(item.classes()).not.toContain('text-tertiary');
@@ -312,7 +466,7 @@ describe('MemoryPage', () => {
     server({ [TODAY]: busyDay(TODAY) });
     const page = mount(MemoryPage, { attachTo: document.body });
     await flushPromises();
-    const swatch = (key: string) => page.get(`[data-band-row="${key}"] [role=cell] > span[aria-hidden]`).classes();
+    const swatch = (key: string) => page.get(`[data-band-row="${key}"] [data-memory-swatch]`).classes();
     expect(page.get('[data-band="account:main"]').classes()).toContain('fill-chart-claude-1');
     expect(page.get('[data-band="account:a1"]').classes()).toContain('fill-chart-claude-2');
     expect(swatch('account:a1')).toContain('bg-chart-claude-2');
@@ -351,7 +505,7 @@ describe('MemoryPage', () => {
     });
     const page = mount(MemoryPage, { attachTo: document.body });
     await flushPromises();
-    const swatch = (key: string) => page.get(`[data-band-row="${key}"] [role=cell] > span[aria-hidden]`).classes();
+    const swatch = (key: string) => page.get(`[data-band-row="${key}"] [data-memory-swatch]`).classes();
     const expectShades = (ids: string[]) => {
       for (const id of ids) {
         const shade = { x1: 'codex-1', x2: 'codex-2', x3: 'codex-3', x4: 'codex-1' }[id];
@@ -373,9 +527,9 @@ describe('MemoryPage', () => {
     const chart = page.get('[data-memory-chart]');
     expect(chart.attributes('role')).toBe('slider');
     await chart.trigger('focus');
-    expect(chart.attributes('aria-valuetext')).toBe('09:02: Work 0 MB, Main 1 GB, total 1 GB');
+    expect(chart.attributes('aria-valuetext')).toBe('09:02: Main 1 GB, Work 0 MB, total 1 GB');
     await chart.trigger('keydown', { key: 'Home' });
-    expect(chart.attributes('aria-valuetext')).toBe('09:00: Work 1 GB, Main 2 GB, total 3 GB');
+    expect(chart.attributes('aria-valuetext')).toBe('09:00: Main 2 GB, Work 1 GB, total 3 GB');
     expect(page.get('[data-guide-tip]').text()).toContain('Total3 GB');
     await chart.trigger('keydown', { key: 'ArrowRight' });
     expect(chart.attributes('aria-valuenow')).toBe('541');
@@ -441,7 +595,7 @@ describe('MemoryPage', () => {
     expect(chart.attributes('aria-valuetext')).toBe('09:01: Warden not running');
     expect(page.get('[data-guide-tip]').text()).toBe('09:01Warden not running');
     for (let i = 0; i < 4; i++) await chart.trigger('keydown', { key: 'ArrowRight' });
-    expect(chart.attributes('aria-valuetext')).toMatch(/^09:05: Work 0 MB, Main 1 GB/);
+    expect(chart.attributes('aria-valuetext')).toMatch(/^09:05: Main 1 GB/);
     page.unmount();
   });
 
@@ -518,6 +672,7 @@ describe('MemoryPage', () => {
   });
 
   it('today, once nothing runs any more, says so above the chart of the day', async () => {
+    store.state!.settings.memoryFilter.showWarden = true;
     const idle = busyDay(TODAY);
     idle.minutes = [...idle.minutes, minute(543, [[3, 9 * 1024]])];
     server({ [TODAY]: idle });
@@ -525,9 +680,9 @@ describe('MemoryPage', () => {
     await flushPromises();
     expect(page.get('[data-memory-none-now]').text()).toBe('No AI sessions are running.');
     expect(page.find('[data-memory-chart]').exists()).toBe(true);
-    expect(figure(page, 'now')?.[1]).toBe('0 MB');
-    expect(page.findAll('[data-now-track]')).toHaveLength(2);
-    expect(page.find('[data-now-meter]').exists()).toBe(false);
+    expect(figure(page, 'now')?.[1]).toBe('9 MB');
+    expect(page.findAll('[data-now-track]')).toHaveLength(3);
+    expect(page.findAll('[data-now-meter]')).toHaveLength(1);
     page.unmount();
   });
 
@@ -547,6 +702,7 @@ describe('MemoryPage', () => {
     await flushPromises();
     expect(page.get('[data-memory-empty]').text()).toBe('Nothing recorded on this day.');
     expect(page.find('[data-memory-table]').exists()).toBe(false);
+    expect(page.find('[data-memory-controls]').exists()).toBe(false);
     page.unmount();
   });
 
@@ -557,6 +713,31 @@ describe('MemoryPage', () => {
     expect(page.get('[data-memory-none]').text()).toBe('No AI sessions are running.');
     expect(figure(page, 'computer')).toEqual(['Computer', '12 GB', '38% of 32 GB']);
     expect(page.find('[data-memory-chart]').exists()).toBe(false);
+    page.unmount();
+  });
+  it('keeps the quiet-day message and controls with Warden included', async () => {
+    store.state!.settings.memoryFilter.showWarden = true;
+    server({ [TODAY]: day(TODAY, [minute(540, [[3, 9 * 1024]])], { series: [series(3, 'warden', null)] }) });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    expect(page.get('[data-memory-none-now]').text()).toBe('No AI sessions are running.');
+    expect(page.find('[data-memory-controls]').exists()).toBe(true);
+    expect(page.find('[data-band="warden"]').exists()).toBe(true);
+    expect(figure(page, 'now')).toEqual(['AI sessions now', '9 MB', '<1% of 32 GB']);
+    page.unmount();
+  });
+
+  it('announces when the filter leaves everything out', async () => {
+    const todayOnly = day(TODAY, [minute(540, [[1, GIB]])], { series: [series(1, 'session', 'main')] });
+    server({ [TODAY]: todayOnly });
+    const page = mount(MemoryPage, { attachTo: document.body });
+    await flushPromises();
+    await page.get('button[aria-label="Filter memory"]').trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    await page.get('[role=menuitemcheckbox]').trigger('click');
+    await flushPromises();
+    expect(page.get('[data-memory-filter-status]').text()).toBe('The filter leaves out everything.');
+    expect(page.get('[data-memory-all-hidden]').text()).toBe('The filter leaves out everything.');
     page.unmount();
   });
 });

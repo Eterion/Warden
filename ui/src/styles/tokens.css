@@ -134,7 +134,9 @@
   --color-chart-codex-3: light-dark(#334a70, #5b769e);
   --color-chart-other-sign-in: light-dark(#8b8b94, #68686f);
   --color-chart-left: light-dark(#35353a, #d7d7de);
+  --color-chart-warden: light-dark(#626269, #a0a0a9);
   --color-chart-hover: light-dark(#09090b, #fafafa);
+  --color-chart-hover-outline: light-dark(#ffffff, #000000);
   --color-chart-gap: light-dark(#fafafa, rgba(255, 255, 255, 0.035));
   /* The chart's baseline and its ticks: firmer than the gridlines, 3:1 on the panel and on the empty band. */
   --color-axis: light-dark(#8a8a93, #71717a);

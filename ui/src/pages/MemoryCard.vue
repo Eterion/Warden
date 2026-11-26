@@ -5,7 +5,7 @@ import { useElementSize } from '@vueuse/core';
 import { computed, useTemplateRef } from 'vue';
 import WWidget from '../components/WWidget.vue';
 import { clock } from '../format';
-import { CHART_SMALL, anyRan, bandsOf, chartModel, endAxis, figures, isoDay, size } from '../memory';
+import { CHART_SMALL, anyRan, bandsOf, chartModel, endAxis, figures, isoDay, memoryReadings, size } from '../memory';
 import { useMemoryDay } from '../memoryDay';
 import { store, usedAccounts } from '../store';
 import MemoryPlot from './MemoryPlot.vue';
@@ -16,13 +16,28 @@ const { data, error } = useMemoryDay(today);
 const all = computed(() =>
   store.state ? [...(store.state.main ? [store.state.main] : []), ...store.state.accounts] : [],
 );
-const bands = computed(() => (data.value ? bandsOf(data.value, usedAccounts(store.state), all.value) : []));
+const series = computed(() => data.value?.series);
+const minutes = computed(() => data.value?.minutes);
+const bands = computed(() =>
+  series.value ? bandsOf({ series: series.value }, usedAccounts(store.state), all.value) : [],
+);
 /** Every band: the card leaves none out. */
 const every = computed(() => new Set(bands.value.map((b) => b.key)));
-const figs = computed(() => (data.value ? figures(data.value, bands.value, every.value) : null));
+const readings = computed(() =>
+  minutes.value && series.value ? memoryReadings({ minutes: minutes.value, series: series.value }, bands.value) : null,
+);
+const figs = computed(() =>
+  data.value && readings.value
+    ? figures(data.value, bands.value, every.value, true, bands.value, readings.value)
+    : null,
+);
 /** Some AI session ran today: the figures and the chart show, else the line saying none is running. */
 const ran = computed(() => !!figs.value && anyRan(figs.value.rows));
-const model = computed(() => (data.value ? chartModel(data.value, bands.value, every.value, 2, 1) : null));
+const model = computed(() =>
+  data.value && readings.value
+    ? chartModel(data.value, bands.value, every.value, 2, 1, 'sessions', readings.value)
+    : null,
+);
 
 const box = useTemplateRef<HTMLElement>('box');
 const { width: boxWidth } = useElementSize(box);

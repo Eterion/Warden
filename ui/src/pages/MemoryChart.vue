@@ -1,12 +1,8 @@
 <script setup lang="ts">
-// The Memory page's chart, drawn by hand in SVG (MemoryPlot, no chart library): the minutes across the day's recorded
-// span along a baseline with ticks and time labels (`timeAxis`), with three faint horizontal gridlines labelled in GB.
-// It shows a stacked band per account (coloured by provider, greys for the groups,
-// the band of the hovered table row in chart-hover), each divided from the next by a thin line in the panel's colour,
-// and the minutes Warden was not running as an empty band, named on one line or two where that fits. A guide follows
-// the pointer, with a tooltip for the shown bands and their total at that minute. The chart is a keyboard slider with
-// the same words as its value (arrows move a minute, Page Up and Page Down an hour, Home and End to the first and last
-// recording). Escape hides the tooltip. The table below is its accessible equivalent.
+// The Memory page's account stack and its optional session slices, drawn by MemoryPlot. The Whole computer scale
+// adds the Computer in use line. The pointer and keyboard guide show each account's total, and up to five sessions
+// per open group. Arrow keys move a minute, Page Up and Page Down an hour, Home and End to the ends. Escape hides
+// the tooltip. The table is the chart's accessible equivalent.
 import { useElementSize } from '@vueuse/core';
 import { computed, ref, useTemplateRef, watch } from 'vue';
 import { CHART, MISSING_TEXT, guideAt, guideText, timeAxis, size, type ChartModel } from '../memory';
@@ -14,8 +10,6 @@ import MemoryPlot from './MemoryPlot.vue';
 
 const props = defineProps<{
   model: ChartModel;
-  /** The bands that ran something that day: the guide lists only those. */
-  ran: Set<string>;
   /** The band of the table row under the pointer. */
   hovered: string | null;
   /** The day, so the guide starts again on another one. */
@@ -43,11 +37,15 @@ watch(at, () => (dismissed.value = false));
 
 const first = computed(() => props.model.minutes[0]?.m ?? props.model.from);
 const last = computed(() => props.model.minutes[props.model.minutes.length - 1]?.m ?? props.model.to - 1);
-const guide = computed(() => (at.value === null ? null : guideAt(props.model, at.value, props.ran)));
+const guide = computed(() => (at.value === null ? null : guideAt(props.model, at.value)));
 const valueText = computed(() => (guide.value ? guideText(guide.value) : 'No minute chosen'));
 /** The guide's place, and which side of it the tooltip opens on so it stays inside the chart. */
 const guideX = computed(() => (at.value === null ? null : x(at.value + 0.5)));
-const tipLeft = computed(() => guideX.value !== null && guideX.value < CHART.gutter + width.value / 2);
+const tipLeft = computed(() => guideX.value !== null && guideX.value < boxWidth.value / 2);
+const tipRoom = computed(() => {
+  const x = guideX.value ?? 0;
+  return Math.max(0, (tipLeft.value ? boxWidth.value - x : x) - 12);
+});
 
 const clamp = (m: number) => Math.max(props.model.from, Math.min(props.model.to - 1, m));
 
@@ -130,21 +128,38 @@ function onKey(e: KeyboardEvent): void {
       v-if="guide && guideX !== null && !dismissed"
       aria-hidden="true"
       :class="[
-        'pointer-events-none absolute top-0 z-10 min-w-40 rounded-md bg-primary px-2.5 py-1.5 text-12 text-on-primary shadow-modal',
+        'pointer-events-none absolute top-0 z-10 w-max rounded-md bg-primary px-2.5 py-1.5 text-12 text-on-primary shadow-modal',
         tipLeft ? 'ml-3' : '-ml-3 -translate-x-full',
       ]"
-      :style="{ left: `${guideX}px` }"
+      :style="{
+        left: `${guideX}px`,
+        maxWidth: `min(${tipRoom}px, var(--spacing) * 64)`,
+        minWidth: `min(${tipRoom}px, var(--spacing) * 40)`,
+      }"
       data-guide-tip
     >
       <p class="font-semibold">{{ guide.time }}</p>
       <p v-if="guide.missing">{{ MISSING_TEXT[guide.missing] }}</p>
       <template v-else>
-        <p v-for="r in guide.rows" :key="r.key" class="flex justify-between gap-4">
-          <span class="truncate">{{ r.label }}</span
-          ><span class="tabular-nums">{{ size(r.kib) }}</span>
-        </p>
+        <div v-for="r in guide.rows" :key="r.key">
+          <p class="flex justify-between gap-4">
+            <span class="truncate">{{ r.label }}</span
+            ><span class="shrink-0 tabular-nums">{{ size(r.kib) }}</span>
+          </p>
+          <p v-for="session in r.sessions" :key="session.key" class="flex justify-between gap-4 pl-3">
+            <span class="truncate">{{ session.label }}</span
+            ><span class="shrink-0 tabular-nums">{{ size(session.kib) }}</span>
+          </p>
+          <p v-if="r.more" class="flex justify-between gap-4 pl-3">
+            <span>{{ r.more.count }} more</span
+            ><span class="shrink-0 tabular-nums">{{ size(r.more.kib) }} in group total</span>
+          </p>
+        </div>
         <p class="flex justify-between gap-4 font-semibold">
           <span>Total</span><span class="tabular-nums">{{ size(guide.total) }}</span>
+        </p>
+        <p v-if="guide.computer !== undefined" class="flex justify-between gap-4">
+          <span>Computer in use</span><span class="tabular-nums">{{ size(guide.computer) }}</span>
         </p>
       </template>
     </div>

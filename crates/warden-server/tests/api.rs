@@ -1828,6 +1828,101 @@ fn the_resets_filter_is_checked_saved_and_forgets_removed_accounts() {
 }
 
 #[test]
+fn memory_settings_are_checked_atomically_and_saved() {
+    use warden_core::memory::{self, Day, Kind, Series, SeriesInfo};
+    use warden_core::model::Provider;
+
+    let f = Fixture::new();
+    let dir = f.data.path().join(memory::DIR);
+    let today = warden_core::time::parse_date(&memory::today(warden_core::time::now_ms()))
+        .expect("today's local date");
+    let yesterday = warden_core::time::date_text(today - 1);
+    memory::write_day(
+        &dir,
+        &yesterday,
+        &Day {
+            series: vec![Series {
+                series: 1,
+                info: SeriesInfo {
+                    kind: Kind::Session,
+                    provider: Some(Provider::Claude),
+                    account_id: Some("old-account".into()),
+                    account: Some("Old account".into()),
+                    session_id: Some("old-session".into()),
+                    parent_session_id: None,
+                    name: None,
+                    project: None,
+                },
+            }],
+            minutes: vec![memory::Minute {
+                m: 600,
+                total: 1000,
+                used: 500,
+                sum: 1,
+                s: vec![(1, 1)],
+            }],
+        },
+    )
+    .expect("recorded day");
+    let server = f.start();
+    let addr = server.addr;
+    let defaults = state(addr)["settings"].clone();
+    assert_eq!(defaults["memoryScale"], "sessions");
+    assert_eq!(
+        defaults["memoryFilter"],
+        json!({"hiddenAccounts": [], "showLeft": true, "showWarden": false})
+    );
+    for (key, bad) in [
+        ("memoryScale", json!("whole")),
+        ("memoryScale", json!(null)),
+        ("memoryFilter", json!(null)),
+        ("memoryFilter", json!([[], true, false])),
+        (
+            "memoryFilter",
+            json!({"hiddenAccounts": [], "showLeft": true}),
+        ),
+        (
+            "memoryFilter",
+            json!({"hiddenAccounts": [], "showLeft": true, "showWarden": false, "extra": false}),
+        ),
+        (
+            "memoryFilter",
+            json!({"hiddenAccounts": [1], "showLeft": true, "showWarden": false}),
+        ),
+        (
+            "memoryFilter",
+            json!({"hiddenAccounts": [], "showLeft": "true", "showWarden": false}),
+        ),
+        (
+            "memoryFilter",
+            json!({"hiddenAccounts": ["nobody"], "showLeft": true, "showWarden": false}),
+        ),
+    ] {
+        let mut change = json!({"theme": "dark"});
+        change[key] = bad;
+        let reply = call(addr, "PUT", "/api/settings", Some(&change.to_string()));
+        assert_eq!(reply.status, 400, "{change}: {}", reply.body);
+        assert_eq!(state(addr)["settings"], defaults, "{change}");
+    }
+    let saved = json!({"hiddenAccounts": ["main", "old-account", "other-sign-in"], "showLeft": false, "showWarden": true});
+    let mut filter = saved.clone();
+    filter["hiddenAccounts"]
+        .as_array_mut()
+        .expect("hidden account list")
+        .push(json!("main"));
+    let changes = json!({"memoryScale": "computer", "memoryFilter": filter});
+    let reply = call(addr, "PUT", "/api/settings", Some(&changes.to_string()));
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let settings = reply.json()["settings"].clone();
+    assert_eq!(settings["memoryScale"], "computer");
+    assert_eq!(settings["memoryFilter"], saved);
+    server.stop();
+    let server = f.start();
+    assert_eq!(state(server.addr)["settings"], settings);
+    server.stop();
+}
+
+#[test]
 fn showing_quiet_sessions_is_checked_and_saved() {
     let f = Fixture::new();
     let server = f.start();

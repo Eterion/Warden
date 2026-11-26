@@ -1,23 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import type { MemoryDay, MemoryMinute, MemorySeries } from './api';
 import {
+  CHART,
   CHART_SMALL,
   bandColours,
   bandPaths,
+  bandRows,
   bandsOf,
   chartModel,
+  computerPath,
   dayTitle,
   endAxis,
   figures,
   guideAt,
   guideText,
   meterParts,
+  memoryReadings,
   mergeToday,
   shareText,
   size,
   stepDays,
   timeAxis,
 } from './memory';
+import { DEFAULT_MEMORY_FILTER, memoryCatalog, memoryGroups, sessionBands, showsRecordedPeak } from './memoryGroups';
 import { account } from './test/state';
 
 const GIB = 1024 * 1024;
@@ -70,6 +75,180 @@ function day(over: Partial<MemoryDay> & Pick<MemoryDay, 'series' | 'minutes'>): 
 const main = account({ id: 'main', label: 'Main' });
 const work = account({ id: 'a1', label: 'Work' });
 const off = account({ id: 'a2', label: 'Spare', enabled: false });
+
+describe('account sessions and filtering', () => {
+  const history = day({
+    today: true,
+    series: [
+      { ...series(7, 'session', 'main'), name: 'Check the build' },
+      { ...series(2, 'session', 'a1'), name: 'Review the API', parentSessionId: 's1' },
+      { ...series(1, 'session', 'main'), name: 'Fix the login page' },
+      { ...series(3, 'left', 'a1'), sessionId: 's2', name: 'Review the API', parentSessionId: 's1' },
+      { ...series(4, 'other-sign-in', null), provider: 'codex', parentSessionId: 'missing' },
+      series(5, 'warden', null),
+      { ...series(6, 'left', 'main'), name: 'Long-running build' },
+    ],
+    minutes: [
+      minute(600, [
+        [1, GIB],
+        [2, GIB],
+        [3, 100 * MIB],
+        [4, 200 * MIB],
+        [5, 25 * MIB],
+        [6, 50 * MIB],
+        [7, 300 * MIB],
+      ]),
+    ],
+  });
+  const catalog = memoryCatalog(history.series, [main, work], [main, work]);
+  const groups = (filter = DEFAULT_MEMORY_FILTER) => memoryGroups(catalog, filter);
+  const sessions = (b: ReturnType<typeof groups>['bands'][number]) =>
+    bandRows(history, sessionBands(catalog, b, history.date)).sort((a, b) => b.peak - a.peak);
+
+  it('lists sessions by peak within their groups, with provider marks and recorded delegation', () => {
+    const { bands, choices } = groups();
+    expect(
+      bands.map((b) => [b.label, sessions(b).map(({ band }) => [band.label, band.colour, band.provider, band.from])]),
+    ).toEqual([
+      [
+        'Main',
+        [
+          ['Fix the login page', 'claude-1', 'claude', null],
+          ['Check the build', 'claude-1', 'claude', null],
+        ],
+      ],
+      ['Work', [['Review the API', 'claude-2', 'claude', 'Fix the login page']]],
+      ['Other sign-in', [['Session s4', 'other-sign-in', 'codex', null]]],
+      [
+        'Left running',
+        [
+          ['Review the API', 'left', 'claude', 'Fix the login page'],
+          ['Long-running build', 'left', 'claude', null],
+        ],
+      ],
+    ]);
+    expect(choices.map(({ id, count }) => [id, count])).toEqual([
+      ['main', 3],
+      ['a1', 1],
+      ['other-sign-in', 1],
+    ]);
+    const filtered = groups({ ...DEFAULT_MEMORY_FILTER, hiddenAccounts: ['main'] });
+    expect(sessions(filtered.bands[0]!)[0]?.band.from).toBe('Fix the login page');
+  });
+
+  it('counts unticked menu choices with no recordings and omits the opt-in Warden choice from that count', () => {
+    const empty = memoryCatalog([], [main, work], [main, work]);
+    expect(memoryGroups(empty, DEFAULT_MEMORY_FILTER).hiddenCount).toBe(0);
+    const filter = { hiddenAccounts: ['a1', 'other-sign-in'], showLeft: false, showWarden: false };
+    expect(memoryGroups(empty, filter).hiddenCount).toBe(3);
+    expect(memoryGroups(empty, { ...filter, showWarden: true }).hiddenCount).toBe(3);
+  });
+
+  it('shares complete bands with the stack and keeps a partial band and its open rows separate', () => {
+    const { bands } = groups();
+    const main = bands[0]!;
+    const recorded = sessionBands(catalog, main, history.date);
+    const kept = recorded.find((slice) => slice.series[0] === 7)!;
+    const visible = [{ ...main, series: kept.series, slices: [kept] }, ...bands.slice(1)];
+    const values = memoryReadings(history, bands, visible, new Map([[main.key, recorded]]));
+    expect(values.rows.get(main.key)?.values[0]).toBe(GIB + 300 * MIB);
+    expect(values.shown.get(main.key)?.values[0]).toBe(300 * MIB);
+    expect(values.rows.get(kept.key)?.values[0]).toBe(300 * MIB);
+    expect(values.rows.get('account:a1')).toBe(values.shown.get('account:a1'));
+    expect(values.rows.size).toBe(bands.length + recorded.length);
+  });
+
+  it('draws an open group over the same band with internal edges and its own colour', () => {
+    const { bands } = groups();
+    const mainBand = bands[0]!;
+    const shown = new Set(bands.map((b) => b.key));
+    const closed = bandPaths(chartModel(history, bands, shown)!, 60);
+    const open = bandPaths(
+      chartModel(history, [{ ...mainBand, slices: sessions(mainBand).map((s) => s.band) }, ...bands.slice(1)], shown)!,
+      60,
+    );
+    expect(open.filter((path) => !path.group)).toEqual(closed);
+    const slices = open.filter((path) => path.group === mainBand.key);
+    expect(slices.map((path) => path.colour)).toEqual(['claude-1', 'claude-1']);
+    expect(slices[0]?.edge).toBeTruthy();
+    expect(slices[1]?.edge).toBe('');
+  });
+
+  it('filters accounts and left-running work, includes Warden on request, and detects an empty selection', () => {
+    const filtered = groups({ hiddenAccounts: ['a1'], showLeft: true, showWarden: true });
+    expect(filtered.bands.map((b) => b.key)).toEqual(['account:main', 'other-sign-in', 'left', 'warden']);
+    expect(filtered.bands.flatMap((b) => b.series).sort()).toEqual([1, 4, 5, 6, 7]);
+    expect(filtered.hiddenCount).toBe(1);
+    const shown = new Set(filtered.bands.map((b) => b.key));
+    const stats = figures(history, filtered.bands, shown, showsRecordedPeak(history, filtered.bands));
+    expect(stats.now).toBe(GIB + 575 * MIB);
+    expect(stats.peak).toBe(stats.now);
+    shown.delete('warden');
+    expect(figures(history, filtered.bands, shown, false).now).toBe(GIB + 550 * MIB);
+    const leftOff = groups({ ...DEFAULT_MEMORY_FILTER, showLeft: false });
+    expect(leftOff.bands.flatMap((b) => b.series).sort()).toEqual([1, 2, 4, 7]);
+    expect(leftOff.bands.some((b) => b.kind === 'left')).toBe(false);
+    const empty = groups({ hiddenAccounts: ['main', 'a1', 'other-sign-in'], showLeft: false, showWarden: false });
+    expect(empty.allHidden).toBe(true);
+    expect(empty.bands).toEqual([]);
+  });
+});
+
+describe('whole computer and guide', () => {
+  it('uses the physical total for the axis and breaks the used line at missing minutes', () => {
+    const history = day({
+      series: [],
+      minutes: [minute(600, [], 8 * GIB), minute(601, [], 16 * GIB), minute(603, [], 24 * GIB)],
+      gaps: [{ from: 602, to: 603 }],
+    });
+    const model = chartModel(history, [], new Set(), 3, 4, 'computer')!;
+    expect(model.top).toBe(32 * GIB);
+    expect(model.grid.map((line) => line.label)).toEqual(['10 GB', '20 GB', '30 GB']);
+    const smaller = { ...history, minutes: history.minutes.map((m) => ({ ...m, total: 16 * GIB })) };
+    expect(chartModel(smaller, [], new Set(), 3, 4, 'computer')?.grid.map((line) => line.label)).toEqual([
+      '5 GB',
+      '10 GB',
+      '15 GB',
+    ]);
+    expect(computerPath(model, 80, CHART)).toBe('M0,152L10,152L30,104H40M60,56L70,56H80');
+    expect(guideAt(model, 601).computer).toBe(16 * GIB);
+    expect(guideText(guideAt(model, 602))).toBe('10:02: Warden not running');
+    expect(computerPath(chartModel(history, [], new Set())!, 80, CHART)).toBe('');
+  });
+
+  it('lists every group and caps the sessions of each open group at five', () => {
+    const seriesList = [
+      ...Array.from({ length: 12 }, (_, i) => series(i + 1, 'session', 'main')),
+      ...Array.from({ length: 8 }, (_, i) => series(i + 13, 'session', 'a1')),
+      ...Array.from({ length: 9 }, (_, i) => series(i + 21, 'session', `a${i + 2}`)),
+    ];
+    const history = day({
+      series: seriesList,
+      minutes: [
+        minute(
+          600,
+          seriesList.slice(0, 20).map((s) => [s.series, (s.series > 12 ? s.series - 12 : s.series) * MIB]),
+        ),
+      ],
+    });
+    const catalog = memoryCatalog(history.series, [main, work], [main, work]);
+    const { bands } = memoryGroups(catalog, DEFAULT_MEMORY_FILTER);
+    const open = bands.map((group) => ({ ...group, slices: sessionBands(catalog, group, history.date) }));
+    const model = chartModel(history, open, new Set(open.map((b) => b.key)), 3, 60, 'computer')!;
+    const guide = guideAt(model, 600);
+    expect(guide.rows).toHaveLength(11);
+    expect(guide.rows.slice(0, 2).map(({ kib }) => kib / MIB)).toEqual([78, 36]);
+    expect(guide.rows.at(-1)?.kib).toBe(0);
+    expect(guide.rows[0]?.sessions?.map(({ kib }) => kib / MIB)).toEqual([12, 11, 10, 9, 8]);
+    expect(guide.rows[0]?.more).toEqual({ count: 7, kib: 28 * MIB });
+    expect(guide.rows[1]?.sessions?.map(({ kib }) => kib / MIB)).toEqual([8, 7, 6, 5, 4]);
+    expect(guide.rows[1]?.more).toEqual({ count: 3, kib: 6 * MIB });
+    expect(guide.total).toBe(114 * MIB);
+    expect(guideText(guide)).toContain('Session s12 under Main 12 MB');
+    expect(guideText(guide)).toContain('7 more, 28 MB included in Main');
+    expect(guideText(guide)).toContain('total 114 MB, Computer in use 16 GB');
+  });
+});
 
 describe('days', () => {
   it('names a day in English, with the year only when it is not this one', () => {
@@ -311,9 +490,9 @@ describe('the chart', () => {
     expect(mainPath!.area.match(/M/g)).toHaveLength(2);
     expect(workPath!.area.match(/M/g)).toHaveLength(2);
     // Main sits on the baseline at 1 GB (y 136); Work on top of it in minute 600 (2 GB, y 72), alone at 700 (2 GB).
-    expect(mainPath!.area.startsWith('M0,136L1,136L1,136L2,136L2,200L1,200L1,200L0,200Z')).toBe(true);
-    expect(workPath!.area).toContain('M0,72L1,72L1,136L2,136');
-    expect(workPath!.area).toContain('M100,72L101,72L101,200L100,200Z');
+    expect(mainPath!.area.startsWith('M0,136H2L2,200H0Z')).toBe(true);
+    expect(workPath!.area).toContain('M0,72H1V136H2');
+    expect(workPath!.area).toContain('M100,72H101L101,200H100Z');
     // Left out, a band is not drawn and the others close up.
     const alone = bandPaths(chartModel(d, bands, new Set(['account:a1']))!, 101);
     expect(alone.map((p) => p.key)).toEqual(['account:a1']);
@@ -326,7 +505,7 @@ describe('the chart', () => {
     expect(small.grid.map((g) => g.label)).toEqual(['1 GB', '2 GB']);
     // The same bands, on the small chart's plot: from y 6 (2 GB) to 84 (0).
     const [mainPath] = bandPaths(small, 101, CHART_SMALL);
-    expect(mainPath!.area.startsWith('M0,45L1,45L1,45L2,45L2,84')).toBe(true);
+    expect(mainPath!.area.startsWith('M0,45H2L2,84')).toBe(true);
     // Only the two ends, labelled inside the plot: the first minute and the last recorded one.
     const axis = endAxis(small, 300);
     expect(axis.labels).toEqual([
@@ -414,23 +593,23 @@ describe('the chart', () => {
     expect(tight.labels.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('says what the guide shows: the bands that ran that day, top first, and their total', () => {
+  it('says what the guide shows: the largest bands with memory that minute first, and their total', () => {
     const model = chartModel(d, bands, both)!;
-    const g = guideAt(model, 601, new Set(['account:main', 'account:a1']));
+    const g = guideAt(model, 601);
     expect(g).toEqual({
       time: '10:01',
       rows: [
-        { key: 'account:a1', label: 'Work', kib: 0 },
         { key: 'account:main', label: 'Main', kib: GIB },
+        { key: 'account:a1', label: 'Work', kib: 0 },
       ],
       total: GIB,
       missing: null,
     });
-    expect(guideText(g)).toBe('10:01: Work 0 MB, Main 1 GB, total 1 GB');
+    expect(guideText(g)).toBe('10:01: Main 1 GB, Work 0 MB, total 1 GB');
     // In a gap, and after the last recording of a span stretched to an hour.
-    expect(guideText(guideAt(model, 650, new Set()))).toBe('10:50: Warden not running');
+    expect(guideText(guideAt(model, 650))).toBe('10:50: Warden not running');
     const short = chartModel({ ...d, minutes: [minute(600, [[1, GIB]])], gaps: [] }, bands, both)!;
-    expect(guideText(guideAt(short, 630, new Set()))).toBe('10:30: Nothing recorded');
+    expect(guideText(guideAt(short, 630))).toBe('10:30: Nothing recorded');
   });
 });
 
@@ -456,6 +635,10 @@ describe('following today', () => {
       [601, [[1, 9]]],
       [602, []],
     ]);
+    const unchanged = later.series.map((s) => ({ ...s }));
+    expect(mergeToday(back, { ...later, series: unchanged }).series).toBe(back.series);
+    const renamed = unchanged.map((s) => ({ ...s, name: 'A new title' }));
+    expect(mergeToday(back, { ...later, series: renamed }).series).toBe(renamed);
     // Nothing new: the minutes stay.
     expect(mergeToday(held, { ...later, minutes: [] }).minutes).toHaveLength(2);
   });

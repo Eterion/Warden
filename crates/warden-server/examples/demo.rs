@@ -186,6 +186,13 @@ fn made_up_days(data_dir: &std::path::Path) {
             Some(("demo-past-work-1", "Payroll export")),
         ),
         series(7, Kind::Warden, None, None, None),
+        series(
+            8,
+            Kind::OtherSignIn,
+            codex,
+            None,
+            Some(("demo-past-other-1", "Check the build")),
+        ),
     ];
     let dir = data_dir.join(memory::DIR);
     for back in [1, 2, 4] {
@@ -196,14 +203,15 @@ fn made_up_days(data_dir: &std::path::Path) {
             }
             let t = f64::from(m) + f64::from(back) * 37.0;
             // Each series runs part of the day, its memory going up and down.
-            let runs: [(u16, u16, u16, f64); 7] = [
+            let runs: [(u16, u16, u16, f64); 8] = [
                 (1, 8 * 60, 11 * 60, 900.0),
-                (2, 13 * 60, 17 * 60 + 30, 1400.0),
+                (2, 10 * 60 + 15, 17 * 60 + 30, 1400.0),
                 (3, 9 * 60 + 30, 10 * 60 + 45, 700.0),
                 (4, 10 * 60, 16 * 60, 600.0),
                 (5, 14 * 60, 15 * 60 + 20, 500.0),
                 (6, 16 * 60, 17 * 60 + 30, 350.0),
                 (7, 8 * 60, 17 * 60 + 30, 12.0),
+                (8, 13 * 60 + 30, 15 * 60, 550.0),
             ];
             let mut s = Vec::new();
             for (n, from, to, peak) in runs {

@@ -78,6 +78,32 @@ pub enum Theme {
     Dark,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryScale {
+    #[default]
+    Sessions,
+    Computer,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemoryFilter {
+    pub hidden_accounts: Vec<String>,
+    pub show_left: bool,
+    pub show_warden: bool,
+}
+
+impl Default for MemoryFilter {
+    fn default() -> Self {
+        Self {
+            hidden_accounts: Vec::new(),
+            show_left: true,
+            show_warden: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountConfig {
@@ -133,6 +159,28 @@ pub struct Settings {
     /// wrong type loads as `false`, never failing the file.
     #[serde(deserialize_with = "lenient_false")]
     pub soonest_reset_only: bool,
+    /// The Memory chart's scale. An absent or invalid value uses the AI sessions scale.
+    #[serde(deserialize_with = "lenient_default")]
+    pub memory_scale: MemoryScale,
+    /// The Memory page's filter. An absent or malformed object uses the default without failing the settings file.
+    #[serde(deserialize_with = "lenient_memory_filter")]
+    pub memory_filter: MemoryFilter,
+}
+
+fn lenient_memory_filter<'de, D: serde::Deserializer<'de>>(d: D) -> Result<MemoryFilter, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    Ok(if value.is_object() {
+        serde_json::from_value(value).unwrap_or_default()
+    } else {
+        MemoryFilter::default()
+    })
+}
+
+fn lenient_default<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned + Default>(
+    d: D,
+) -> Result<T, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    Ok(serde_json::from_value(value).unwrap_or_default())
 }
 
 fn lenient_ids<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
@@ -239,6 +287,8 @@ impl Default for Settings {
             page_transitions: true,
             hidden_reset_accounts: Vec::new(),
             soonest_reset_only: false,
+            memory_scale: MemoryScale::default(),
+            memory_filter: MemoryFilter::default(),
         }
     }
 }
@@ -1046,6 +1096,24 @@ mod tests {
             let s: Settings = serde_json::from_str(raw).expect(raw);
             assert!(s.hidden_reset_accounts.is_empty(), "{raw}");
             assert_eq!((s.soonest_reset_only, s.reserve), (false, 30), "{raw}");
+        }
+    }
+
+    #[test]
+    fn malformed_memory_settings_load_as_defaults() {
+        let dir = Dir::new("memory-settings");
+        for raw in [
+            r#"{"version":2,"reserve":30}"#,
+            r#"{"version":2,"reserve":30,"memoryScale":null,"memoryFilter":null}"#,
+            r#"{"version":2,"reserve":30,"memoryScale":"wide","memoryFilter":"main"}"#,
+            r#"{"version":2,"reserve":30,"memoryScale":["computer"],"memoryFilter":[["main"],false,true]}"#,
+            r#"{"version":2,"reserve":30,"memoryScale":{"scale":"computer"},"memoryFilter":{"hiddenAccounts":["main"],"showLeft":false}}"#,
+        ] {
+            fs::write(dir.path().join(SETTINGS_FILE), raw).expect("write settings");
+            let s: Settings = load(dir.path(), SETTINGS_FILE).expect(raw);
+            assert_eq!(s.memory_scale, MemoryScale::Sessions, "{raw}");
+            assert_eq!(s.memory_filter, MemoryFilter::default(), "{raw}");
+            assert_eq!(s.reserve, 30, "{raw}");
         }
     }
 

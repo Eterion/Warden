@@ -4,17 +4,7 @@ import { computed } from 'vue';
 import OwlIcon from '../components/OwlIcon.vue';
 import WTooltip from '../components/WTooltip.vue';
 import WWidget from '../components/WWidget.vue';
-import type { MemoryDay } from '../api';
-import {
-  bandAt,
-  memoryTrend,
-  meterParts,
-  shareText,
-  size,
-  wardenMemory,
-  type ChartModel,
-  type Figures,
-} from '../memory';
+import { memoryTrend, meterParts, shareText, size, type ChartModel, type Figures } from '../memory';
 import { clock } from '../format';
 import MemoryTrend from './MemoryTrend.vue';
 
@@ -23,7 +13,6 @@ const props = defineProps<{
   today: boolean;
   total: number | null;
   model: ChartModel | null;
-  day: MemoryDay;
 }>();
 
 const SHARE_NOTE =
@@ -32,13 +21,11 @@ const SHARE_NOTE =
 const meter = computed(() => (props.figures.computer ? meterParts(props.figures.computer) : null));
 const trend = computed(() => {
   const model = props.model;
-  return props.today && model
-    ? memoryTrend(model.minutes, (m) => model.bands.reduce((sum, b) => sum + bandAt(b, m), 0))
-    : null;
+  return props.today && model ? memoryTrend(model.minutes, model.readings.total) : null;
 });
 const wardenTrend = computed(() => {
-  const valueAt = wardenMemory(props.day);
-  return valueAt ? memoryTrend(props.day.minutes, valueAt) : null;
+  const model = props.model;
+  return model?.readings.warden ? memoryTrend(model.minutes, model.readings.warden) : null;
 });
 const ICON = 'size-4 shrink-0 text-icon';
 const BODY = 'flex flex-1 flex-col gap-2';

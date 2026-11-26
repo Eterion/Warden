@@ -30,6 +30,7 @@ const MODEL = 'crates/warden-core/src/model.rs';
 const SESSIONS = 'crates/warden-core/src/sessions.rs';
 const MEMORY = 'crates/warden-core/src/memory.rs';
 const ROUTING = 'crates/warden-core/src/routing.rs';
+const STORE = 'crates/warden-core/src/store.rs';
 const s = (file: string, type: string, ...where: string[]): ApiType => ({ file, type, kind: 'struct', in: where });
 const e = (file: string, type: string, ...where: string[]): ApiType => ({ file, type, kind: 'enum', in: where });
 
@@ -66,7 +67,9 @@ export const API_TYPES: ApiType[] = [
   e(MODEL, 'Provider', 'Provider'),
   e(MODEL, 'UsageError', 'UsageError'),
   e('crates/warden-core/src/hooks.rs', 'Setup', 'HookSetup'),
-  e('crates/warden-core/src/store.rs', 'Theme', 'Theme'),
+  e(STORE, 'Theme', 'Theme'),
+  e(STORE, 'MemoryScale', 'MemoryScale'),
+  s(STORE, 'MemoryFilter', 'MemoryFilter'),
   s(SESSIONS, 'Session', 'Session'),
   s(SESSIONS, 'Place', 'Session'),
   s(SESSIONS, 'Subagent', 'Session'),

@@ -21,8 +21,8 @@ use warden_core::routing;
 use warden_core::secret::Secret;
 use warden_core::sessions::{self, Activity, Event, EventKind, Session, Sessions};
 use warden_core::store::{
-    self, AccountConfig, AccountReading, IdentityUpdate, READINGS_FILE, Readings, SETTINGS_FILE,
-    Settings, Theme, UsageUpdate, WorkHours,
+    self, AccountConfig, AccountReading, IdentityUpdate, MemoryFilter, MemoryScale, READINGS_FILE,
+    Readings, SETTINGS_FILE, Settings, Theme, UsageUpdate, WorkHours,
 };
 use warden_core::time::now_ms;
 use warden_core::titles;
@@ -104,6 +104,29 @@ pub struct SettingsPatch {
     /// other value that is not a boolean.
     #[serde(default, deserialize_with = "strict_bool")]
     pub soonest_reset_only: Option<bool>,
+    #[serde(default, deserialize_with = "strict_setting")]
+    pub memory_scale: Option<MemoryScale>,
+    #[serde(default, deserialize_with = "strict_memory_filter")]
+    pub memory_filter: Option<MemoryFilter>,
+}
+
+/// An omitted setting stays as it is. Values, including null, must match the setting's type.
+fn strict_setting<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
+}
+
+fn strict_memory_filter<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<MemoryFilter>, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    if !value.is_object() {
+        return Err(serde::de::Error::custom("memoryFilter must be an object"));
+    }
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
 }
 
 /// A list of ids that, when there, must be a list of strings; absent leaves the setting.
@@ -337,6 +360,8 @@ pub struct SettingsView {
     /// Only ids of accounts Warden knows now: one removed since is left out.
     hidden_reset_accounts: Vec<String>,
     soonest_reset_only: bool,
+    memory_scale: MemoryScale,
+    memory_filter: MemoryFilter,
 }
 
 /// Present only in the desktop app.
@@ -671,6 +696,8 @@ impl App {
                     .cloned()
                     .collect(),
                 soonest_reset_only: s.soonest_reset_only,
+                memory_scale: s.memory_scale,
+                memory_filter: s.memory_filter.clone(),
             },
             main: s.main_account(&self.env).as_ref().map(|a| MainView {
                 account: self.account_view(&inner, a),
@@ -2120,6 +2147,10 @@ impl App {
                 ));
             }
         }
+        let memory_filter = patch
+            .memory_filter
+            .map(|filter| self.validate_memory_filter(filter))
+            .transpose()?;
         // `Some(None)` clears the work hours; anything but a valid set of hours or `null` is refused.
         let work_hours: Option<Option<WorkHours>> = match patch.work_hours.clone() {
             None => None,
@@ -2195,12 +2226,68 @@ impl App {
         if let Some(s) = patch.soonest_reset_only {
             inner.settings.soonest_reset_only = s;
         }
+        if let Some(scale) = patch.memory_scale {
+            inner.settings.memory_scale = scale;
+        }
+        if let Some(filter) = memory_filter {
+            inner.settings.memory_filter = filter;
+        }
         self.save_settings(&mut inner)?;
         drop(inner);
         if new_interval {
             self.wake_up();
         }
         Ok(())
+    }
+
+    fn validate_memory_filter(&self, mut filter: MemoryFilter) -> ApiResult<MemoryFilter> {
+        let mut seen = HashSet::new();
+        filter.hidden_accounts.retain(|id| seen.insert(id.clone()));
+        let mut unknown: HashSet<&str> = {
+            let inner = self.lock();
+            filter
+                .hidden_accounts
+                .iter()
+                .map(String::as_str)
+                .filter(|id| {
+                    *id != "other-sign-in"
+                        && !known_account(&inner.settings, id)
+                        && !inner
+                            .settings
+                            .memory_filter
+                            .hidden_accounts
+                            .iter()
+                            .any(|old| old == id)
+                })
+                .collect()
+        };
+        if !unknown.is_empty() {
+            // Removed accounts can still be hidden on days that recorded them. Only look at history for such ids.
+            let today = memory::today(now_ms());
+            let recorder = self.memory_lock();
+            let dir = recorder.dir().to_owned();
+            let current = recorder.today_account_ids(&today);
+            drop(recorder);
+            unknown.retain(|id| !current.contains(*id));
+            if !unknown.is_empty() {
+                for date in memory::days(&dir).iter().rev() {
+                    for series in memory::read_series(&dir, date) {
+                        if let Some(id) = series.info.account_id {
+                            unknown.remove(id.as_str());
+                        }
+                    }
+                    if unknown.is_empty() {
+                        break;
+                    }
+                }
+            }
+            if !unknown.is_empty() {
+                return Err(ApiError::bad(
+                    "Only accounts Warden knows or has recorded can be left out of Memory.",
+                ));
+            }
+        }
+        Ok(filter)
     }
 
     pub fn scan_tools(&self) {

@@ -16,6 +16,7 @@ import { ApiError, api, type Account, type Session, type State } from '../api';
 import AccountIcon from '../components/AccountIcon.vue';
 import ActivitySparkline from '../components/ActivitySparkline.vue';
 import NowChip from '../components/NowChip.vue';
+import SessionTreeLines from '../components/SessionTreeLines.vue';
 import PageHeader from '../components/PageHeader.vue';
 import ProviderMark from '../components/ProviderMark.vue';
 import RemovableChip from '../components/RemovableChip.vue';
@@ -680,23 +681,7 @@ function sessionAccount(s: Session): Account | undefined {
                  this row's own branch off it, a straight stub, or the rounded elbow that ends the line at the last
                  sibling. The lines are decoration; screen readers hear who started it. -->
               <span role="cell" class="flex min-w-0 items-center self-stretch">
-                <span v-for="level in depth" :key="level" aria-hidden="true" class="relative w-6 shrink-0 self-stretch">
-                  <span
-                    v-if="level < depth ? rails[level - 1] : !last"
-                    data-line="rail"
-                    class="absolute -top-2.5 -bottom-2.25 left-2 border-l border-divider-strong"
-                  ></span>
-                  <span
-                    v-if="level === depth && !last"
-                    data-line="stub"
-                    class="absolute bottom-1/2 left-2.25 w-2.75 border-b border-divider-strong"
-                  ></span>
-                  <span
-                    v-else-if="level === depth"
-                    data-line="elbow"
-                    class="absolute -top-2.5 bottom-1/2 left-2 w-3 rounded-bl-sm border-b border-l border-divider-strong"
-                  ></span>
-                </span>
+                <SessionTreeLines :depth="depth" :rails="rails" :last="last" />
                 <span class="min-w-0 truncate font-medium" :title="sessionName(s)"
                   >{{ sessionName(s) }}<span v-if="parent" class="sr-only">. Started by {{ sessionName(parent) }}</span
                   ><span v-if="faded" class="sr-only">. Shown only for the sessions under it</span></span

@@ -38,7 +38,7 @@ export function sortSessions(list: Session[]): Session[] {
  * A session's name as the table shows it: its own, else the end of its id (as the ID column shows it; Codex's ids are
  * time-ordered, so their starts repeat).
  */
-export function sessionName(s: Session): string {
+export function sessionName(s: { id: string; name: string | null }): string {
   return s.name ?? `Session ${s.id.slice(-8)}`;
 }
 

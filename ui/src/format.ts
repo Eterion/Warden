@@ -205,7 +205,7 @@ export function usageProblem(error: UsageError | null): string | null {
     case 'signedOut':
       return 'Signed out';
     case 'loginExpired':
-      // A Warden account's idle login is shown as grey bars and its age (`readingNote`); main's has its own words.
+      // A Warden account's grey bars give its reading's age and idle-login explanation in a tooltip.
       return null;
     case 'identityChanged':
       return 'Kept apart until you confirm the new sign-in';
@@ -231,7 +231,7 @@ function resetSinceReading(usage: Usage, now: number): string | null {
 }
 
 /**
- * The note under an account's limits, only when it matters: a problem reading usage (amber), and in grey either
+ * The note about an account's limits, only when it matters: a problem reading usage (amber), and in grey either
  * "Read 3 h ago" once a Claude reading is older than a few usage intervals, or, for Codex (read from its logs, so
  * an idle account's reading is naturally old), that a limit has reset since its last reading. No Codex sessions yet
  * is plain grey news.
@@ -260,7 +260,7 @@ export function readingNote(
   return problem || age ? { problem, age } : null;
 }
 
-/** The tooltip on an idle login's age. */
+/** The explanation after the reading's age in an idle login's usage tooltip. */
 export const IDLE_LOGIN =
   'Its login is idle. The last reading still counts, and Claude renews the login the next time this account works.';
 

@@ -64,6 +64,7 @@ type Fixture =
   | 'mainFiveHourFull'
   | 'noTarget'
   | 'mainUnknown'
+  | 'codexWeeklyReset'
   | 'resetSuggested'
   | 'setupFive'
   | 'memory'
@@ -345,7 +346,17 @@ export const PAGES: {
     name: 'overview-login-idle',
     path: '/',
     fixture: 'normal',
-    ready: 'main .bg-bar-idle',
+    ready: '[aria-labelledby=accounts-heading] button[aria-label="Idle login"]',
+    steps: [
+      { focus: '[aria-labelledby=accounts-heading] button[aria-label="Idle login"]' },
+      { waitFor: '[role=tooltip]' },
+    ],
+  },
+  {
+    name: 'overview-codex-weekly-reset',
+    path: '/',
+    fixture: 'codexWeeklyReset',
+    ready: '[role=cell]:has-text("No 5-hour limit") >> text="Weekly limit has reset"',
   },
   {
     name: 'overview-sessions-tree',
@@ -1094,7 +1105,7 @@ function fakeApi(current: () => Fixture): Plugin {
                 ? treeState(now)
                 : fixture === 'quietHidden'
                   ? quietHiddenState(now)
-                  : fixture === 'healthy'
+                  : fixture === 'healthy' || fixture === 'codexWeeklyReset'
                     ? healthyState(now)
                     : fixture === 'resets' ||
                         fixture === 'resetsRefused' ||
@@ -1106,6 +1117,10 @@ function fakeApi(current: () => Fixture): Plugin {
                         ? resetSuggestedState(now)
                         : normalState(now);
         if (fixture === 'hooksOff') state.hooksOff = true;
+        if (fixture === 'codexWeeklyReset') {
+          const weekly = state.accounts.find((a) => a.id === 'a3')?.usage?.weekly;
+          if (weekly) weekly.resetsAt = now - 5 * 60_000;
+        }
         if (fixture === 'resetsAllHidden') state.settings.hiddenResetAccounts = ['main', 'a3'];
         if (fixture === 'resetsFiltered') {
           state.settings.hiddenResetAccounts = [];

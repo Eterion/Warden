@@ -44,7 +44,6 @@ import {
   extraText,
   filterResets,
   limitView,
-  loginIdle,
   readingNote,
   resetRows,
   signedInAs,
@@ -300,9 +299,9 @@ function markLabel(a: Account, at: number): string {
 }
 
 /** Main's hand-off point on its weekly bar, while it is below 100%. */
-function mark(a: Account, k: number): number | undefined {
+function mark(a: Account): number | undefined {
   const at = store.state?.delegation.handOffAt;
-  return k === 1 && a.id === 'main' && at !== undefined && at < 100 ? at : undefined;
+  return a.id === 'main' && at !== undefined && at < 100 ? at : undefined;
 }
 
 /** Accounts checked to filter the sessions; none checked shows all. */
@@ -379,19 +378,39 @@ const points = computed(() => {
 /** One scale for all accounts. */
 const most = computed(() => Math.max(1, ...[...points.value.values()].flat().map((p) => p.working)));
 
-function row(a: Account) {
-  const u = a.usage;
-  return {
-    five: u?.fiveHour ? limitView(u.fiveHour, store.now) : null,
-    week: u?.weekly ? limitView(u.weekly, store.now) : null,
-    noFive: !!u && !u.fiveHour,
-    extra: extraText(a.provider, u),
-    note: readingNote(a, store.state?.settings.usageIntervalMin ?? 5, store.now),
-    signedIn: signedInAs(a, store.state?.accounts ?? []),
-    // Sessions signed in as someone else are shown, but count for no account.
-    now: tally(allSessions.value.filter((s) => s.accountId === a.id && !s.signedInAs)),
-  };
-}
+const accountRows = computed(() =>
+  accounts.value.map((a) => {
+    const u = a.usage;
+    const five = u?.fiveHour ? limitView(u.fiveHour, store.now) : null;
+    const week = u?.weekly ? limitView(u.weekly, store.now) : null;
+    const note = readingNote(a, store.state?.settings.usageIntervalMin ?? 5, store.now);
+    const idleTip = note?.idle ? `${note.age}. ${IDLE_LOGIN}` : null;
+    const visibleNote = note?.idle ? null : note;
+    const inlineAge = five || visibleNote?.problem ? null : visibleNote?.age;
+    const handOff = mark(a);
+    return {
+      a,
+      row: {
+        five: { value: five, tip: idleTip, handOff: undefined, hoverOnly: false },
+        week: {
+          value: week,
+          tip: idleTip ?? (handOff === undefined ? null : markLabel(a, handOff)),
+          handOff,
+          hoverOnly: !!idleTip && !!five,
+        },
+        noFive: !!u && !u.fiveHour,
+        extra: extraText(a.provider, u),
+        idleTip,
+        inlineAge,
+        noteBelow: inlineAge ? null : visibleNote,
+        noteText: idleTip ?? (note ? `${[note.problem, note.age].filter(Boolean).join('. ')}.` : null),
+        signedIn: signedInAs(a, store.state?.accounts ?? []),
+        // Sessions signed in as someone else are shown, but count for no account.
+        now: tally(allSessions.value.filter((s) => s.accountId === a.id && !s.signedInAs)),
+      },
+    };
+  }),
+);
 
 /** Quiet text: a step darker on a checked row, so it keeps 4.5:1 on the row's tint. */
 function muted(a: Account): string {
@@ -459,7 +478,7 @@ function sessionAccount(s: Session): Account | undefined {
               <span role="columnheader">Last 2 hours, then now</span>
             </template>
             <WTableRow
-              v-for="a in accounts"
+              v-for="{ a, row } in accountRows"
               :key="a.id"
               :class="[
                 'group cursor-pointer py-2.5',
@@ -492,11 +511,11 @@ function sessionAccount(s: Session): Account | undefined {
                   <span class="truncate font-semibold">{{ a.label }}</span>
                   <!-- A changed sign-in takes the email line's place; the expected email is in its tooltip. -->
                   <WTooltip
-                    v-if="row(a).signedIn"
+                    v-if="row.signedIn"
                     :text="expectedSignIn(a)"
                     class="max-w-full min-w-0 text-left text-12 font-medium wrap-anywhere text-attn"
                     @click.stop
-                    >{{ row(a).signedIn }}</WTooltip
+                    >{{ row.signedIn }}</WTooltip
                   >
                   <span v-else-if="a.identity" :class="['truncate text-12', muted(a)]" :title="a.identity.email">{{
                     a.identity.email
@@ -505,64 +524,64 @@ function sessionAccount(s: Session): Account | undefined {
               </div>
 
               <div
-                v-for="(limit, k) in [row(a).five, row(a).week]"
+                v-for="({ value: limit, tip, handOff, hoverOnly }, k) in [row.five, row.week]"
                 :key="k"
                 role="cell"
-                class="flex min-w-0 flex-col gap-1.25"
+                class="flex min-w-0 flex-col"
+                :class="limit ? 'gap-1.25' : 'justify-center self-stretch'"
               >
-                <span v-if="k === 0 && row(a).note && !row(a).note!.idle" class="sr-only"
-                  >{{ [row(a).note!.problem, row(a).note!.age].filter(Boolean).join('. ') }}.</span
-                >
+                <span v-if="k === 0 && row.noteText" class="sr-only">{{ row.noteText }}</span>
                 <template v-if="limit">
                   <span class="flex flex-wrap justify-between gap-x-2 text-12">
                     <span class="font-semibold whitespace-nowrap tabular-nums">{{ limit.used }}</span>
                     <span :class="['whitespace-nowrap', muted(a)]">{{ limit.reset }}</span>
                   </span>
-                  <!-- Main's weekly bar with its hand-off mark explains the mark on hover and keyboard focus. -->
-                  <WTooltip
-                    v-if="mark(a, k) !== undefined"
-                    :text="markLabel(a, mark(a, k)!)"
-                    :aria-label="markLabel(a, mark(a, k)!)"
-                    class="block w-full py-1"
-                    data-hand-off-mark
-                  >
-                    <UsageBar
-                      :percent="limit.percent"
-                      :level="loginIdle(a) ? 'idle' : limit.level"
-                      :mark="mark(a, k)"
-                    />
+                  <!-- The row handles pointer clicks. Its checkbox handles the filter from the keyboard. -->
+                  <WTooltip v-if="tip" :text="tip" as-child>
+                    <component
+                      :is="hoverOnly ? 'span' : 'button'"
+                      :type="hoverOnly ? undefined : 'button'"
+                      :aria-hidden="hoverOnly || undefined"
+                      :aria-label="hoverOnly ? undefined : row.idleTip ? 'Idle login' : tip"
+                      class="-mt-px -mb-1 block w-full cursor-pointer pt-px pb-1"
+                      :class="
+                        !hoverOnly &&
+                        'rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator'
+                      "
+                      :data-hand-off-mark="handOff !== undefined ? '' : undefined"
+                      @click="$event.detail === 0 && $event.stopPropagation()"
+                    >
+                      <UsageBar :percent="limit.percent" :level="row.idleTip ? 'idle' : limit.level" :mark="handOff" />
+                    </component>
                   </WTooltip>
-                  <UsageBar v-else :percent="limit.percent" :level="loginIdle(a) ? 'idle' : limit.level" />
+                  <UsageBar v-else :percent="limit.percent" :level="limit.level" />
                 </template>
-                <span v-else :class="['text-12', muted(a)]">
-                  {{ k === 0 && row(a).noFive ? 'No 5-hour limit' : 'Not read yet' }}
-                </span>
-                <!-- An idle login's age, in the 5-hour cell so it can take focus: its tooltip says why it is grey. -->
-                <WTooltip
-                  v-if="k === 0 && row(a).note?.idle"
-                  :text="IDLE_LOGIN"
-                  :class="['self-start text-left text-12', muted(a)]"
-                  @click.stop
-                  >{{ row(a).note!.age }}</WTooltip
-                >
+                <template v-else>
+                  <span :class="['text-12', muted(a)]">
+                    {{ k === 0 && row.noFive ? 'No 5-hour limit' : 'Not read yet' }}
+                  </span>
+                  <span v-if="k === 0 && row.inlineAge" aria-hidden="true" :class="['text-12', muted(a)]">
+                    {{ row.inlineAge }}
+                  </span>
+                </template>
               </div>
 
-              <span v-if="showExtra" role="cell" class="text-12 text-secondary tabular-nums">{{ row(a).extra }}</span>
+              <span v-if="showExtra" role="cell" class="text-12 text-secondary tabular-nums">{{ row.extra }}</span>
 
               <div role="cell" class="flex min-w-0 items-center gap-4">
                 <ActivitySparkline :points="points.get(a.id) ?? []" :most="most" :name="a.label" />
-                <NowChip :tally="row(a).now" />
+                <NowChip :tally="row.now" />
               </div>
 
-              <!-- Under the limits, only when it matters: a problem reading usage, or an old reading. Shown across both
-                 limit columns; assistive technology hears it in the 5-hour cell, so the table keeps its columns. -->
+              <!-- Amber problems and notes on a 5-hour bar go under both limits. Assistive technology hears the note
+                 in the 5-hour cell regardless of where it appears. -->
               <p
-                v-if="row(a).note && !row(a).note!.idle"
+                v-if="row.noteBelow"
                 aria-hidden="true"
                 class="col-span-2 col-start-3 -mt-1.5 flex min-w-0 flex-wrap gap-x-2 text-12"
               >
-                <span v-if="row(a).note!.problem" class="font-medium text-attn">{{ row(a).note!.problem }}</span>
-                <span v-if="row(a).note!.age" :class="muted(a)">{{ row(a).note!.age }}</span>
+                <span v-if="row.noteBelow.problem" class="font-medium text-attn">{{ row.noteBelow.problem }}</span>
+                <span v-if="row.noteBelow.age" :class="muted(a)">{{ row.noteBelow.age }}</span>
               </p>
             </WTableRow>
           </WTable>

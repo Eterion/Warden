@@ -9,6 +9,8 @@ import { resetTime } from '../format';
 import OverviewPage from './OverviewPage.vue';
 
 const HOUR = 3_600_000;
+const IDLE_READING =
+  'Read 1 min ago. Its login is idle. The last reading still counts, and Claude renews the login the next time this account works.';
 
 // The Memory card's own requests are left out here, so each test's stand-in server sees only the Overview's own (the
 // card, its data and its requests are tested in MemoryCard.test.ts).
@@ -60,47 +62,204 @@ describe('OverviewPage', () => {
     expect(page.text()).not.toContain('Personal');
   });
 
-  it('notes an old reading in grey, and shows an idle Warden login as grey bars with its age and no amber', () => {
+  it.each([true, false])(
+    'keeps an old reading under the limits when there is a 5-hour bar (weekly bar: %s)',
+    (hasWeek) => {
+      store.now = NOW;
+      const usage = {
+        readAt: NOW - 3 * HOUR,
+        fiveHour: { usedPercent: 10, resetsAt: NOW + HOUR },
+        weekly: hasWeek ? { usedPercent: 20, resetsAt: NOW + 30 * HOUR } : null,
+        perModelWeekly: [],
+        extra: null,
+      };
+      store.state = state([account({ id: 'main', label: 'Main', usage })]);
+      const page = mount(OverviewPage);
+      const row = page.findAll('[aria-labelledby=accounts-heading] [role=row]')[1]!;
+      expect(row.get('p[aria-hidden=true]').text()).toBe('Read 3 h ago');
+      expect(row.find('.text-attn').exists()).toBe(false);
+      store.state.main!.usageError = { kind: 'loginExpired' };
+      const again = mount(OverviewPage).findAll('[aria-labelledby=accounts-heading] [role=row]')[1]!;
+      expect(again.get('.text-attn').text()).toBe("Sign in again for main's usage");
+      expect(again.find('.bg-bar-idle').exists()).toBe(false);
+    },
+  );
+
+  it.each([true, false])('puts the idle reading in the bars’ tooltips (has 5-hour bar: %s)', async (hasFive) => {
     store.now = NOW;
-    const usage = (readAt: number) => ({
-      readAt,
-      fiveHour: { usedPercent: 10, resetsAt: NOW + HOUR },
-      weekly: { usedPercent: 20, resetsAt: NOW + 30 * HOUR },
-      perModelWeekly: [],
-      extra: null,
-    });
     store.state = state([
-      account({ id: 'main', label: 'Main', usage: usage(NOW - 3 * HOUR) }),
       account({
         id: 's',
         label: 'Second',
-        usage: usage(NOW - 60_000),
+        usage: {
+          readAt: NOW - 60_000,
+          fiveHour: hasFive ? { usedPercent: 10, resetsAt: NOW + HOUR } : null,
+          weekly: { usedPercent: 20, resetsAt: NOW + 30 * HOUR },
+          perModelWeekly: [],
+          extra: null,
+        },
         usageError: { kind: 'loginExpired' },
       }),
     ]);
+    const page = mount(OverviewPage, { attachTo: document.body });
+    try {
+      const row = page.findAll('[aria-labelledby=accounts-heading] [role=row]')[1]!;
+      const [, , five, week] = row.findAll('[role=cell]');
+      expect(five!.get('.sr-only').text()).toBe(IDLE_READING);
+      const visibleFive = five!.element.cloneNode(true) as HTMLElement;
+      visibleFive.querySelector('.sr-only')!.remove();
+      expect(visibleFive.textContent).not.toContain('Read');
+      expect(week!.text()).not.toContain('Read');
+      expect(row.find('p').exists()).toBe(false);
+      expect(row.find('.text-attn').exists()).toBe(false);
+
+      const triggers = row.findAll('[data-grace-area-trigger]');
+      expect(triggers.map((trigger) => trigger.element.tagName)).toEqual(hasFive ? ['BUTTON', 'SPAN'] : ['BUTTON']);
+      expect(triggers.every((trigger) => trigger.find('.bg-bar-idle').exists())).toBe(true);
+      const button = (hasFive ? five : week)!.get<HTMLButtonElement>('button[aria-label="Idle login"]');
+      button.element.focus();
+      await flushPromises();
+      expect(document.getElementById(button.attributes('aria-describedby') ?? '')?.textContent).toBe(IDLE_READING);
+      if (hasFive) {
+        button.element.blur();
+        const weeklyBar = triggers[1]!;
+        await weeklyBar.trigger('pointermove');
+        await vi.waitFor(() =>
+          expect(document.getElementById(weeklyBar.attributes('aria-describedby') ?? '')?.textContent).toBe(
+            IDLE_READING,
+          ),
+        );
+      }
+    } finally {
+      page.unmount();
+    }
+  });
+
+  it('provides the idle reading to screen readers without a tooltip when both limit bars are absent', () => {
+    store.now = NOW;
+    store.state = state([
+      account({
+        id: 's',
+        label: 'Second',
+        usage: { readAt: NOW - 60_000, fiveHour: null, weekly: null, perModelWeekly: [], extra: null },
+        usageError: { kind: 'loginExpired' },
+      }),
+    ]);
+    const row = mount(OverviewPage).findAll('[aria-labelledby=accounts-heading] [role=row]')[1]!;
+    const [, , five, week] = row.findAll('[role=cell]');
+    expect(five!.get('.sr-only').text()).toBe(IDLE_READING);
+    expect(five!.get('span:not(.sr-only)').text()).toBe('No 5-hour limit');
+    expect(week!.text()).toBe('Not read yet');
+    expect(row.find('[data-grace-area-trigger]').exists()).toBe(false);
+    expect(row.findAll('button').map((button) => button.attributes('role'))).toEqual(['checkbox']);
+  });
+
+  it('passes mouse clicks on tooltip bars to the row and leaves keyboard filtering to the checkbox', async () => {
+    store.now = NOW;
+    const limit = { usedPercent: 20, resetsAt: NOW + HOUR };
+    const usage = { readAt: NOW, fiveHour: limit, weekly: limit, perModelWeekly: [], extra: null };
+    store.state = state([
+      account({ id: 'main', label: 'Main', usage }),
+      account({ id: 's', label: 'Second', usage, usageError: { kind: 'loginExpired' } }),
+    ]);
+    const page = mount(OverviewPage);
+    const [, ...rows] = page.findAll('[aria-labelledby=accounts-heading] [role=row]');
+    const barsByRow = rows.map((row) => row.findAll('[data-grace-area-trigger]'));
+    expect(barsByRow.map((bars) => bars.length)).toEqual([1, 2]);
+    for (const [index, row] of rows.entries()) {
+      const checkbox = row.get('[role=checkbox]');
+      for (const bar of barsByRow[index]!) {
+        expect(bar.classes()).not.toContain('hov:bg-selected-hover');
+        expect(bar.classes()).not.toContain('press:bg-selected-press');
+        expect(bar.classes()).not.toContain('cursor-default');
+        await bar.trigger('click', { detail: 0 });
+        expect(checkbox.attributes('aria-checked')).toBe('false');
+        await bar.trigger('click', { detail: 1 });
+        expect(checkbox.attributes('aria-checked')).toBe('true');
+        await checkbox.trigger('click', { detail: 0 });
+        expect(checkbox.attributes('aria-checked')).toBe('false');
+      }
+    }
+  });
+
+  it('centres each text-only limit cell in its row', () => {
+    store.now = NOW;
+    const limit = { usedPercent: 10, resetsAt: NOW + HOUR };
+    const usage = { readAt: NOW, fiveHour: null, weekly: limit, perModelWeekly: [], extra: null };
+    store.state = state([
+      account({ id: 'c', label: 'Codex', provider: 'codex', usage }),
+      account({ id: 's', label: 'Second', usage: { ...usage, fiveHour: limit, weekly: null } }),
+    ]);
     const rows = mount(OverviewPage).findAll('[aria-labelledby=accounts-heading] [role=row]');
-    expect(rows[1]!.text()).toContain('Read 3 h ago');
-    expect(rows[1]!.find('.text-attn').exists()).toBe(false);
-    // Second's login is idle: no amber, its bars grey, its age with the tooltip (and for screen readers).
-    expect(rows[2]!.find('.text-attn').exists()).toBe(false);
-    expect(rows[2]!.findAll('.bg-bar-idle')).toHaveLength(2);
-    expect(rows[2]!.text()).toContain('Read 1 min ago');
-    // The age takes focus in the 5-hour cell, and its tooltip says why the bars are grey.
-    const age = rows[2]!.findAll('button').find((b) => b.text() === 'Read 1 min ago')!;
-    expect(age.attributes('tabindex')).not.toBe('-1');
-    expect(age.element.closest('[aria-hidden=true]')).toBeNull();
-    expect(age.element.closest('[role=cell]')).not.toBeNull();
-    const tips = mount(OverviewPage)
-      .findAllComponents({ name: 'WTooltip' })
-      .map((w) => w.props('text'));
-    expect(tips).toContain(
-      'Its login is idle. The last reading still counts, and Claude renews the login the next time this account works.',
-    );
-    // Main's own expired sign-in stays amber.
-    store.state.main!.usageError = { kind: 'loginExpired' };
-    const again = mount(OverviewPage).findAll('[aria-labelledby=accounts-heading] [role=row]');
-    expect(again[1]!.get('.text-attn').text()).toBe("Sign in again for main's usage");
-    expect(again[1]!.findAll('.bg-bar-idle')).toHaveLength(0);
+    const five = rows[1]!.findAll('[role=cell]')[2]!;
+    const week = rows[2]!.findAll('[role=cell]')[3]!;
+    expect(five.text()).toBe('No 5-hour limit');
+    expect(week.text()).toBe('Not read yet');
+    for (const cell of [five, week]) {
+      expect(cell.classes()).toContain('self-stretch');
+      expect(cell.classes()).toContain('justify-center');
+    }
+  });
+
+  it('puts grey usage notes directly under the text-only 5-hour limit', () => {
+    store.now = NOW;
+    const usage = {
+      readAt: NOW - HOUR,
+      fiveHour: null,
+      weekly: { usedPercent: 20, resetsAt: NOW - 60_000 },
+      perModelWeekly: [],
+      extra: null,
+    };
+    store.state = state([
+      account({ id: 'c', label: 'Codex', provider: 'codex', usage }),
+      account({ id: 's', label: 'Second', usage }),
+      account({ id: 'l', label: 'No Logs', provider: 'codex', usageError: { kind: 'noLogs' } }),
+    ]);
+    const [, ...rows] = mount(OverviewPage).findAll('[aria-labelledby=accounts-heading] [role=row]');
+    expect(rows).toHaveLength(3);
+    for (const [index, [note, limitText]] of [
+      ['Weekly limit has reset', 'No 5-hour limit'],
+      ['Read 1 h ago', 'No 5-hour limit'],
+      ['No Codex sessions yet', 'Not read yet'],
+    ].entries()) {
+      const row = rows[index]!;
+      const five = row.findAll('[role=cell]')[2]!;
+      expect(five.classes()).toContain('justify-center');
+      expect(five.classes()).not.toContain('gap-1.25');
+      const visibleNote = five.get('[aria-hidden=true].text-tertiary');
+      expect(visibleNote.element.previousElementSibling?.textContent?.trim()).toBe(limitText);
+      expect(visibleNote.text()).toBe(note);
+      expect(five.get('.sr-only').text()).toBe(`${note}.`);
+      expect(row.find('p').exists()).toBe(false);
+    }
+  });
+
+  it('keeps an amber usage problem and its accompanying age beneath both limits of a text-only 5-hour row', () => {
+    store.now = NOW;
+    const problem = 'Kept apart until you confirm the new sign-in';
+    const age = 'Weekly limit has reset';
+    store.state = state([
+      account({
+        id: 'c',
+        label: 'Codex',
+        provider: 'codex',
+        usage: {
+          readAt: NOW - HOUR,
+          fiveHour: null,
+          weekly: { usedPercent: 20, resetsAt: NOW - 60_000 },
+          perModelWeekly: [],
+          extra: null,
+        },
+        usageError: { kind: 'identityChanged' },
+      }),
+    ]);
+    const row = mount(OverviewPage).findAll('[aria-labelledby=accounts-heading] [role=row]')[1]!;
+    const five = row.findAll('[role=cell]')[2]!;
+    expect(five.get('.sr-only').text()).toBe(`${problem}. ${age}.`);
+    expect(five.findAll('span:not(.sr-only)').map((span) => span.text())).toEqual(['No 5-hour limit']);
+    const note = row.get('p[aria-hidden=true].col-span-2');
+    expect(note.get('.text-attn').text()).toBe(problem);
+    expect(note.get('.text-tertiary').text()).toBe(age);
   });
 
   it("marks main's hand-off point on its weekly bar, and says it for screen readers", () => {

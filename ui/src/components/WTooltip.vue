@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // A short explanation shown on hover and on keyboard focus. The slot is the trigger: drawn as a plain button so it
-// can take focus, styled by the caller through its classes; or, with `as-child`, the caller's own focusable control.
+// can take focus, styled by the caller through its classes; or, with `as-child`, the caller's own element. That can
+// be a focusable control or a hover-only trigger hidden from assistive technology, such as a second idle usage bar.
 //
 // The explanation is drawn into the modal the trigger sits in, if any, so it stays inside that dialog's landmark.
 import { TooltipContent, TooltipPortal, TooltipProvider, TooltipRoot, TooltipTrigger } from 'reka-ui';

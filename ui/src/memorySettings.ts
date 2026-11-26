@@ -1,38 +1,45 @@
-// Memory's scale and filter, shown immediately and saved in order through the settings API.
-import { computed, ref } from 'vue';
-import { ApiError, api, type Settings } from './api';
+// Save Memory settings in order. Build each filter change from the settings that the server accepted.
+import { computed, ref, shallowRef } from 'vue';
+import { ApiError, api, type MemoryFilter, type MemoryScale, type Settings } from './api';
 import { DEFAULT_MEMORY_FILTER } from './memoryGroups';
 import { apply, store } from './store';
 
 type MemorySettings = Pick<Settings, 'memoryScale' | 'memoryFilter'>;
 
-const pending = ref<Partial<MemorySettings>>({});
+const pendingScale = shallowRef<{ scale: MemoryScale } | null>(null);
 const error = ref('');
-let saving: Promise<void> = Promise.resolve();
-let queued = 0;
+let saving = Promise.resolve(true);
 
 export const memorySettings = computed<MemorySettings>(() => ({
-  memoryScale: store.state?.settings.memoryScale ?? 'sessions',
+  memoryScale: pendingScale.value?.scale ?? store.state?.settings.memoryScale ?? 'sessions',
   memoryFilter: store.state?.settings.memoryFilter ?? DEFAULT_MEMORY_FILTER,
-  ...pending.value,
 }));
 
 export const memorySettingsError = computed(() => error.value);
 
-/** Keep choices responsive and save them in order, including when the user leaves and reopens Memory. */
-export function saveMemorySettings(patch: Partial<MemorySettings>): void {
-  pending.value = { ...pending.value, ...patch };
+function saveMemorySettings(patch: () => Partial<MemorySettings>): Promise<boolean> {
   error.value = '';
-  queued++;
   saving = saving.then(async () => {
     try {
-      const state = await api.settings(patch);
+      const state = await api.settings(patch());
       if (!store.state || state.revision >= store.state.revision) apply(state);
+      return true;
     } catch (e) {
       if (!(e instanceof ApiError)) store.connected = false;
       error.value = e instanceof ApiError ? e.message : 'Warden could not be reached.';
-    } finally {
-      if (--queued === 0) pending.value = {};
+      return false;
     }
   });
+  return saving;
+}
+
+export async function saveMemoryScale(scale: MemoryScale): Promise<void> {
+  const choice = { scale };
+  pendingScale.value = choice;
+  await saveMemorySettings(() => ({ memoryScale: scale }));
+  if (pendingScale.value === choice) pendingScale.value = null;
+}
+
+export function saveMemoryFilter(change: (current: MemoryFilter) => MemoryFilter): Promise<boolean> {
+  return saveMemorySettings(() => ({ memoryFilter: change(memorySettings.value.memoryFilter) }));
 }

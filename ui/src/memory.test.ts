@@ -22,7 +22,14 @@ import {
   stepDays,
   timeAxis,
 } from './memory';
-import { DEFAULT_MEMORY_FILTER, memoryCatalog, memoryGroups, sessionBands, showsRecordedPeak } from './memoryGroups';
+import {
+  DEFAULT_MEMORY_FILTER,
+  groupIsShown,
+  memoryCatalog,
+  memoryGroups,
+  sessionBands,
+  showsRecordedPeak,
+} from './memoryGroups';
 import { account } from './test/state';
 
 const GIB = 1024 * 1024;
@@ -101,12 +108,12 @@ describe('account sessions and filtering', () => {
     ],
   });
   const catalog = memoryCatalog(history.series, [main, work], [main, work]);
-  const groups = (filter = DEFAULT_MEMORY_FILTER) => memoryGroups(catalog, filter);
-  const sessions = (b: ReturnType<typeof groups>['bands'][number]) =>
+  const groups = (filter = DEFAULT_MEMORY_FILTER) => memoryGroups(catalog, filter.hiddenAccounts);
+  const sessions = (b: ReturnType<typeof groups>[number]) =>
     bandRows(history, sessionBands(catalog, b, history.date)).sort((a, b) => b.peak - a.peak);
 
   it('lists sessions by peak within their groups, with provider marks and recorded delegation', () => {
-    const { bands, choices } = groups();
+    const bands = groups();
     expect(
       bands.map((b) => [b.label, sessions(b).map(({ band }) => [band.label, band.colour, band.provider, band.from])]),
     ).toEqual([
@@ -126,26 +133,24 @@ describe('account sessions and filtering', () => {
           ['Long-running build', 'left', 'claude', null],
         ],
       ],
-    ]);
-    expect(choices.map(({ id, count }) => [id, count])).toEqual([
-      ['main', 3],
-      ['a1', 1],
-      ['other-sign-in', 1],
+      ['Warden itself', []],
     ]);
     const filtered = groups({ ...DEFAULT_MEMORY_FILTER, hiddenAccounts: ['main'] });
-    expect(sessions(filtered.bands[0]!)[0]?.band.from).toBe('Fix the login page');
+    expect(sessions(filtered.find((band) => band.key === 'account:a1')!)[0]?.band.from).toBe('Fix the login page');
   });
 
-  it('counts unticked menu choices with no recordings and omits the opt-in Warden choice from that count', () => {
+  it('keeps Warden as an opt-in row even without a recorded series', () => {
     const empty = memoryCatalog([], [main, work], [main, work]);
-    expect(memoryGroups(empty, DEFAULT_MEMORY_FILTER).hiddenCount).toBe(0);
-    const filter = { hiddenAccounts: ['a1', 'other-sign-in'], showLeft: false, showWarden: false };
-    expect(memoryGroups(empty, filter).hiddenCount).toBe(3);
-    expect(memoryGroups(empty, { ...filter, showWarden: true }).hiddenCount).toBe(3);
+    const bands = memoryGroups(empty, []);
+    const warden = bands.at(-1)!;
+    expect(warden.kind).toBe('warden');
+    expect(groupIsShown(warden, DEFAULT_MEMORY_FILTER)).toBe(false);
+    expect(groupIsShown(warden, { ...DEFAULT_MEMORY_FILTER, showWarden: true })).toBe(true);
+    expect(memoryReadings({ minutes: [], series: [] }, bands).warden).toBeNull();
   });
 
   it('shares complete bands with the stack and keeps a partial band and its open rows separate', () => {
-    const { bands } = groups();
+    const bands = groups();
     const main = bands[0]!;
     const recorded = sessionBands(catalog, main, history.date);
     const kept = recorded.find((slice) => slice.series[0] === 7)!;
@@ -159,7 +164,7 @@ describe('account sessions and filtering', () => {
   });
 
   it('draws an open group over the same band with internal edges and its own colour', () => {
-    const { bands } = groups();
+    const bands = groups();
     const mainBand = bands[0]!;
     const shown = new Set(bands.map((b) => b.key));
     const closed = bandPaths(chartModel(history, bands, shown)!, 60);
@@ -174,23 +179,26 @@ describe('account sessions and filtering', () => {
     expect(slices[1]?.edge).toBe('');
   });
 
-  it('filters accounts and left-running work, includes Warden on request, and detects an empty selection', () => {
-    const filtered = groups({ hiddenAccounts: ['a1'], showLeft: true, showWarden: true });
-    expect(filtered.bands.map((b) => b.key)).toEqual(['account:main', 'other-sign-in', 'left', 'warden']);
-    expect(filtered.bands.flatMap((b) => b.series).sort()).toEqual([1, 4, 5, 6, 7]);
-    expect(filtered.hiddenCount).toBe(1);
-    const shown = new Set(filtered.bands.map((b) => b.key));
-    const stats = figures(history, filtered.bands, shown, showsRecordedPeak(history, filtered.bands));
+  it('keeps unchecked groups in the table, and excludes their work from the chart and figures', () => {
+    const filter = { hiddenAccounts: ['a1'], showLeft: true, showWarden: true };
+    const bands = groups(filter);
+    expect(bands.map((b) => b.key)).toEqual(['account:main', 'account:a1', 'other-sign-in', 'left', 'warden']);
+    expect(bands.find((b) => b.kind === 'left')?.series).toEqual([6]);
+    const visible = bands.filter((b) => groupIsShown(b, filter));
+    expect(visible.map((b) => b.key)).toEqual(['account:main', 'other-sign-in', 'left', 'warden']);
+    expect(visible.flatMap((b) => b.series).sort()).toEqual([1, 4, 5, 6, 7]);
+    const shown = new Set(visible.map((b) => b.key));
+    const stats = figures(history, bands, shown, showsRecordedPeak(history, visible));
     expect(stats.now).toBe(GIB + 575 * MIB);
     expect(stats.peak).toBe(stats.now);
     shown.delete('warden');
-    expect(figures(history, filtered.bands, shown, false).now).toBe(GIB + 550 * MIB);
-    const leftOff = groups({ ...DEFAULT_MEMORY_FILTER, showLeft: false });
-    expect(leftOff.bands.flatMap((b) => b.series).sort()).toEqual([1, 2, 4, 7]);
-    expect(leftOff.bands.some((b) => b.kind === 'left')).toBe(false);
-    const empty = groups({ hiddenAccounts: ['main', 'a1', 'other-sign-in'], showLeft: false, showWarden: false });
-    expect(empty.allHidden).toBe(true);
-    expect(empty.bands).toEqual([]);
+    expect(figures(history, bands, shown, false).now).toBe(GIB + 550 * MIB);
+    const greysOff = { ...DEFAULT_MEMORY_FILTER, hiddenAccounts: ['other-sign-in'], showLeft: false };
+    expect(
+      groups(greysOff)
+        .filter((b) => groupIsShown(b, greysOff))
+        .map((b) => b.key),
+    ).toEqual(['account:main', 'account:a1']);
   });
 });
 
@@ -216,7 +224,7 @@ describe('whole computer and guide', () => {
     expect(computerPath(chartModel(history, [], new Set())!, 80, CHART)).toBe('');
   });
 
-  it('lists every group and caps the sessions of each open group at five', () => {
+  it('lists groups with memory at the minute and caps sessions of each open group at five', () => {
     const seriesList = [
       ...Array.from({ length: 12 }, (_, i) => series(i + 1, 'session', 'main')),
       ...Array.from({ length: 8 }, (_, i) => series(i + 13, 'session', 'a1')),
@@ -232,13 +240,12 @@ describe('whole computer and guide', () => {
       ],
     });
     const catalog = memoryCatalog(history.series, [main, work], [main, work]);
-    const { bands } = memoryGroups(catalog, DEFAULT_MEMORY_FILTER);
+    const bands = catalog.bands.filter((b) => groupIsShown(b, DEFAULT_MEMORY_FILTER));
     const open = bands.map((group) => ({ ...group, slices: sessionBands(catalog, group, history.date) }));
     const model = chartModel(history, open, new Set(open.map((b) => b.key)), 3, 60, 'computer')!;
     const guide = guideAt(model, 600);
-    expect(guide.rows).toHaveLength(11);
+    expect(guide.rows).toHaveLength(2);
     expect(guide.rows.slice(0, 2).map(({ kib }) => kib / MIB)).toEqual([78, 36]);
-    expect(guide.rows.at(-1)?.kib).toBe(0);
     expect(guide.rows[0]?.sessions?.map(({ kib }) => kib / MIB)).toEqual([12, 11, 10, 9, 8]);
     expect(guide.rows[0]?.more).toEqual({ count: 7, kib: 28 * MIB });
     expect(guide.rows[1]?.sessions?.map(({ kib }) => kib / MIB)).toEqual([8, 7, 6, 5, 4]);
@@ -598,14 +605,11 @@ describe('the chart', () => {
     const g = guideAt(model, 601);
     expect(g).toEqual({
       time: '10:01',
-      rows: [
-        { key: 'account:main', label: 'Main', kib: GIB },
-        { key: 'account:a1', label: 'Work', kib: 0 },
-      ],
+      rows: [{ key: 'account:main', label: 'Main', kib: GIB }],
       total: GIB,
       missing: null,
     });
-    expect(guideText(g)).toBe('10:01: Main 1 GB, Work 0 MB, total 1 GB');
+    expect(guideText(g)).toBe('10:01: Main 1 GB, total 1 GB');
     // In a gap, and after the last recording of a span stretched to an hour.
     expect(guideText(guideAt(model, 650))).toBe('10:50: Warden not running');
     const short = chartModel({ ...d, minutes: [minute(600, [[1, GIB]])], gaps: [] }, bands, both)!;

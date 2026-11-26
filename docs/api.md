@@ -145,9 +145,9 @@ interface Settings {
   hiddenResetAccounts: string[];
   /** Whether the Overview's limit resets list shows only each account's soonest reset; default `false`. Set only by the list's filter. */
   soonestResetOnly: boolean;
-  /** Memory's chart scale, default `sessions`. */
+  /** Memory's Computer figure switch, "Show on chart". Off is `sessions` (the default), on is `computer`. */
   memoryScale: MemoryScale;
-  /** Memory's filter, default no hidden accounts, Left running shown and Warden itself hidden from the stack. */
+  /** Memory's saved table group checkboxes. Accounts, Other sign-in and Left running default to shown, and Warden itself defaults to hidden. Session checkboxes are local to the page. */
   memoryFilter: MemoryFilter;
 }
 

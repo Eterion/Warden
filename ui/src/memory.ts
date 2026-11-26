@@ -229,12 +229,12 @@ export function memoryReadings(
     }
   }
   const total = reading();
-  let warden = rows.get('warden') ?? null;
+  let warden: Reading | null = null;
   for (const series of day.series) {
     if (series.kind !== 'warden') continue;
+    warden ??= rows.get('warden') ?? reading();
     const target = targets.get(series.series);
-    if (warden && target?.row === warden) continue;
-    warden ??= reading();
+    if (target?.row === warden) continue;
     if (target) target.warden = true;
     else targets.set(series.series, { warden: true });
   }
@@ -703,7 +703,7 @@ export interface Guide {
   missing: 'not-running' | 'nothing' | null;
 }
 
-/** The complete account stack and up to five sessions from each open band at the chosen minute. */
+/** Groups with memory and up to five sessions from each open band at the chosen minute. */
 export function guideAt(model: ChartModel, m: number): Guide {
   const index = model.minutes.findIndex((minute) => minute.m === m);
   if (index < 0) {
@@ -718,6 +718,7 @@ export function guideAt(model: ChartModel, m: number): Guide {
   });
   const largest = (a: GuideReading, b: GuideReading) => b.kib - a.kib;
   const rows = model.bands
+    .filter((band) => readings.shown.get(band.key)!.values[index]! > 0)
     .map((band) => {
       const row = entry(band, readings.shown.get(band.key)!);
       if (!band.slices?.length) return row;

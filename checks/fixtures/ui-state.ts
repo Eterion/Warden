@@ -507,7 +507,12 @@ export function memoryDays(now: number): string[] {
  * AI session. `high`: the computer above 90% in use. `short`: a day recorded only from 00:05 to 00:50, so the
  * chart spans its first hour.
  */
-export function memoryDay(date: string, now: number, variant: 'busy' | 'quiet' | 'high' | 'short' = 'busy'): unknown {
+export function memoryDay(
+  date: string,
+  now: number,
+  variant: 'busy' | 'quiet' | 'high' | 'short' = 'busy',
+  longParent = false,
+): unknown {
   const quiet = variant === 'quiet';
   const today = date === localDay(now);
   const days = memoryDays(now);
@@ -547,9 +552,11 @@ export function memoryDay(date: string, now: number, variant: 'busy' | 'quiet' |
     sessionId: kind === 'warden' ? null : `memory-${series === 4 ? 2 : series}`,
     parentSessionId: series === 2 || series === 4 ? 'memory-1' : null,
     name:
-      (series === 10
-        ? 'Update the fixtures'
-        : ['Memory page', 'Review the chart', 'Check the build', 'Review the chart'][series - 1]) ??
+      (series === 1 && longParent
+        ? 'Memory page layout and its smaller window accessibility checks'
+        : series === 10
+          ? 'Update the fixtures'
+          : ['Memory page', 'Review the chart', 'Check the build', 'Review the chart'][series - 1]) ??
       (kind === 'warden' ? null : `Memory run ${series}`),
     project: kind === 'warden' ? null : 'Warden',
   });

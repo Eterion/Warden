@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// The Memory page's account stack and its optional session slices, drawn by MemoryPlot. The Whole computer scale
-// adds the Computer in use line. The pointer and keyboard guide show each account's total, and up to five sessions
+// The Memory page's account stack and its optional session slices, drawn by MemoryPlot. Show on chart adds the
+// Computer in use line. The pointer and keyboard guide show groups with memory at the minute, and up to five sessions
 // per open group. Arrow keys move a minute, Page Up and Page Down an hour, Home and End to the ends. Escape hides
 // the tooltip. The table is the chart's accessible equivalent.
 import { useElementSize } from '@vueuse/core';

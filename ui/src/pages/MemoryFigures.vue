@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { CpuAi, Monitor, Mountain } from '@lucide/vue';
-import { computed } from 'vue';
+import { computed, useId } from 'vue';
 import OwlIcon from '../components/OwlIcon.vue';
+import WSwitch from '../components/WSwitch.vue';
 import WTooltip from '../components/WTooltip.vue';
 import WWidget from '../components/WWidget.vue';
 import { memoryTrend, meterParts, shareText, size, type ChartModel, type Figures } from '../memory';
@@ -13,7 +14,10 @@ const props = defineProps<{
   today: boolean;
   total: number | null;
   model: ChartModel | null;
+  showComputer: boolean;
 }>();
+const emit = defineEmits<{ 'update:showComputer': [boolean] }>();
+const computerSwitch = useId();
 
 const SHARE_NOTE =
   'Shares count private memory, part of which Windows can page out to disk, so a share can read a little high when memory is short.';
@@ -69,8 +73,29 @@ const VALUE = 'flex flex-wrap items-baseline gap-x-2 tabular-nums';
       </template>
     </WWidget>
 
-    <WWidget v-if="props.figures.computer && meter" group title="Computer" data-figure="computer" data-computer>
+    <WWidget
+      v-if="props.figures.computer && meter"
+      group
+      center-header
+      title="Computer"
+      data-figure="computer"
+      data-computer
+    >
       <template #icon><Monitor :class="ICON" aria-hidden="true" /></template>
+      <template #header>
+        <div class="ml-auto flex shrink-0 items-center gap-2">
+          <label :for="computerSwitch" class="cursor-pointer text-12 whitespace-nowrap text-secondary"
+            >Show on chart</label
+          >
+          <WSwitch
+            :id="computerSwitch"
+            size="sm"
+            label="Show on chart"
+            :model-value="props.showComputer"
+            @update:model-value="emit('update:showComputer', $event)"
+          />
+        </div>
+      </template>
       <template #body>
         <div :class="BODY">
           <p :class="VALUE">

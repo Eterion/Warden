@@ -72,7 +72,10 @@ type Fixture =
   | 'memoryHigh'
   | 'memoryShort'
   | 'memoryComputer'
-  | 'memoryAllHidden';
+  | 'memoryWarden'
+  | 'memoryAllHidden'
+  | 'memoryLongParent'
+  | 'memoryBandHidden';
 
 /** What to do on a page once it is ready, to reach a state such as a menu's modal (Playwright selectors). */
 /** `hover` rests the pointer on an element; `press` also holds the button down on it, until the page is checked. */
@@ -245,43 +248,51 @@ export const PAGES: {
       { click: '[aria-label="Show the sessions of Main"]' },
       { waitFor: '[data-session-of="account:main"] [data-line="elbow"]' },
       { waitFor: '[data-slice-edge]' },
-      { hover: '[data-session-of="account:main"] [title="Memory page"]' },
+      { hover: '[data-session-of="account:main"] [data-memory-name]:text-is("Memory page")' },
     ],
     viewport: { width: 800, height: 1100 },
   },
   {
     name: 'memory-account-and-left-open-past',
     path: '/#/memory',
-    fixture: 'memory',
+    fixture: 'memoryLongParent',
     ready: '[data-memory-table]',
     steps: [
       { click: '[aria-label="Show the sessions of Second"]' },
       { click: '[aria-label="Previous day"]' },
       { waitFor: '[data-session-of="account:a2"] [data-line="elbow"]' },
+      { waitFor: '[data-session-of="account:a2"] [data-started-from]:has-text("Memory page")' },
       { click: '[aria-label="Show the sessions of Left running"]' },
       { waitFor: '[data-session-of="left"] [data-line="elbow"]' },
+      { focus: '[data-session-of="account:a2"] button[data-started-from]' },
+      { waitFor: '[role=tooltip]:has-text("Memory page layout and its smaller window accessibility checks")' },
     ],
     viewport: { width: 1280, height: 1180 },
   },
   {
-    name: 'memory-filter-open',
+    name: 'memory-warden-checked',
     path: '/#/memory',
-    fixture: 'memory',
-    ready: '[data-memory-chart]',
-    steps: [{ click: 'button[aria-label^="Filter memory"]' }, { waitFor: '[role=menuitemcheckbox]' }],
+    fixture: 'memoryWarden',
+    ready: '[data-band-row="warden"] [role=checkbox][aria-checked=true]',
+    steps: [{ waitFor: '[data-memory-chart] [data-band="warden"]' }],
+    viewport: { width: 1280, height: 1180 },
   },
   {
-    name: 'memory-whole-computer',
-    path: '/#/memory',
-    fixture: 'memoryComputer',
-    ready: '[data-memory-chart] [data-computer-line]',
-    steps: [{ focus: '[data-memory-chart]' }, { waitFor: '[data-guide-tip]' }],
-  },
-  {
-    name: 'memory-filter-everything-hidden',
+    name: 'memory-nothing-ticked',
     path: '/#/memory',
     fixture: 'memoryAllHidden',
     ready: '[data-memory-all-hidden]',
+  },
+  {
+    name: 'memory-show-on-chart',
+    path: '/#/memory',
+    fixture: 'memoryComputer',
+    ready: '[data-memory-chart] [data-computer-line]',
+    steps: [
+      { waitFor: '[role=switch][aria-label="Show on chart"][aria-checked=true]' },
+      { focus: '[data-memory-chart]' },
+      { waitFor: '[data-guide-tip]' },
+    ],
   },
   {
     name: 'memory-nothing-running',
@@ -344,12 +355,9 @@ export const PAGES: {
     // The legend uses a hollow swatch for the band unchecked in the table.
     name: 'memory-band-hidden',
     path: '/#/memory',
-    fixture: 'memory',
-    ready: '[data-memory-chart]',
-    steps: [
-      { click: '[data-band-row="account:a2"] [role=checkbox]' },
-      { waitFor: '[data-legend-band="account:a2"] .border-control' },
-    ],
+    fixture: 'memoryBandHidden',
+    ready: '[data-band-row="account:a2"] [role=checkbox][aria-checked=false]',
+    steps: [{ waitFor: '[data-legend-band="account:a2"] .border-control' }],
   },
   {
     name: 'overview',
@@ -1166,10 +1174,8 @@ function fakeApi(current: () => Fixture): Plugin {
                         ? resetSuggestedState(now)
                         : normalState(now);
         if (fixture === 'hooksOff') state.hooksOff = true;
-        if (fixture === 'memoryComputer') {
-          state.settings.memoryScale = 'computer';
-          state.settings.memoryFilter.showWarden = true;
-        }
+        if (fixture === 'memoryComputer') state.settings.memoryScale = 'computer';
+        if (fixture === 'memoryWarden') state.settings.memoryFilter.showWarden = true;
         if (fixture === 'memoryAllHidden') {
           state.settings.memoryFilter = {
             hiddenAccounts: ['main', 'a2', 'a3', 'a4', 'gone', 'gone-codex', 'other-sign-in'],
@@ -1177,6 +1183,7 @@ function fakeApi(current: () => Fixture): Plugin {
             showWarden: false,
           };
         }
+        if (fixture === 'memoryBandHidden') state.settings.memoryFilter.hiddenAccounts = ['a2'];
         if (fixture === 'codexWeeklyReset') {
           const weekly = state.accounts.find((a) => a.id === 'a3')?.usage?.weekly;
           if (weekly) weekly.resetsAt = now - 5 * 60_000;
@@ -1282,7 +1289,7 @@ function fakeApi(current: () => Fixture): Plugin {
                 : fixture === 'memoryShort'
                   ? 'short'
                   : 'busy';
-          send(res, memoryDay(date, now, variant));
+          send(res, memoryDay(date, now, variant, fixture === 'memoryLongParent'));
           return;
         }
         // Using a reset: refused as the provider would say it (nothing real is sent; the other fixtures answer the state).

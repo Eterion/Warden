@@ -324,17 +324,25 @@ body {
 }
 
 @utility grid-cols-memory {
-  /* The Memory table: checkbox, account (its grey, icon and name), now, peak, share. */
-  grid-template-columns: 20px minmax(180px, 1fr) minmax(96px, 120px) minmax(80px, 120px) minmax(88px, 120px);
+  /* The Memory table: checkbox, name, delegation, now, peak, share. */
+  grid-template-columns: 20px minmax(136px, 2fr) minmax(72px, 1fr) minmax(94px, 120px) minmax(48px, 94px) minmax(
+      60px,
+      104px
+    );
+}
+
+@utility grid-cols-memory-past {
+  /* Past days omit the Now meter and reading. */
+  grid-template-columns: 20px minmax(136px, 2fr) minmax(72px, 1fr) minmax(48px, 94px) minmax(80px, 104px);
 }
 
 @utility grid-cols-figures {
-  /* The Memory page's figures: equal columns across the width, as many as fit at a figure's least width. */
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 184px), 1fr));
+  /* Equal columns, each wide enough for the Computer title and switch on one line. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 256px), 1fr));
 }
 
 @utility min-w-memory {
-  min-width: 560px;
+  min-width: 502px;
 }
 
 @utility dust-hole {

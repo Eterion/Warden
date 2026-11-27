@@ -176,6 +176,20 @@ describe('WIconButton', () => {
     await button.trigger('click');
     expect(clicks).toBe(1);
   });
+
+  it('at nav size is a 36 px square with NavItem hover and pressed fills; xs stays a bare icon', () => {
+    const nav = mount(WIconButton, { props: { label: 'Switch to dark theme', icon: Folder, size: 'nav' } });
+    const classes = nav.get('button').classes();
+    expect(classes).toEqual(
+      expect.arrayContaining(['size-9', 'rounded-lg', 'text-icon', 'hov:bg-active', 'press:bg-press']),
+    );
+    expect(classes.some((c) => c.startsWith('hov:text-') || c.startsWith('press:text-'))).toBe(false);
+    expect(nav.get('svg').classes()).toContain('size-4.5');
+    const xs = mount(WIconButton, { props: { label: 'Add account', icon: Folder, size: 'xs' } });
+    const bare = xs.get('button').classes();
+    expect(bare).toEqual(expect.arrayContaining(['hov:text-icon-hover', 'press:text-text']));
+    expect(bare.some((c) => c.includes('bg-'))).toBe(false);
+  });
 });
 
 describe('a button usable only sometimes', () => {

@@ -534,6 +534,12 @@
     "use": "icon of a hovered button on win"
   },
   {
+    "fg": "icon",
+    "bg": ["win", "active"],
+    "min": 3,
+    "use": "icon of a hovered nav item or the sidebar's theme button on win"
+  },
+  {
     "fg": "text",
     "bg": ["panel", "press"],
     "min": 4.5,

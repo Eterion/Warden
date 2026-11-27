@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // A button that is only an icon, named by its label. Use md beside a heading, sm on a row or in compact page
-// controls, xs for a bare icon beside a small heading (the sidebar's Accounts), and nav for a bare icon matching a
-// NavItem's height and icon size (the theme button). Bare icons change colour on hover and press. It also serves as a
-// Reka trigger (as-child), which marks it open with data-state.
+// controls, xs for a bare icon beside a small heading (the sidebar's Accounts), which only changes its icon's colour on
+// hover and press, and nav for a square at a NavItem's height and icon size with a NavItem's hover and pressed fills (the
+// theme button beside Settings). It also serves as a Reka trigger (as-child), which marks it open with data-state.
 //
 // One that cannot be used now says why (`disabledReason`): it stays focusable with `aria-disabled`, shows the reason in
 // the shared tooltip on hover and focus, does nothing when activated, and has no hover or pressed state; only its icon
@@ -26,13 +26,13 @@ const passed = computed(() =>
 
 const BASE =
   'inline-flex shrink-0 cursor-pointer items-center justify-center text-icon focus-visible:outline-2 focus-visible:outline-indicator';
-const SHAPE = { md: 'size-9 rounded-lg', sm: 'size-8 rounded-lg', xs: 'size-6 rounded-lg', nav: 'h-9 w-6 rounded-lg' };
+const SHAPE = { md: 'size-9 rounded-lg', sm: 'size-8 rounded-lg', xs: 'size-6 rounded-lg', nav: 'size-9 rounded-lg' };
 const BARE = 'hov:text-icon-hover press:text-text data-[state=open]:text-text';
 const LOOK = {
   md: 'hov:bg-chip-off press:bg-press data-[state=open]:bg-chip-off data-[state=open]:press:bg-press',
   sm: 'hov:bg-chip-off press:bg-press data-[state=open]:bg-chip-off data-[state=open]:press:bg-press',
   xs: BARE,
-  nav: BARE,
+  nav: 'hov:bg-active press:bg-press data-[state=open]:bg-active data-[state=open]:press:bg-press',
 };
 const ICON = { md: 'size-4.5', sm: 'size-4.5', xs: 'size-3.5', nav: 'size-4.5' };
 </script>

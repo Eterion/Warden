@@ -785,6 +785,14 @@ export const PAGES: {
     ],
   },
   {
+    // Held down, beside Settings: the nav item's pressed fill.
+    name: 'sidebar-theme-press',
+    path: '/',
+    fixture: 'normal',
+    ready: 'main [role=table]',
+    steps: [{ press: 'aside button[aria-label^="Switch to "][aria-label$=" theme"]' }],
+  },
+  {
     name: 'settings-add-existing-folder',
     path: '/#/settings/accounts/add',
     fixture: 'normal',

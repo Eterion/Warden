@@ -180,8 +180,15 @@ function onMenuClosed(): void {
       <p v-if="themeError" role="alert" class="mb-2 px-2 text-13 font-medium text-attn">{{ themeError }}</p>
       <div class="flex items-center gap-0.5">
         <NavItem :icon="Settings" @click="openSettings()">Settings</NavItem>
+        <!-- Reaches 6 px into the sidebar's padding, so its icon stays centred under Add account's "+". -->
         <WTooltip :text="themeButton.label" as-child>
-          <WIconButton :label="themeButton.label" :icon="themeButton.icon" size="nav" @click="toggleTheme" />
+          <WIconButton
+            :label="themeButton.label"
+            :icon="themeButton.icon"
+            size="nav"
+            class="-mr-1.5"
+            @click="toggleTheme"
+          />
         </WTooltip>
       </div>
     </div>

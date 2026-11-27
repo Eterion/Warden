@@ -323,17 +323,37 @@ body {
   min-width: 900px;
 }
 
+@utility memory-table-frame {
+  /* Around the Memory table. The figures' columns take their widths from the frame's width alone (100cqi), never from
+     whether "Started from" shows, so opening or closing a group moves nothing else. Each grows linearly from its
+     minimum, with the frame at 512px (the 800px window), to its maximum with the frame at 800px; the name (and
+     "Started from") takes the rest. */
+  container-type: inline-size;
+  --memory-now: clamp(94px, calc(94px + (100cqi - 512px) * 26 / 288), 120px);
+  --memory-peak: clamp(48px, calc(48px + (100cqi - 512px) * 46 / 288), 94px);
+  --memory-share: clamp(60px, calc(60px + (100cqi - 512px) * 44 / 288), 104px);
+  --memory-share-past: clamp(80px, calc(80px + (100cqi - 512px) * 24 / 288), 104px);
+}
+
 @utility grid-cols-memory {
-  /* The Memory table: checkbox, name, delegation, now, peak, share. */
-  grid-template-columns: 20px minmax(136px, 2fr) minmax(72px, 1fr) minmax(94px, 120px) minmax(48px, 94px) minmax(
-      60px,
-      104px
-    );
+  /* The Memory table today, inside memory-table-frame: checkbox, name, now, peak, share. */
+  grid-template-columns: 20px minmax(136px, 1fr) var(--memory-now) var(--memory-peak) var(--memory-share);
+}
+
+@utility grid-cols-memory-from {
+  /* With "Started from", while an open group lists a delegated session: name and delegation share the rest. */
+  grid-template-columns:
+    20px minmax(136px, 2fr) minmax(72px, 1fr) var(--memory-now) var(--memory-peak)
+    var(--memory-share);
 }
 
 @utility grid-cols-memory-past {
   /* Past days omit the Now meter and reading. */
-  grid-template-columns: 20px minmax(136px, 2fr) minmax(72px, 1fr) minmax(48px, 94px) minmax(80px, 104px);
+  grid-template-columns: 20px minmax(136px, 1fr) var(--memory-peak) var(--memory-share-past);
+}
+
+@utility grid-cols-memory-past-from {
+  grid-template-columns: 20px minmax(136px, 2fr) minmax(72px, 1fr) var(--memory-peak) var(--memory-share-past);
 }
 
 @utility grid-cols-figures {

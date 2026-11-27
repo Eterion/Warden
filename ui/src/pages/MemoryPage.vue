@@ -225,6 +225,18 @@ const rows = computed<TableRow[]>(() =>
     ];
   }),
 );
+/** "Started from" shows only while an open group lists a delegated session whose parent is in the day. */
+const hasFrom = computed(() => rows.value.some((r) => r.session && r.from));
+// Whole class names, so Tailwind finds each utility in the source.
+const tableCols = computed(() =>
+  isToday.value
+    ? hasFrom.value
+      ? 'grid-cols-memory-from gap-x-2'
+      : 'grid-cols-memory gap-x-2'
+    : hasFrom.value
+      ? 'grid-cols-memory-past-from gap-x-2'
+      : 'grid-cols-memory-past gap-x-2',
+);
 const steps = computed(() => stepDays(days.value, day.value, today.value));
 const nothing = computed(() => !!data.value && data.value.minutes.length === 0 && !isToday.value);
 /** Today, nothing ran all day: the message can take the chart's place. */
@@ -445,117 +457,119 @@ async function toggle(r: TableRow): Promise<void> {
       </WWidget>
 
       <p v-if="memorySettingsError" role="status" class="text-13 text-attn">{{ memorySettingsError }}</p>
-      <WTable
-        ref="table"
-        on="panel"
-        aria-label="Memory by account"
-        :cols="isToday ? 'grid-cols-memory gap-x-2' : 'grid-cols-memory-past gap-x-2'"
-        class="min-w-memory"
-        data-memory-table
-        @click="onTableClick"
-        @pointerover="hovered = rowKey($event.target)"
-        @pointerout="hovered = rowKey($event.relatedTarget)"
-        @focusin="onTableFocus"
-        @focusout="focused = null"
-      >
-        <template #head>
-          <span role="columnheader"><span class="sr-only">Shown in the chart</span></span>
-          <span role="columnheader">Account</span>
-          <span role="columnheader" class="whitespace-nowrap">Started from</span>
-          <span v-if="isToday" role="columnheader" class="text-right">Now</span>
-          <span role="columnheader" class="text-right">Peak</span>
-          <span role="columnheader" class="text-right whitespace-nowrap">{{
-            isToday ? 'Share now' : 'Share at peak'
-          }}</span>
-        </template>
-        <WTableRow
-          v-for="r in rows"
-          :key="r.band.key"
-          class="group cursor-pointer py-2.25 text-13 hov:bg-row-hover press:not-has-[[aria-expanded]:active]:not-has-[[data-started-from]:active]:bg-row-press"
-          :data-band-row="r.band.key"
-          :data-session-of="r.session ? r.group.key : undefined"
+      <div class="memory-table-frame">
+        <WTable
+          ref="table"
+          on="panel"
+          aria-label="Memory by account"
+          :cols="tableCols"
+          class="min-w-memory"
+          data-memory-table
+          @click="onTableClick"
+          @pointerover="hovered = rowKey($event.target)"
+          @pointerout="hovered = rowKey($event.relatedTarget)"
+          @focusin="onTableFocus"
+          @focusout="focused = null"
         >
-          <span role="cell" class="inline-flex items-center justify-center">
-            <button
-              type="button"
-              role="checkbox"
-              :aria-checked="r.checked"
-              :aria-disabled="(!r.session && savingGroups.has(r.group.key)) || undefined"
-              :aria-label="`Show ${r.band.label}${r.session ? ` under ${r.group.label}` : ''} in the chart`"
-              :class="[
-                'inline-flex size-4 cursor-pointer items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator',
-                r.checked !== false
-                  ? 'bg-primary text-on-primary group-hov:bg-primary-hover group-not-has-[[aria-expanded]:active]:group-not-has-[[data-started-from]:active]:group-press:bg-primary-press'
-                  : 'border-2 border-control group-hov:bg-chip-off group-not-has-[[aria-expanded]:active]:group-not-has-[[data-started-from]:active]:group-press:bg-press',
-              ]"
-            >
-              <Check v-if="r.checked === true" class="size-3" :stroke-width="3" aria-hidden="true" />
-              <Minus v-else-if="r.checked === 'mixed'" class="size-3" :stroke-width="3" aria-hidden="true" />
-            </button>
-          </span>
-          <div role="cell" class="flex min-w-0 items-center self-stretch">
-            <SessionTreeLines v-if="r.session" :depth="1" :rails="[]" :last="r.last" disclosure />
-            <div v-else class="size-6 shrink-0">
-              <WIconButton
-                v-if="r.group.kind !== 'warden' && r.group.series.length"
-                size="xs"
-                :icon="expanded.has(r.group.key) ? ChevronDown : ChevronRight"
-                :label="`${expanded.has(r.group.key) ? 'Hide' : 'Show'} the sessions of ${r.group.label}`"
-                :aria-expanded="expanded.has(r.group.key)"
+          <template #head>
+            <span role="columnheader"><span class="sr-only">Shown in the chart</span></span>
+            <span role="columnheader">Account</span>
+            <span v-if="hasFrom" role="columnheader" class="whitespace-nowrap">Started from</span>
+            <span v-if="isToday" role="columnheader" class="text-right">Now</span>
+            <span role="columnheader" class="text-right">Peak</span>
+            <span role="columnheader" class="text-right whitespace-nowrap">{{
+              isToday ? 'Share now' : 'Share at peak'
+            }}</span>
+          </template>
+          <WTableRow
+            v-for="r in rows"
+            :key="r.band.key"
+            class="group cursor-pointer py-2.25 text-13 hov:bg-row-hover press:not-has-[[aria-expanded]:active]:not-has-[[data-started-from]:active]:bg-row-press"
+            :data-band-row="r.band.key"
+            :data-session-of="r.session ? r.group.key : undefined"
+          >
+            <span role="cell" class="inline-flex items-center justify-center">
+              <button
+                type="button"
+                role="checkbox"
+                :aria-checked="r.checked"
+                :aria-disabled="(!r.session && savingGroups.has(r.group.key)) || undefined"
+                :aria-label="`Show ${r.band.label}${r.session ? ` under ${r.group.label}` : ''} in the chart`"
+                :class="[
+                  'inline-flex size-4 cursor-pointer items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indicator',
+                  r.checked !== false
+                    ? 'bg-primary text-on-primary group-hov:bg-primary-hover group-not-has-[[aria-expanded]:active]:group-not-has-[[data-started-from]:active]:group-press:bg-primary-press'
+                    : 'border-2 border-control group-hov:bg-chip-off group-not-has-[[aria-expanded]:active]:group-not-has-[[data-started-from]:active]:group-press:bg-press',
+                ]"
+              >
+                <Check v-if="r.checked === true" class="size-3" :stroke-width="3" aria-hidden="true" />
+                <Minus v-else-if="r.checked === 'mixed'" class="size-3" :stroke-width="3" aria-hidden="true" />
+              </button>
+            </span>
+            <div role="cell" class="flex min-w-0 items-center self-stretch">
+              <SessionTreeLines v-if="r.session" :depth="1" :rails="[]" :last="r.last" disclosure />
+              <div v-else class="size-6 shrink-0">
+                <WIconButton
+                  v-if="r.group.kind !== 'warden' && r.group.series.length"
+                  size="xs"
+                  :icon="expanded.has(r.group.key) ? ChevronDown : ChevronRight"
+                  :label="`${expanded.has(r.group.key) ? 'Hide' : 'Show'} the sessions of ${r.group.label}`"
+                  :aria-expanded="expanded.has(r.group.key)"
+                />
+              </div>
+              <span
+                aria-hidden="true"
+                data-memory-swatch
+                :class="[
+                  'mr-2 size-3 shrink-0 rounded-xs',
+                  highlighted === r.band.key ? 'bg-chart-hover' : SWATCH[r.band.colour],
+                ]"
+              ></span>
+              <span class="flex min-w-0 items-center gap-1.5">
+                <OwlIcon v-if="r.band.kind === 'warden'" :size="12" class="shrink-0 text-icon" aria-hidden="true" />
+                <ProviderMark
+                  v-else-if="r.provider"
+                  :provider="r.provider"
+                  size="xs"
+                  :label="r.provider === 'claude' ? 'Claude' : 'Codex'"
+                />
+                <MemoryCellText
+                  :text="r.band.label"
+                  :clipped="clipped.has(r.band.key)"
+                  class="font-medium"
+                  data-memory-name
+                />
+              </span>
+            </div>
+            <div v-if="hasFrom" role="cell" class="min-w-0">
+              <MemoryCellText
+                v-if="r.from"
+                :text="r.from"
+                :clipped="clipped.has(`from:${r.band.key}`)"
+                class="text-12 text-tertiary"
+                data-started-from
               />
             </div>
-            <span
-              aria-hidden="true"
-              data-memory-swatch
-              :class="[
-                'mr-2 size-3 shrink-0 rounded-xs',
-                highlighted === r.band.key ? 'bg-chart-hover' : SWATCH[r.band.colour],
-              ]"
-            ></span>
-            <span class="flex min-w-0 items-center gap-1.5">
-              <OwlIcon v-if="r.band.kind === 'warden'" :size="12" class="shrink-0 text-icon" aria-hidden="true" />
-              <ProviderMark
-                v-else-if="r.provider"
-                :provider="r.provider"
-                size="xs"
-                :label="r.provider === 'claude' ? 'Claude' : 'Codex'"
-              />
-              <MemoryCellText
-                :text="r.band.label"
-                :clipped="clipped.has(r.band.key)"
-                class="font-medium"
-                data-memory-name
-              />
-            </span>
-          </div>
-          <div role="cell" class="min-w-0">
-            <MemoryCellText
-              v-if="r.from"
-              :text="r.from"
-              :clipped="clipped.has(`from:${r.band.key}`)"
-              class="text-12 text-tertiary"
-              data-started-from
-            />
-          </div>
-          <span v-if="isToday" role="cell" class="flex items-center justify-end gap-1.5 text-secondary tabular-nums">
-            <span aria-hidden="true" class="relative h-2 w-8 shrink-0 rounded-full bg-track" data-now-track>
-              <!-- The panel-colour edge separates the fill from the grey track in every row state. -->
-              <span v-if="r.now && maxNow" class="absolute inset-px">
-                <span
-                  :class="['block h-full rounded-full ring-1 ring-panel', SWATCH[r.band.colour]]"
-                  :style="{ width: `${(r.now / maxNow) * 100}%` }"
-                  data-now-meter
-                ></span>
+            <span v-if="isToday" role="cell" class="flex items-center justify-end gap-1.5 text-secondary tabular-nums">
+              <span aria-hidden="true" class="relative h-2 w-8 shrink-0 rounded-full bg-track" data-now-track>
+                <!-- The panel-colour edge separates the fill from the grey track in every row state. -->
+                <span v-if="r.now && maxNow" class="absolute inset-px">
+                  <span
+                    :class="['block h-full rounded-full ring-1 ring-panel', SWATCH[r.band.colour]]"
+                    :style="{ width: `${(r.now / maxNow) * 100}%` }"
+                    data-now-meter
+                  ></span>
+                </span>
               </span>
+              <span class="w-14 shrink-0 text-right whitespace-nowrap">{{ size(r.now ?? 0) }}</span>
             </span>
-            <span class="w-14 shrink-0 text-right whitespace-nowrap">{{ size(r.now ?? 0) }}</span>
-          </span>
-          <span role="cell" class="text-right whitespace-nowrap text-secondary tabular-nums">{{ size(r.peak) }}</span>
-          <span role="cell" class="text-right whitespace-nowrap text-tertiary tabular-nums">{{
-            shareText(isToday ? (r.now ?? 0) : r.peak, total)
-          }}</span>
-        </WTableRow>
-      </WTable>
+            <span role="cell" class="text-right whitespace-nowrap text-secondary tabular-nums">{{ size(r.peak) }}</span>
+            <span role="cell" class="text-right whitespace-nowrap text-tertiary tabular-nums">{{
+              shareText(isToday ? (r.now ?? 0) : r.peak, total)
+            }}</span>
+          </WTableRow>
+        </WTable>
+      </div>
     </div>
   </div>
 </template>

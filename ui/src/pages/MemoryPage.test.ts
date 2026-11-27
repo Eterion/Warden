@@ -268,6 +268,17 @@ describe('MemoryPage', () => {
     const disclosure = () => main().get('[aria-expanded]');
     const open = async (group: string) => page.get(`[aria-label="Show the sessions of ${group}"]`).trigger('click');
     const now = () => page.get('[data-figure="now"] strong').text();
+    const table = () => page.get('[data-memory-table]');
+    // "Started from" is a whole column or none: every row has a cell for each header.
+    const startedFrom = () => {
+      const heads = table().findAll('[role=columnheader]');
+      for (const row of table().findAll('[role=row]').slice(1))
+        expect(row.findAll('[role=cell]')).toHaveLength(heads.length);
+      const shown = heads.some((head) => head.text() === 'Started from');
+      expect(table().get('[role=row]').classes()).toContain(shown ? 'grid-cols-memory-from' : 'grid-cols-memory');
+      return shown;
+    };
+    expect(startedFrom()).toBe(false);
     expect(disclosure().attributes('aria-expanded')).toBe('false');
     expect(page.find('[data-session-of]').exists()).toBe(false);
     expect(page.find('[data-slice]').exists()).toBe(false);
@@ -279,6 +290,8 @@ describe('MemoryPage', () => {
       'Run the build',
       'Fix login',
     ]);
+    // Main's sessions were not delegated: no column.
+    expect(startedFrom()).toBe(false);
     expect(page.find('[data-slice-edge]').exists()).toBe(true);
     expect(slice().classes()).toContain('fill-chart-claude-1');
     await first().trigger('pointerover');
@@ -311,9 +324,15 @@ describe('MemoryPage', () => {
     await first().get('[role=checkbox]').trigger('click');
     expect(mainCheck().attributes('aria-checked')).toBe('mixed');
     expect(now()).toBe('3.8 GB');
+    await open('Other sign-in');
+    expect(startedFrom()).toBe(false);
+    await open('Work');
+    expect(startedFrom()).toBe(true);
+    await page.get('[aria-label="Hide the sessions of Work"]').trigger('click');
+    expect(startedFrom()).toBe(false);
     await open('Work');
     await open('Left running');
-    await open('Other sign-in');
+    expect(startedFrom()).toBe(true);
     const child = page.get('[data-session-of="account:a1"]');
     const parent = child.get('[data-started-from]');
     expect(parent.text()).toBe('Fix login');
@@ -326,6 +345,13 @@ describe('MemoryPage', () => {
     go(`memory/${PAST}`);
     await flushPromises();
     expect(disclosure().attributes('aria-expanded')).toBe('true');
+    // The open groups carry over to the past day, with the column and without Now.
+    expect(table().get('[role=row]').classes()).toContain('grid-cols-memory-past-from');
+    expect(
+      table()
+        .findAll('[role=columnheader]')
+        .map((head) => head.text()),
+    ).toEqual(['Shown in the chart', 'Account', 'Started from', 'Peak', 'Share at peak']);
     expect(mainCheck().attributes('aria-checked')).toBe('mixed');
     expect(page.find('[data-session-of="left"]').exists()).toBe(true);
     await page.get('[data-band-row="other-sign-in"] [role=checkbox]').trigger('click');
@@ -467,7 +493,7 @@ describe('MemoryPage', () => {
     expect(page.get('[data-memory-table]').attributes('aria-label')).toBe('Memory by account');
     const rows = page.findAll('[data-memory-table] [role=row]');
     expect(rows.map((r) => r.text())).toEqual([
-      'Shown in the chartAccountStarted fromNowPeakShare now',
+      'Shown in the chartAccountNowPeakShare now',
       'Main1 GB2 GB3%',
       'Work0 MB1 GB0%',
       'Warden itself9 MB14 MB<1%',

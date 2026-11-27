@@ -36,6 +36,13 @@ jobs:
           $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           if ("v$version" -ne $env:TAG) { throw "The tag $env:TAG does not match the workspace version $version." }
 
+      - name: The release's notes from CHANGELOG.md
+        shell: pwsh
+        run: |
+          $version = $env:TAG.TrimStart('v')
+          node checks/release-notes.ts $version "$env:RUNNER_TEMP/notes.md"
+          if ($LASTEXITCODE -ne 0) { throw "No release notes for $version in CHANGELOG.md." }
+
       - run: npm ci
 
       - name: Build the UI, warden.exe and the app
@@ -62,7 +69,7 @@ jobs:
           $exe = "Warden_${version}_x64-setup.exe"
           $manifest = [ordered]@{
             version   = $version
-            notes     = "Warden $version"
+            notes     = Get-Content "$env:RUNNER_TEMP/notes.md" -Raw -Encoding utf8
             pub_date  = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ', [Globalization.CultureInfo]::InvariantCulture)
             platforms = [ordered]@{
               'windows-x86_64' = [ordered]@{
@@ -81,4 +88,4 @@ jobs:
           $version = $env:TAG.TrimStart('v')
           $dir = 'target/release/bundle/nsis'
           $exe = "Warden_${version}_x64-setup.exe"
-          gh release create $env:TAG "$dir/$exe" "$dir/$exe.sig" "$dir/latest.json" --repo "${{ github.repository }}" --title "Warden $version" --notes "Warden $version"
+          gh release create $env:TAG "$dir/$exe" "$dir/$exe.sig" "$dir/latest.json" --repo "${{ github.repository }}" --title "Warden $version" --notes-file "$env:RUNNER_TEMP/notes.md"

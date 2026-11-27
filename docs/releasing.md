@@ -12,21 +12,31 @@ in `Cargo.toml`); the app and its installer take it from there.
 
 ## Steps
 
-1. On `master`, with its checks passed: set the new version in `Cargo.toml` and run `cargo build` so `Cargo.lock`
+1. Write the release's notes in `CHANGELOG.md`, under a new `## X.Y.Z` heading at the top, with `### New` and
+   `### Fixes and improvements` lists (leave out an empty one). Keep them short and general, what is new and what was
+   fixed, from the commits since the last tag (`git log --oneline <last tag>..master`). The workflow refuses a tag without
+   them.
+2. On `master`, with its checks passed: set the new version in `Cargo.toml` and run `cargo build` so `Cargo.lock`
    follows.
-2. Commit it: `chore: release 0.2.0`.
-3. Tag and push both:
+3. Commit both, the notes and the version: `chore: release 0.2.0`.
+4. Tag and push both:
 
    ```sh
    git tag v0.2.0
    git push origin master v0.2.0
    ```
 
-4. The workflow checks that the tag matches the version, builds the UI, `warden.exe` and the installer as
+5. The workflow checks that the tag matches the version and takes the version's notes from `CHANGELOG.md` (failing
+   when the section is missing or empty), builds the UI, `warden.exe` and the installer as
    `npm run desktop:release` does, signs the update, and publishes the release with the installer, its signature
    (`.sig`) and `latest.json`, the manifest the app reads at
    `https://github.com/Eterion/Warden/releases/latest/download/latest.json`.
-5. Check the release on GitHub. An installed Warden finds it at its next hourly look, or when it starts.
+6. Check the release on GitHub. An installed Warden finds it at its next hourly look, or when it starts.
+
+## Release notes
+
+A version's section of `CHANGELOG.md` (without its heading; `node checks/release-notes.ts X.Y.Z <file>` prints it) is
+published as the GitHub release's notes, under the title "Warden X.Y.Z", and as `notes` in `latest.json`.
 
 ## The update signing key
 
